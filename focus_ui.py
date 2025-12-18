@@ -570,51 +570,27 @@ HTML_TEMPLATE = """
     </div>
     
     <div class="container">
-        <h1>Zebra</h1>
+        <h1>Contrôles</h1>
         
-        <div class="iris-display">
-            <div class="iris-label">État</div>
+        <div class="control-buttons" style="flex-direction: column; gap: 15px; align-items: stretch; margin: 20px 0;">
             <button class="toggle-button disabled" id="zebraToggle" onclick="toggleZebra()">
                 Zebra: OFF
             </button>
-        </div>
-        
-        <div class="spacer"></div>
-    </div>
-    
-    <div class="container">
-        <h1>Focus Assist</h1>
-        
-        <div class="iris-display">
-            <div class="iris-label">État</div>
+            
             <button class="toggle-button disabled" id="focusAssistToggle" onclick="toggleFocusAssist()">
                 Focus Assist: OFF
             </button>
-        </div>
-        
-        <div class="spacer"></div>
-    </div>
-    
-    <div class="container">
-        <h1>False Color</h1>
-        
-        <div class="iris-display">
-            <div class="iris-label">État</div>
+            
             <button class="toggle-button disabled" id="falseColorToggle" onclick="toggleFalseColor()">
                 False Color: OFF
             </button>
-        </div>
-        
-        <div class="spacer"></div>
-    </div>
-    
-    <div class="container">
-        <h1>Cleanfeed</h1>
-        
-        <div class="iris-display">
-            <div class="iris-label">État</div>
+            
             <button class="toggle-button disabled" id="cleanfeedToggle" onclick="toggleCleanfeed()">
                 Cleanfeed: OFF
+            </button>
+            
+            <button class="control-button" id="autofocusBtn" onclick="doAutoFocus()" style="width: 100%; margin-top: 10px;">
+                🔍 Autofocus
             </button>
         </div>
         
@@ -673,13 +649,18 @@ HTML_TEMPLATE = """
         
         window.onSliderRelease = function() {
             
-            // Verrouiller pendant 1 seconde après le relâchement
+            // Verrouiller pendant 2 secondes après le relâchement
             if (sliderLockTimeout) {
                 clearTimeout(sliderLockTimeout);
             }
             sliderLockTimeout = setTimeout(() => {
                 sliderLocked = false;
-            }, 1000); // 1 seconde
+                // Remettre le slider à la valeur réelle après 2 secondes
+                const slider = document.getElementById('focusSlider');
+                if (slider && actualValue !== null && actualValue !== undefined) {
+                    slider.value = actualValue;
+                }
+            }, 2000); // 2 secondes
         };
         
         // Fonction pour envoyer le focus avec throttling
@@ -737,6 +718,13 @@ HTML_TEMPLATE = """
             
             const numValue = parseFloat(value);
             sentValue = numValue;
+            
+            // Mettre à jour le slider avec la valeur envoyée
+            const slider = document.getElementById('focusSlider');
+            if (slider) {
+                slider.value = numValue;
+            }
+            
             document.getElementById('focusValueSent').textContent = numValue.toFixed(3);
             
             // Verrouiller le slider pendant la manipulation
@@ -747,11 +735,6 @@ HTML_TEMPLATE = """
             
             // Envoyer avec throttling
             sendFocusValue(numValue);
-            
-            // Déverrouiller après 1 seconde
-            sliderLockTimeout = setTimeout(() => {
-                sliderLocked = false;
-            }, 1000);
         };
         
         // Handler WebSocket pour les changements de focus
@@ -767,6 +750,15 @@ HTML_TEMPLATE = """
             if (value !== null && value !== undefined) {
                 actualValue = value;
                 document.getElementById('focusValueActual').textContent = value.toFixed(3);
+                
+                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                if (!sliderLocked) {
+                    const slider = document.getElementById('focusSlider');
+                    if (slider) {
+                        slider.value = value;
+                    }
+                }
+                
                     // Si on reçoit des événements, le WebSocket fonctionne
                     updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
             } else {
@@ -1308,58 +1300,100 @@ HTML_TEMPLATE = """
             });
         };
         
+        // Autofocus - rendre accessible globalement
+        window.doAutoFocus = function() {
+            const btn = document.getElementById('autofocusBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '🔍 Autofocus...';
+            }
+            
+            fetch('/do_autofocus', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ x: 0.5, y: 0.5 })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateGlobalStatus('connected', 'Autofocus déclenché');
+                    if (btn) {
+                        btn.textContent = '✓ Autofocus OK';
+                        setTimeout(() => {
+                            btn.textContent = '🔍 Autofocus';
+                            btn.disabled = false;
+                        }, 2000);
+                    }
+                } else {
+                    updateGlobalStatus('disconnected', 'Erreur: ' + (data.error || 'Inconnue'));
+                    if (btn) {
+                        btn.textContent = '🔍 Autofocus';
+                        btn.disabled = false;
+                    }
+                }
+            })
+            .catch(error => {
+                updateGlobalStatus('disconnected', 'Erreur de connexion');
+                console.error('Error:', error);
+                if (btn) {
+                    btn.textContent = '🔍 Autofocus';
+                    btn.disabled = false;
+                }
+            });
+        };
+        
         // Handlers WebSocket pour les toggles
         if (socket) {
         socket.on('zebra_changed', (data) => {
-            if (!websocketEventsReceived) {
-                websocketEventsReceived = true;
-                stopPollingFallback();
-                console.log('WebSocket actif, arrêt du polling de secours');
-            }
+                if (!websocketEventsReceived) {
+                    websocketEventsReceived = true;
+                    stopPollingFallback();
+                    console.log('WebSocket actif, arrêt du polling de secours');
+                }
             const enabled = data.enabled !== undefined ? data.enabled : (data.value !== undefined ? data.value : false);
             zebraEnabled = enabled;
             updateToggleButton('zebraToggle', enabled, 'Zebra');
-            // Si on reçoit des événements, le WebSocket fonctionne
-            updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
+                // Si on reçoit des événements, le WebSocket fonctionne
+                updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
         });
         
         socket.on('focusAssist_changed', (data) => {
-            if (!websocketEventsReceived) {
-                websocketEventsReceived = true;
-                stopPollingFallback();
-                console.log('WebSocket actif, arrêt du polling de secours');
-            }
+                if (!websocketEventsReceived) {
+                    websocketEventsReceived = true;
+                    stopPollingFallback();
+                    console.log('WebSocket actif, arrêt du polling de secours');
+                }
             const enabled = data.enabled !== undefined ? data.enabled : (data.value !== undefined ? data.value : false);
             focusAssistEnabled = enabled;
             updateToggleButton('focusAssistToggle', enabled, 'Focus Assist');
-            // Si on reçoit des événements, le WebSocket fonctionne
-            updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
+                // Si on reçoit des événements, le WebSocket fonctionne
+                updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
         });
         
         socket.on('falseColor_changed', (data) => {
-            if (!websocketEventsReceived) {
-                websocketEventsReceived = true;
-                stopPollingFallback();
-                console.log('WebSocket actif, arrêt du polling de secours');
-            }
+                if (!websocketEventsReceived) {
+                    websocketEventsReceived = true;
+                    stopPollingFallback();
+                    console.log('WebSocket actif, arrêt du polling de secours');
+                }
             const enabled = data.enabled !== undefined ? data.enabled : (data.value !== undefined ? data.value : false);
             falseColorEnabled = enabled;
             updateToggleButton('falseColorToggle', enabled, 'False Color');
-            // Si on reçoit des événements, le WebSocket fonctionne
-            updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
+                // Si on reçoit des événements, le WebSocket fonctionne
+                updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
         });
         
         socket.on('cleanfeed_changed', (data) => {
-            if (!websocketEventsReceived) {
-                websocketEventsReceived = true;
-                stopPollingFallback();
-                console.log('WebSocket actif, arrêt du polling de secours');
-            }
+                if (!websocketEventsReceived) {
+                    websocketEventsReceived = true;
+                    stopPollingFallback();
+                    console.log('WebSocket actif, arrêt du polling de secours');
+                }
             const enabled = data.enabled !== undefined ? data.enabled : (data.value !== undefined ? data.value : false);
             cleanfeedEnabled = enabled;
             updateToggleButton('cleanfeedToggle', enabled, 'Cleanfeed');
-            // Si on reçoit des événements, le WebSocket fonctionne
-            updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
+                // Si on reçoit des événements, le WebSocket fonctionne
+                updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
         });
         }
         
@@ -1368,6 +1402,14 @@ HTML_TEMPLATE = """
             if (data.focus !== undefined) {
                 actualValue = data.focus;
                 document.getElementById('focusValueActual').textContent = data.focus.toFixed(3);
+                
+                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                if (!sliderLocked) {
+                    const slider = document.getElementById('focusSlider');
+                    if (slider) {
+                        slider.value = data.focus;
+                    }
+                }
             }
             if (data.iris !== undefined) {
                 if (data.iris.normalised !== undefined) {
@@ -1526,6 +1568,15 @@ HTML_TEMPLATE = """
                                 actualValue = value;
                                 const focusEl = document.getElementById('focusValueActual');
                                 if (focusEl) focusEl.textContent = value.toFixed(3);
+                                
+                                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                                if (!sliderLocked) {
+                                    const slider = document.getElementById('focusSlider');
+                                    if (slider) {
+                                        slider.value = value;
+                                    }
+                                }
+                                
                                 updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
                             }
                         });
@@ -1956,6 +2007,26 @@ def set_cleanfeed():
             return jsonify({'success': True, 'enabled': enabled})
         else:
             return jsonify({'success': False, 'error': 'Impossible de définir l\'état du Cleanfeed'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/do_autofocus', methods=['POST'])
+def do_autofocus():
+    """Lance l'autofocus à une position donnée."""
+    try:
+        data = request.json or {}
+        x = float(data.get('x', 0.5))
+        y = float(data.get('y', 0.5))
+        
+        # Valider les valeurs
+        if not (0.0 <= x <= 1.0) or not (0.0 <= y <= 1.0):
+            return jsonify({'success': False, 'error': 'Les positions doivent être entre 0.0 et 1.0'})
+        
+        success = controller.do_autofocus(x=x, y=y, silent=True)
+        if success:
+            return jsonify({'success': True, 'x': x, 'y': y})
+        else:
+            return jsonify({'success': False, 'error': 'Impossible de déclencher l\'autofocus'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
