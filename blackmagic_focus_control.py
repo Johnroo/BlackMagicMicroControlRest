@@ -349,7 +349,9 @@ class BlackmagicFocusController:
         self.base_url = base_url.rstrip('/')
         self.focus_endpoint = f"{self.base_url}/control/api/v1/lens/focus"
         self.iris_endpoint = f"{self.base_url}/control/api/v1/lens/iris"
+        self.iris_description_endpoint = f"{self.base_url}/control/api/v1/lens/iris/description"
         self.zoom_endpoint = f"{self.base_url}/control/api/v1/lens/zoom"
+        self.zoom_description_endpoint = f"{self.base_url}/control/api/v1/lens/zoom/description"
         self.gain_endpoint = f"{self.base_url}/control/api/v1/video/gain"
         self.supported_gains_endpoint = f"{self.base_url}/control/api/v1/video/supportedGains"
         self.shutter_endpoint = f"{self.base_url}/control/api/v1/video/shutter"
@@ -430,7 +432,69 @@ class BlackmagicFocusController:
                 print(f"Status code: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
             return None
+    
+    def get_iris_description(self) -> Optional[dict]:
+        """
+        Récupère la description détaillée des capacités de l'iris.
+        
+        Returns:
+            Dict avec les informations sur l'iris (controllable, apertureStop.min, apertureStop.max) ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.iris_description_endpoint}")
+            
+            response = self.session.get(
+                self.iris_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.SSLError as e:
+            if self.debug:
+                print(f"Erreur SSL lors de la récupération de la description de l'iris: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            if self.debug:
+                print(f"Erreur de connexion lors de la récupération de la description de l'iris: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.iris_description_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"Erreur lors de la récupération de la description de l'iris: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
+            return None
 
+    def get_zoom_description(self) -> Optional[dict]:
+        """
+        Récupère la description détaillée des capacités du zoom.
+        
+        Returns:
+            Dict avec les informations sur le zoom (controllable, focalLength) ou None en cas d'erreur
+        """
+        try:
+            response = self.session.get(
+                self.zoom_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json'}
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"Erreur lors de la récupération de la description du zoom: {e}")
+            return None
+    
     def get_zoom(self) -> Optional[dict]:
         """
         Récupère les valeurs actuelles du zoom (focale et valeur normalisée).
@@ -1185,6 +1249,55 @@ class BlackmagicFocusController:
         except requests.exceptions.RequestException as e:
             if not silent:
                 print(f"Erreur lors de la mise à jour du Cleanfeed: {e}")
+            return False
+    
+    def do_autofocus(self, x: float = 0.5, y: float = 0.5, silent: bool = False) -> bool:
+        """
+        Lance l'autofocus à une position donnée.
+        
+        Args:
+            x: Position X normalisée (0.0 à 1.0, défaut: 0.5 pour le centre)
+            y: Position Y normalisée (0.0 à 1.0, défaut: 0.5 pour le centre)
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si la commande a réussi, False sinon
+        """
+        try:
+            autofocus_endpoint = f"{self.base_url}/control/api/v1/lens/focus/doAutoFocus"
+            payload = {"position": {"x": x, "y": y}}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {autofocus_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+            
+            response = self.session.put(
+                autofocus_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code in [200, 204]:
+                if not silent:
+                    print(f"Autofocus déclenché à la position ({x}, {y})")
+                return True
+            else:
+                if not silent:
+                    print(f"Erreur lors de l'autofocus: {response.status_code} - {response.text}")
+                return False
+        except requests.exceptions.SSLError as e:
+            if not silent:
+                print(f"Erreur SSL lors de l'autofocus: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            if not silent:
+                print(f"Erreur de connexion lors de l'autofocus: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {autofocus_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            if not silent:
+                print(f"Erreur lors de l'autofocus: {e}")
             return False
     
     def _polling_loop(self):
