@@ -11,6 +11,42 @@ NC='\033[0m' # No Color
 # Fonction pour nettoyer à l'arrêt
 cleanup() {
     echo -e "\n${YELLOW}Arrêt de l'application...${NC}"
+    
+    # Tuer les processus Python focus_ui.py
+    PIDS=$(ps aux | grep "[f]ocus_ui.py" | awk '{print $2}')
+    if [ -n "$PIDS" ]; then
+        for PID in $PIDS; do
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                kill -TERM "$PID" 2>/dev/null
+                sleep 1
+                if kill -0 "$PID" 2>/dev/null; then
+                    kill -KILL "$PID" 2>/dev/null
+                fi
+            fi
+        done
+    fi
+    
+    # Libérer le port si nécessaire
+    if [ -n "$PORT" ] && command -v lsof &> /dev/null; then
+        PORT_PIDS=$(lsof -ti:$PORT 2>/dev/null)
+        if [ -n "$PORT_PIDS" ]; then
+            # Convertir en tableau pour gérer plusieurs PIDs
+            PIDS_ARRAY=($PORT_PIDS)
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    kill -TERM "$PID" 2>/dev/null
+                fi
+            done
+            sleep 2
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    kill -KILL "$PID" 2>/dev/null
+                fi
+            done
+            sleep 1
+        fi
+    fi
+    
     exit 0
 }
 
@@ -81,15 +117,33 @@ kill_existing_processes() {
     
     # Vérifier si le port est toujours utilisé (PORT doit être défini)
     if [ -n "$PORT" ] && command -v lsof &> /dev/null; then
-        PORT_PID=$(lsof -ti:$PORT 2>/dev/null)
-        if [ -n "$PORT_PID" ]; then
-            info "Port $PORT toujours utilisé par PID: $PORT_PID"
-            kill -TERM "$PORT_PID" 2>/dev/null
+        PORT_PIDS=$(lsof -ti:$PORT 2>/dev/null)
+        if [ -n "$PORT_PIDS" ]; then
+            # Convertir en tableau pour gérer plusieurs PIDs
+            PIDS_ARRAY=($PORT_PIDS)
+            PID_COUNT=${#PIDS_ARRAY[@]}
+            info "Port $PORT toujours utilisé par $PID_COUNT processus: ${PIDS_ARRAY[*]}"
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    kill -TERM "$PID" 2>/dev/null
+                fi
+            done
+            sleep 2
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    kill -KILL "$PID" 2>/dev/null
+                fi
+            done
             sleep 1
-            if kill -0 "$PORT_PID" 2>/dev/null; then
-                kill -KILL "$PORT_PID" 2>/dev/null
+            # Vérifier que le port est bien libéré
+            PORT_PID_CHECK=$(lsof -ti:$PORT 2>/dev/null)
+            if [ -z "$PORT_PID_CHECK" ]; then
+                success "Port $PORT libéré"
+            else
+                REMAINING_PIDS=($PORT_PID_CHECK)
+                REMAINING_LIST=$(IFS=' '; echo "${REMAINING_PIDS[*]}")
+                echo -e "${YELLOW}⚠ Avertissement: Port $PORT toujours utilisé par PIDs: $REMAINING_LIST${NC}"
             fi
-            success "Port $PORT libéré"
         fi
     fi
     
@@ -125,7 +179,7 @@ fi
 success "requirements.txt trouvé"
 
 # 4. Définir les paramètres par défaut avant de tuer les processus (pour kill_existing_processes)
-PORT="5000"
+PORT="5002"
 HOST="127.0.0.1"
 
 # 5. Arrêter les processus existants
@@ -160,20 +214,66 @@ echo ""
 # 8. Vérifier et libérer le port si nécessaire
 info "Vérification que le port $PORT est libre..."
 if command -v lsof &> /dev/null; then
-    PORT_PID=$(lsof -ti:$PORT 2>/dev/null)
-    if [ -n "$PORT_PID" ]; then
-        info "Port $PORT utilisé par le processus PID: $PORT_PID, libération..."
-        kill -TERM "$PORT_PID" 2>/dev/null
-        sleep 1
-        if kill -0 "$PORT_PID" 2>/dev/null; then
-            info "Le processus $PORT_PID n'a pas répondu à SIGTERM, envoi de SIGKILL..."
-            kill -KILL "$PORT_PID" 2>/dev/null
-            sleep 1
-        fi
-        if ! kill -0 "$PORT_PID" 2>/dev/null; then
-            success "Port $PORT libéré (PID $PORT_PID arrêté)"
+    PORT_PIDS=$(lsof -ti:$PORT 2>/dev/null)
+    if [ -n "$PORT_PIDS" ]; then
+        # Convertir en tableau (gérer les retours à la ligne)
+        PIDS_ARRAY=($PORT_PIDS)
+        PID_COUNT=${#PIDS_ARRAY[@]}
+        
+        # Vérifier si ce sont des processus système (non-killables)
+        SYSTEM_PROCESS=false
+        for PID in "${PIDS_ARRAY[@]}"; do
+            PROCESS_NAME=$(ps -p "$PID" -o comm= 2>/dev/null)
+            if [[ "$PROCESS_NAME" == *"ControlCenter"* ]] || [[ "$PROCESS_NAME" == *"kernel"* ]] || [[ "$PROCESS_NAME" == *"System"* ]]; then
+                SYSTEM_PROCESS=true
+                break
+            fi
+        done
+        
+        if [ "$SYSTEM_PROCESS" = true ]; then
+            echo -e "${YELLOW}⚠ Le port $PORT est utilisé par un processus système macOS (probablement AirPlay Receiver).${NC}"
+            echo -e "${YELLOW}   Le script utilisera le port $PORT, mais vous devrez peut-être désactiver AirPlay Receiver${NC}"
+            echo -e "${YELLOW}   dans Préférences Système > Partage > AirPlay Receiver, ou utiliser un autre port.${NC}"
+            echo ""
+            # Ne pas essayer de tuer les processus système, continuer quand même
         else
-            error "Impossible de libérer le port $PORT (PID $PORT_PID toujours actif). Arrêtez-le manuellement."
+            info "Port $PORT utilisé par $PID_COUNT processus: ${PIDS_ARRAY[*]}, libération..."
+            
+            # Tuer chaque processus
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    info "Arrêt du processus PID: $PID"
+                    kill -TERM "$PID" 2>/dev/null
+                fi
+            done
+            
+            # Attendre que les processus se terminent
+            sleep 2
+            
+            # Vérifier et forcer l'arrêt des processus qui résistent
+            for PID in "${PIDS_ARRAY[@]}"; do
+                if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                    info "Le processus $PID n'a pas répondu à SIGTERM, envoi de SIGKILL..."
+                    kill -KILL "$PID" 2>/dev/null
+                fi
+            done
+            
+            # Attendre après SIGKILL
+            sleep 2
+            
+            # Vérifier à nouveau après l'attente
+            sleep 1
+            PORT_PID_CHECK=$(lsof -ti:$PORT 2>/dev/null)
+            if [ -z "$PORT_PID_CHECK" ]; then
+                success "Port $PORT libéré (tous les processus arrêtés)"
+            else
+                # Afficher les PIDs restants
+                REMAINING_PIDS=($PORT_PID_CHECK)
+                REMAINING_LIST=$(IFS=' '; echo "${REMAINING_PIDS[*]}")
+                echo -e "${YELLOW}⚠ Avertissement: Port $PORT toujours utilisé par PIDs: $REMAINING_LIST${NC}"
+                echo -e "${YELLOW}   L'application va quand même démarrer, mais il pourrait y avoir un conflit.${NC}"
+                echo ""
+            fi
         fi
     else
         success "Port $PORT est libre"

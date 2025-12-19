@@ -360,6 +360,7 @@ class BlackmagicFocusController:
         self.focus_assist_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/focusAssist"
         self.false_color_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/falseColor"
         self.cleanfeed_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/cleanFeed"
+        self.autofocus_endpoint = f"{self.base_url}/control/api/v1/lens/focus/doAutoFocus"
         self.auth = (username, password)
         self.current_value: Optional[float] = None
         self.target_value: Optional[float] = None
@@ -1185,6 +1186,93 @@ class BlackmagicFocusController:
         except requests.exceptions.RequestException as e:
             if not silent:
                 print(f"Erreur lors de la mise à jour du Cleanfeed: {e}")
+            return False
+    
+    def do_autofocus(self, x: float = 0.5, y: float = 0.5, silent: bool = False) -> bool:
+        """
+        Déclenche l'autofocus à une position donnée.
+        
+        Args:
+            x: Position X normalisée (0.0 à 1.0) pour le point de focus
+            y: Position Y normalisée (0.0 à 1.0) pour le point de focus
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si l'autofocus a été déclenché avec succès, False sinon
+        """
+        if not (0.0 <= x <= 1.0) or not (0.0 <= y <= 1.0):
+            error_msg = f"Erreur: Les positions doivent être entre 0.0 et 1.0, reçu: x={x}, y={y}"
+            if not silent:
+                print(error_msg)
+            logging.error(error_msg)
+            return False
+        
+        try:
+            # Format selon la documentation: {"position": {"x": x, "y": y}}
+            payload = {"position": {"x": x, "y": y}}
+            
+            if self.debug or not silent:
+                print(f"[DEBUG] PUT {self.autofocus_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+            
+            # Utiliser PUT au lieu de POST selon la documentation
+            response = self.session.put(
+                self.autofocus_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug or not silent:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            # L'API peut retourner 204 (No Content) ou 200 pour indiquer le succès
+            if response.status_code in [200, 204]:
+                if not silent:
+                    print(f"Autofocus déclenché à la position ({x:.2f}, {y:.2f})")
+                return True
+            else:
+                # Log l'erreur même en mode silent pour le débogage
+                error_msg = f"Status code inattendu: {response.status_code}, Response: {response.text}"
+                logging.error(f"Autofocus error: {error_msg}")
+                if not silent:
+                    print(f"Erreur: {error_msg}")
+                response.raise_for_status()
+                return True
+        except requests.exceptions.SSLError as e:
+            error_msg = f"Erreur SSL lors du déclenchement de l'autofocus: {e}"
+            logging.error(error_msg)
+            if not silent:
+                print(error_msg)
+            return False
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Erreur de connexion lors du déclenchement de l'autofocus: {e}"
+            logging.error(f"{error_msg}, Endpoint: {self.autofocus_endpoint}")
+            if not silent:
+                print(error_msg)
+                print(f"Vérifiez que la caméra est accessible à: {self.autofocus_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Erreur lors du déclenchement de l'autofocus: {e}"
+            logging.error(error_msg)
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = e.response.status_code
+                response_text = e.response.text
+                logging.error(f"Status code: {status_code}, Response: {response_text}")
+                if not silent:
+                    print(error_msg)
+                    print(f"Status code: {status_code}")
+                    if status_code == 403:
+                        print("L'autofocus ne peut pas être déclenché dans l'état actuel de la caméra")
+                    elif status_code == 400:
+                        print("Erreur: Position invalide ou paramètres incorrects")
+                    elif status_code == 404:
+                        print(f"Erreur: Endpoint non trouvé. Vérifiez que l'endpoint {self.autofocus_endpoint} est correct.")
+                    print(f"Response: {response_text}")
+            else:
+                if not silent:
+                    print(error_msg)
             return False
     
     def _polling_loop(self):

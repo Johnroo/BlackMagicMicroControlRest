@@ -186,7 +186,7 @@ HTML_TEMPLATE = """
             display: flex;
             justify-content: center;
             align-items: stretch;
-            height: 320px;
+            height: 500px;
             margin: 20px 0;
             flex-shrink: 0;
         }
@@ -201,41 +201,41 @@ HTML_TEMPLATE = """
         .slider-wrapper {
             position: relative;
             height: 100%;
-            width: 60px;
+            width: 80px;
         }
         
         input[type="range"] {
             -webkit-appearance: none;
             appearance: none;
-            width: 300px;
-            height: 60px;
+            width: 480px;
+            height: 80px;
             transform: rotate(-90deg);
             transform-origin: center;
             background: transparent;
             outline: none;
             position: absolute;
-            left: -120px;
-            top: 120px;
+            left: -200px;
+            top: 210px;
         }
         
         input[type="range"]::-webkit-slider-track {
-            width: 300px;
-            height: 8px;
+            width: 480px;
+            height: 10px;
             background: #333;
             border: 1px solid #555;
-            border-radius: 4px;
+            border-radius: 5px;
         }
         
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 20px;
-            height: 50px;
+            width: 24px;
+            height: 60px;
             background: #666;
             border: 1px solid #888;
-            border-radius: 3px;
+            border-radius: 4px;
             cursor: pointer;
-            margin-top: -21px;
+            margin-top: -25px;
         }
         
         input[type="range"]::-webkit-slider-thumb:hover {
@@ -243,19 +243,19 @@ HTML_TEMPLATE = """
         }
         
         input[type="range"]::-moz-range-track {
-            width: 300px;
-            height: 8px;
+            width: 480px;
+            height: 10px;
             background: #333;
             border: 1px solid #555;
-            border-radius: 4px;
+            border-radius: 5px;
         }
         
         input[type="range"]::-moz-range-thumb {
-            width: 20px;
-            height: 50px;
+            width: 24px;
+            height: 60px;
             background: #666;
             border: 1px solid #888;
-            border-radius: 3px;
+            border-radius: 4px;
             cursor: pointer;
         }
         
@@ -266,10 +266,10 @@ HTML_TEMPLATE = """
             margin-top: 10px;
             font-size: 11px;
             color: #aaa;
-            height: 300px;
+            height: 480px;
             justify-content: space-between;
             position: absolute;
-            left: 70px;
+            left: 90px;
             top: 0;
         }
         
@@ -2023,12 +2023,16 @@ def do_autofocus():
             return jsonify({'success': False, 'error': 'Les positions doivent être entre 0.0 et 1.0'})
         
         success = controller.do_autofocus(x=x, y=y, silent=True)
+        
         if success:
             return jsonify({'success': True, 'x': x, 'y': y})
         else:
-            return jsonify({'success': False, 'error': 'Impossible de déclencher l\'autofocus'})
+            # Retourner plus d'informations sur l'erreur
+            return jsonify({'success': False, 'error': 'Impossible de déclencher l\'autofocus. Vérifiez les logs du serveur pour plus de détails.'})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        import traceback
+        logging.error(f"Erreur dans do_autofocus: {e}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': f'Erreur: {str(e)}'})
 
 @app.route('/get_initial_values', methods=['GET'])
 def get_initial_values():
@@ -2226,6 +2230,18 @@ def on_parameter_change(param_type: str, data: dict):
 
 def main():
     """Fonction principale."""
+    # #region agent log
+    import json
+    import time
+    import os
+    try:
+        os.makedirs(os.path.dirname('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log'), exist_ok=True)
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:start','message':'main() function called','data':{'cwd':os.getcwd(),'script_path':__file__},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'A'})+'\n')
+    except:
+        pass
+    # #endregion
+    
     parser = argparse.ArgumentParser(
         description="Interface web pour contrôler le focus Blackmagic",
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -2266,22 +2282,79 @@ def main():
     
     args = parser.parse_args()
     
+    # #region agent log
+    try:
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:args_parsed','message':'Arguments parsed','data':{'url':args.url,'user':args.user,'port':args.port,'host':args.host},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'A'})+'\n')
+    except:
+        pass
+    # #endregion
+    
     # Désactiver les avertissements SSL
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
     # Créer le contrôleur
     global controller, websocket_client
-    controller = BlackmagicFocusController(args.url, args.user, args.password)
+    # #region agent log
+    try:
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:before_controller','message':'Before creating controller','data':{'url':args.url,'user':args.user},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'B'})+'\n')
+    except:
+        pass
+    # #endregion
+    
+    try:
+        controller = BlackmagicFocusController(args.url, args.user, args.password)
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({'location':'focus_ui.py:main:controller_created','message':'Controller created successfully','data':{'controller_exists':controller is not None},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'B'})+'\n')
+        except:
+            pass
+        # #endregion
+    except Exception as e:
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({'location':'focus_ui.py:main:controller_error','message':'Error creating controller','data':{'error':str(e),'error_type':type(e).__name__},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'B'})+'\n')
+        except:
+            pass
+        # #endregion
+        raise
     
     # Démarrer le thread qui traite la queue d'événements
+    # #region agent log
+    try:
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:before_queue_thread','message':'Before starting queue thread','data':{},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'C'})+'\n')
+    except:
+        pass
+    # #endregion
+    
     queue_thread = threading.Thread(target=process_event_queue, daemon=True)
     queue_thread.start()
     logging.info("Thread de traitement de la queue d'événements démarré")
     
+    # #region agent log
+    try:
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:queue_thread_started','message':'Queue thread started','data':{},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'C'})+'\n')
+    except:
+        pass
+    # #endregion
+    
     # Créer et démarrer le client WebSocket (sauf si désactivé)
     websocket_client = None
     if not args.no_websocket:
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({'location':'focus_ui.py:main:before_websocket','message':'Before creating websocket client','data':{},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'D'})+'\n')
+        except:
+            pass
+        # #endregion
+        
         try:
             websocket_client = BlackmagicWebSocketClient(
                 args.url,
@@ -2292,7 +2365,21 @@ def main():
             )
             websocket_client.start()
             logging.info("Client WebSocket démarré")
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({'location':'focus_ui.py:main:websocket_started','message':'WebSocket client started','data':{'websocket_exists':websocket_client is not None},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'D'})+'\n')
+            except:
+                pass
+            # #endregion
         except Exception as e:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({'location':'focus_ui.py:main:websocket_error','message':'Error starting websocket','data':{'error':str(e),'error_type':type(e).__name__},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'D'})+'\n')
+            except:
+                pass
+            # #endregion
             logging.error(f"Erreur lors du démarrage du client WebSocket: {e}")
             logging.warning("Le WebSocket n'est pas disponible, mais le serveur Flask continue...")
             websocket_client = None
@@ -2311,10 +2398,25 @@ def main():
     print(f"\nOuvrez votre navigateur à l'adresse ci-dessus")
     print(f"Appuyez sur Ctrl+C pour arrêter\n")
     
+    # #region agent log
+    try:
+        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({'location':'focus_ui.py:main:before_socketio_run','message':'Before socketio.run()','data':{'host':args.host,'port':args.port},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'E'})+'\n')
+    except:
+        pass
+    # #endregion
+    
     # Démarrer le serveur Flask avec SocketIO
     try:
         socketio.run(app, host=args.host, port=args.port, debug=False, allow_unsafe_werkzeug=True)
     except Exception as e:
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({'location':'focus_ui.py:main:socketio_error','message':'Error in socketio.run()','data':{'error':str(e),'error_type':type(e).__name__},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'start-sh-debug','hypothesisId':'E'})+'\n')
+        except:
+            pass
+        # #endregion
         raise
 
 if __name__ == "__main__":
