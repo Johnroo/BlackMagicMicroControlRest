@@ -349,7 +349,9 @@ class BlackmagicFocusController:
         self.base_url = base_url.rstrip('/')
         self.focus_endpoint = f"{self.base_url}/control/api/v1/lens/focus"
         self.iris_endpoint = f"{self.base_url}/control/api/v1/lens/iris"
+        self.iris_description_endpoint = f"{self.base_url}/control/api/v1/lens/iris/description"
         self.zoom_endpoint = f"{self.base_url}/control/api/v1/lens/zoom"
+        self.zoom_description_endpoint = f"{self.base_url}/control/api/v1/lens/zoom/description"
         self.gain_endpoint = f"{self.base_url}/control/api/v1/video/gain"
         self.supported_gains_endpoint = f"{self.base_url}/control/api/v1/video/supportedGains"
         self.shutter_endpoint = f"{self.base_url}/control/api/v1/video/shutter"
@@ -431,7 +433,69 @@ class BlackmagicFocusController:
                 print(f"Status code: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
             return None
+    
+    def get_iris_description(self) -> Optional[dict]:
+        """
+        Récupère la description détaillée des capacités de l'iris.
+        
+        Returns:
+            Dict avec les informations sur l'iris (controllable, apertureStop.min, apertureStop.max) ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.iris_description_endpoint}")
+            
+            response = self.session.get(
+                self.iris_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.SSLError as e:
+            if self.debug:
+                print(f"Erreur SSL lors de la récupération de la description de l'iris: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            if self.debug:
+                print(f"Erreur de connexion lors de la récupération de la description de l'iris: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.iris_description_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"Erreur lors de la récupération de la description de l'iris: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
+            return None
 
+    def get_zoom_description(self) -> Optional[dict]:
+        """
+        Récupère la description détaillée des capacités du zoom.
+        
+        Returns:
+            Dict avec les informations sur le zoom (controllable, focalLength) ou None en cas d'erreur
+        """
+        try:
+            response = self.session.get(
+                self.zoom_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json'}
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"Erreur lors de la récupération de la description du zoom: {e}")
+            return None
+    
     def get_zoom(self) -> Optional[dict]:
         """
         Récupère les valeurs actuelles du zoom (focale et valeur normalisée).

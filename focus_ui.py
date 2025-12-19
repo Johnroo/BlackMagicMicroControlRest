@@ -191,6 +191,29 @@ HTML_TEMPLATE = """
             flex-shrink: 0;
         }
         
+        .slider-container-gain {
+            display: flex;
+            justify-content: center;
+            align-items: stretch;
+            height: 320px;
+            margin: 20px 0;
+            flex-shrink: 0;
+        }
+        
+        .slider-labels-gain {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 11px;
+            color: #aaa;
+            height: 300px;
+            justify-content: space-between;
+            position: absolute;
+            left: 70px;
+            top: 0;
+        }
+        
         .slider-row {
             display: flex;
             align-items: center;
@@ -474,26 +497,40 @@ HTML_TEMPLATE = """
     <div class="container">
         <h1>Iris Control</h1>
         
-        <div class="iris-display">
-            <div class="iris-label">Iris Normalisé</div>
+        <div class="focus-display">
+            <div class="focus-label">Aperture Stop</div>
             <div class="value-row">
                 <div class="value-item">
-                    <div class="value-item-label">Envoyé</div>
-                    <div class="iris-value-sent" id="irisValueSent">0.000</div>
-                </div>
-                <div class="value-item">
                     <div class="value-item-label">Réel (GET)</div>
-                    <div class="iris-value-actual" id="irisValueActual">0.000</div>
+                    <div class="focus-value-actual" id="irisApertureStop" style="font-size: 24px;">-</div>
                 </div>
-            </div>
-            <div class="iris-additional">
-                <div>Aperture Stop: <span id="irisApertureStop">-</span></div>
             </div>
         </div>
         
-        <div class="control-buttons">
-            <button class="control-button" id="irisPlusBtn" onclick="incrementIris()">+</button>
-            <button class="control-button" id="irisMinusBtn" onclick="decrementIris()">-</button>
+        <div class="slider-container-gain">
+            <div class="slider-row">
+                <div class="slider-wrapper">
+                <input 
+                    type="range" 
+                    id="irisSlider" 
+                    min="0" 
+                    max="100" 
+                    step="0.1" 
+                    value="0"
+                    oninput="updateIris(this.value)"
+                    onmousedown="onIrisSliderTouch()"
+                    onmouseup="onIrisSliderRelease()"
+                    ontouchstart="onIrisSliderTouch()"
+                    ontouchend="onIrisSliderRelease()"
+                    style="top: 120px;"
+                >
+                <div class="slider-labels-gain">
+                    <span id="irisMaxLabel">-</span>
+                    <span id="irisMidLabel">-</span>
+                    <span id="irisMinLabel">-</span>
+                </div>
+                </div>
+            </div>
         </div>
         
     </div>
@@ -501,23 +538,44 @@ HTML_TEMPLATE = """
     <div class="container">
         <h1>Gain Control</h1>
         
-        <div class="iris-display">
-            <div class="iris-label">Gain (dB)</div>
+        <div class="focus-display">
+            <div class="focus-label">Gain (dB)</div>
             <div class="value-row">
                 <div class="value-item">
                     <div class="value-item-label">Envoyé</div>
-                    <div class="iris-value-sent" id="gainValueSent">0</div>
+                    <div class="focus-value-sent" id="gainValueSent">0</div>
                 </div>
                 <div class="value-item">
                     <div class="value-item-label">Réel (GET)</div>
-                    <div class="iris-value-actual" id="gainValueActual">0</div>
+                    <div class="focus-value-actual" id="gainValueActual">0</div>
                 </div>
             </div>
         </div>
         
-        <div class="control-buttons">
-            <button class="control-button" id="gainPlusBtn" onclick="incrementGain()">+</button>
-            <button class="control-button" id="gainMinusBtn" onclick="decrementGain()">-</button>
+        <div class="slider-container-gain">
+            <div class="slider-row">
+                <div class="slider-wrapper">
+                <input 
+                    type="range" 
+                    id="gainSlider" 
+                    min="0" 
+                    max="100" 
+                    step="1" 
+                    value="0"
+                    oninput="updateGain(this.value)"
+                    onmousedown="onGainSliderTouch()"
+                    onmouseup="onGainSliderRelease()"
+                    ontouchstart="onGainSliderTouch()"
+                    ontouchend="onGainSliderRelease()"
+                    style="top: 120px;"
+                >
+                <div class="slider-labels-gain">
+                    <span id="gainMaxLabel">0</span>
+                    <span id="gainMidLabel">0</span>
+                    <span id="gainMinLabel">0</span>
+                </div>
+                </div>
+            </div>
         </div>
         
     </div>
@@ -659,7 +717,7 @@ HTML_TEMPLATE = """
                 const slider = document.getElementById('focusSlider');
                 if (slider && actualValue !== null && actualValue !== undefined) {
                     slider.value = actualValue;
-                }
+        }
             }, 2000); // 2 secondes
         };
         
@@ -774,40 +832,190 @@ HTML_TEMPLATE = """
         
         // Variables pour l'iris
         let isUpdatingIris = false;
-        let sentIrisValue = 0;
-        let actualIrisValue = 0;
-        let irisLocked = false;
-        let irisLockTimeout = null;
+        let sentIrisApertureStop = null;
+        let actualIrisApertureStop = null;
+        let irisSliderLocked = false;
+        let irisSliderLockTimeout = null;
+        let supportedApertureStops = [];
         
-        // Incrémenter l'iris
-        function incrementIris() {
-            if (isUpdatingIris) return;
-            const currentValue = actualIrisValue !== null && actualIrisValue !== undefined ? actualIrisValue : sentIrisValue;
-            const newValue = Math.min(1.0, currentValue + 0.05);
-            updateIrisValue(newValue);
+        // Charger les ouvertures supportées depuis la description de l'iris
+        function loadSupportedApertureStopsFromDescription(irisDesc) {
+            // Vérifier si l'iris est contrôlable
+            if (irisDesc.controllable === false) {
+                console.warn('L\'iris n\'est pas contrôlable');
+                return;
+            }
+            
+            // Récupérer min et max depuis la description
+            const apertureStop = irisDesc.apertureStop;
+            if (apertureStop && apertureStop.min !== undefined && apertureStop.max !== undefined) {
+                const minAperture = apertureStop.min;
+                const maxAperture = apertureStop.max;
+                
+                // Générer une liste d'ouvertures entre min et max
+                // Utiliser les stops standards (chaque stop = √2 ≈ 1.414)
+                supportedApertureStops = [];
+                let current = minAperture;
+                while (current <= maxAperture) {
+                    supportedApertureStops.push(Math.round(current * 10) / 10); // Arrondir à 1 décimale
+                    current *= Math.sqrt(2); // Passer au stop suivant
+                }
+                // S'assurer que max est inclus
+                if (supportedApertureStops.length === 0 || supportedApertureStops[supportedApertureStops.length - 1] < maxAperture) {
+                    supportedApertureStops.push(Math.round(maxAperture * 10) / 10);
+                }
+                
+                // Trier et dédupliquer
+                supportedApertureStops = [...new Set(supportedApertureStops)].sort((a, b) => a - b);
+                
+                console.log('Ouvertures supportées chargées depuis l\'API:', supportedApertureStops);
+            } else {
+                // Fallback: utiliser une liste standard si l'API ne fournit pas les infos
+                supportedApertureStops = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0];
+                console.warn('Description de l\'iris incomplète, utilisation de valeurs par défaut');
+            }
+            
+            // Mettre à jour les labels du slider
+            updateIrisSliderLabels();
         }
         
-        // Décrémenter l'iris
-        function decrementIris() {
-            if (isUpdatingIris) return;
-            const currentValue = actualIrisValue !== null && actualIrisValue !== undefined ? actualIrisValue : sentIrisValue;
-            const newValue = Math.max(0.0, currentValue - 0.05);
-            updateIrisValue(newValue);
+        // Mettre à jour les labels du slider iris
+        function updateIrisSliderLabels() {
+            const minLabel = document.getElementById('irisMinLabel');
+            const midLabel = document.getElementById('irisMidLabel');
+            const maxLabel = document.getElementById('irisMaxLabel');
+            if (supportedApertureStops.length > 0) {
+                const minAperture = supportedApertureStops[0];
+                const maxAperture = supportedApertureStops[supportedApertureStops.length - 1];
+                
+                // Min en bas (dernier span)
+                if (minLabel) {
+                    minLabel.textContent = 'f/' + minAperture.toFixed(1);
+                }
+                
+                // Max en haut (premier span)
+                if (maxLabel) {
+                    maxLabel.textContent = 'f/' + maxAperture.toFixed(1);
+                }
+                
+                // Mid au milieu
+                if (midLabel && supportedApertureStops.length > 1) {
+                    const midIndex = Math.floor(supportedApertureStops.length / 2);
+                    midLabel.textContent = 'f/' + supportedApertureStops[midIndex].toFixed(1);
+                } else if (midLabel) {
+                    midLabel.textContent = '';
+                }
+                
+                // Mettre à jour les attributs min/max du slider
+                const slider = document.getElementById('irisSlider');
+                if (slider) {
+                    slider.min = minAperture;
+                    slider.max = maxAperture;
+                    slider.step = 0.1;
+                }
+            }
         }
         
-        // Mettre à jour la valeur de l'iris
+        // Charger les ouvertures supportées depuis l'API
+        function loadSupportedApertureStops() {
+            fetch('/get_initial_values')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.irisDescription) {
+                        loadSupportedApertureStopsFromDescription(data.irisDescription);
+                    } else {
+                        // Fallback: utiliser une liste standard
+                        supportedApertureStops = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0];
+                        console.warn('Impossible de charger la description de l\'iris, utilisation de valeurs par défaut');
+                        updateIrisSliderLabels();
+                    }
+                })
+                .catch(error => {
+                    console.error('Erreur lors du chargement des ouvertures supportées:', error);
+                    // Fallback: utiliser une liste standard
+                    supportedApertureStops = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0];
+                    updateIrisSliderLabels();
+                });
+        }
+        
+        // Trouver la valeur d'ouverture la plus proche dans la liste supportée
+        function findNearestApertureStop(value) {
+            if (supportedApertureStops.length === 0) return value;
+            return supportedApertureStops.reduce((prev, curr) => {
+                return Math.abs(curr - value) < Math.abs(prev - value) ? curr : prev;
+            });
+        }
+        
+        // Quand on touche le slider iris
+        window.onIrisSliderTouch = function() {
+            irisSliderLocked = true;
+            if (irisSliderLockTimeout) {
+                clearTimeout(irisSliderLockTimeout);
+            }
+        };
+        
+        // Quand on relâche le slider iris
+        window.onIrisSliderRelease = function() {
+            if (irisSliderLockTimeout) {
+                clearTimeout(irisSliderLockTimeout);
+            }
+            irisSliderLockTimeout = setTimeout(() => {
+                irisSliderLocked = false;
+                // Remettre le slider à la valeur réelle après 2 secondes
+                const slider = document.getElementById('irisSlider');
+                if (slider && actualIrisApertureStop !== null && actualIrisApertureStop !== undefined) {
+                    // Trouver la valeur la plus proche dans supportedApertureStops
+                    if (supportedApertureStops.length > 0) {
+                        const nearestAperture = findNearestApertureStop(actualIrisApertureStop);
+                        slider.value = nearestAperture;
+                    } else {
+                        slider.value = actualIrisApertureStop;
+                    }
+                }
+            }, 2000);
+        };
+        
+        // Mettre à jour l'iris quand le slider change
+        window.updateIris = function(value) {
+            if (isUpdatingIris) return;
+            
+            const numValue = parseFloat(value);
+            
+            // Trouver la valeur la plus proche dans supportedApertureStops
+            let targetAperture = numValue;
+            if (supportedApertureStops.length > 0) {
+                targetAperture = findNearestApertureStop(numValue);
+            }
+            
+            sentIrisApertureStop = targetAperture;
+            
+            // Mettre à jour le slider avec la valeur envoyée
+            const slider = document.getElementById('irisSlider');
+            if (slider) {
+                slider.value = targetAperture;
+            }
+            
+            // Verrouiller le slider pendant la manipulation
+            irisSliderLocked = true;
+            if (irisSliderLockTimeout) {
+                clearTimeout(irisSliderLockTimeout);
+            }
+            
+            // Envoyer avec throttling (on envoie la valeur normalisée correspondante)
+            sendIrisApertureStop(targetAperture);
+        };
+        
+        // Mettre à jour la valeur de l'iris (fonction interne pour compatibilité)
         function updateIrisValue(value) {
             if (isUpdatingIris) return;
             
             const numValue = Math.max(0.0, Math.min(1.0, parseFloat(value)));
-            sentIrisValue = numValue;
-            document.getElementById('irisValueSent').textContent = numValue.toFixed(3);
             
             // Envoyer avec throttling
             sendIrisValue(numValue);
         }
         
-        // Fonction pour envoyer l'iris avec throttling
+        // Fonction pour envoyer l'iris avec throttling (valeur normalisée)
         function sendIrisValue(value) {
             const now = Date.now();
             const timeSinceLastSend = now - lastIrisSendTime;
@@ -849,6 +1057,54 @@ HTML_TEMPLATE = """
             });
         }
         
+        // Fonction pour envoyer l'aperture stop directement
+        function sendIrisApertureStop(apertureStop) {
+            const now = Date.now();
+            const timeSinceLastSend = now - lastIrisSendTime;
+            
+            if (timeSinceLastSend < OTHER_MIN_INTERVAL) {
+                // Trop tôt, stocker la valeur pour l'envoyer plus tard
+                pendingIrisValue = { apertureStop: apertureStop };
+                setTimeout(() => {
+                    if (pendingIrisValue !== null && pendingIrisValue.apertureStop !== undefined) {
+                        const val = pendingIrisValue.apertureStop;
+                        pendingIrisValue = null;
+                        sendIrisApertureStop(val);
+                    }
+                }, OTHER_MIN_INTERVAL - timeSinceLastSend);
+                return;
+            }
+            
+            lastIrisSendTime = now;
+            
+            // Convertir l'aperture stop en valeur normalisée approximative
+            // f/1.4 = 0.0, f/22 = 1.0 (approximation linéaire)
+            const minAperture = supportedApertureStops.length > 0 ? supportedApertureStops[0] : 1.4;
+            const maxAperture = supportedApertureStops.length > 0 ? supportedApertureStops[supportedApertureStops.length - 1] : 22.0;
+            const normalisedValue = (apertureStop - minAperture) / (maxAperture - minAperture);
+            const clampedValue = Math.max(0.0, Math.min(1.0, normalisedValue));
+            
+            fetch('/set_iris', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ value: clampedValue })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Ne pas mettre à jour le statut ici, on attend les événements WebSocket
+                } else {
+                    updateGlobalStatus('disconnected', 'Erreur: ' + (data.error || 'Inconnue'));
+                }
+            })
+            .catch(error => {
+                updateGlobalStatus('disconnected', 'Erreur de connexion');
+                console.error('Error:', error);
+            });
+        }
+        
         // Handler WebSocket pour les changements d'iris
         if (socket) {
         socket.on('iris_changed', (data) => {
@@ -857,23 +1113,32 @@ HTML_TEMPLATE = """
                 stopPollingFallback();
                 console.log('WebSocket actif, arrêt du polling de secours');
             }
-            const normalised = data.normalised;
             const apertureStop = data.apertureStop;
             
-            if (normalised !== null && normalised !== undefined) {
-                actualIrisValue = normalised;
-                document.getElementById('irisValueActual').textContent = normalised.toFixed(3);
-            }
-            
             if (apertureStop !== null && apertureStop !== undefined) {
-                document.getElementById('irisApertureStop').textContent = apertureStop.toFixed(2);
+                actualIrisApertureStop = apertureStop;
+                document.getElementById('irisApertureStop').textContent = 'f/' + apertureStop.toFixed(1);
+                
+                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                if (!irisSliderLocked) {
+                    const slider = document.getElementById('irisSlider');
+                    if (slider) {
+                        // Trouver la valeur la plus proche dans supportedApertureStops
+                        if (supportedApertureStops.length > 0) {
+                            const nearestAperture = findNearestApertureStop(apertureStop);
+                            slider.value = nearestAperture;
+                        } else {
+                            slider.value = apertureStop;
+                        }
+                    }
+                }
             } else {
                 document.getElementById('irisApertureStop').textContent = '-';
             }
             
             // Si on reçoit des événements, le WebSocket fonctionne
             updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
-            console.log('Iris mis à jour via WebSocket:', normalised);
+            console.log('Iris mis à jour via WebSocket:', apertureStop);
         });
         }
         
@@ -917,8 +1182,8 @@ HTML_TEMPLATE = """
         let isUpdatingGain = false;
         let sentGainValue = 0;
         let actualGainValue = 0;
-        let gainLocked = false;
-        let gainLockTimeout = null;
+        let gainSliderLocked = false;
+        let gainSliderLockTimeout = null;
         let supportedGains = [];
         
         // Charger les gains supportés
@@ -928,6 +1193,38 @@ HTML_TEMPLATE = """
                 .then(data => {
                     if (data.success && data.supportedGains && data.supportedGains.length > 0) {
                         supportedGains = data.supportedGains.sort((a, b) => a - b);
+                        // Mettre à jour les labels du slider (ordre: max en haut, mid au milieu, min en bas)
+                        const minLabel = document.getElementById('gainMinLabel');
+                        const midLabel = document.getElementById('gainMidLabel');
+                        const maxLabel = document.getElementById('gainMaxLabel');
+                        if (supportedGains.length > 0) {
+                            const minGain = supportedGains[0];
+                            const maxGain = supportedGains[supportedGains.length - 1];
+                            
+                            // Min en bas (dernier span)
+                            if (minLabel) {
+                                minLabel.textContent = minGain + ' dB';
+                            }
+                            
+                            // Max en haut (premier span)
+                            if (maxLabel) {
+                                maxLabel.textContent = maxGain + ' dB';
+                            }
+                            
+                            // Mid au milieu
+                            if (midLabel && supportedGains.length > 1) {
+                                const midIndex = Math.floor(supportedGains.length / 2);
+                                midLabel.textContent = supportedGains[midIndex] + ' dB';
+                            } else if (midLabel) {
+                                midLabel.textContent = '';
+                            }
+                        }
+                        // Mettre à jour les attributs min/max du slider
+                        const slider = document.getElementById('gainSlider');
+                        if (slider && supportedGains.length > 0) {
+                            slider.min = supportedGains[0];
+                            slider.max = supportedGains[supportedGains.length - 1];
+                        }
                     }
                 })
                 .catch(error => {
@@ -943,32 +1240,79 @@ HTML_TEMPLATE = """
             });
         }
         
-        // Incrémenter le gain
-        function incrementGain() {
-            if (isUpdatingGain || supportedGains.length === 0) return;
-            const currentValue = actualGainValue !== null && actualGainValue !== undefined ? actualGainValue : sentGainValue;
-            const currentIndex = supportedGains.indexOf(currentValue);
-            if (currentIndex < supportedGains.length - 1) {
-                updateGainValue(supportedGains[currentIndex + 1]);
+        // Quand on touche le slider gain
+        window.onGainSliderTouch = function() {
+            gainSliderLocked = true;
+            if (gainSliderLockTimeout) {
+                clearTimeout(gainSliderLockTimeout);
             }
-        }
+        };
         
-        // Décrémenter le gain
-        function decrementGain() {
-            if (isUpdatingGain || supportedGains.length === 0) return;
-            const currentValue = actualGainValue !== null && actualGainValue !== undefined ? actualGainValue : sentGainValue;
-            const currentIndex = supportedGains.indexOf(currentValue);
-            if (currentIndex > 0) {
-                updateGainValue(supportedGains[currentIndex - 1]);
+        // Quand on relâche le slider gain
+        window.onGainSliderRelease = function() {
+            if (gainSliderLockTimeout) {
+                clearTimeout(gainSliderLockTimeout);
             }
-        }
+            gainSliderLockTimeout = setTimeout(() => {
+                gainSliderLocked = false;
+                // Remettre le slider à la valeur réelle après 2 secondes
+                const slider = document.getElementById('gainSlider');
+                if (slider && actualGainValue !== null && actualGainValue !== undefined) {
+                    // Trouver la valeur la plus proche dans supportedGains
+                    if (supportedGains.length > 0) {
+                        const nearestGain = findNearestGain(actualGainValue);
+                        slider.value = nearestGain;
+                    } else {
+                        slider.value = actualGainValue;
+                    }
+                }
+            }, 2000);
+        };
         
-        // Mettre à jour la valeur du gain
+        // Mettre à jour le gain quand le slider change
+        window.updateGain = function(value) {
+            if (isUpdatingGain) return;
+            
+            const numValue = parseFloat(value);
+            
+            // Trouver la valeur la plus proche dans supportedGains
+            let targetValue = numValue;
+            if (supportedGains.length > 0) {
+                targetValue = findNearestGain(numValue);
+            }
+            
+            sentGainValue = targetValue;
+            
+            // Mettre à jour le slider avec la valeur envoyée
+            const slider = document.getElementById('gainSlider');
+            if (slider) {
+                slider.value = targetValue;
+            }
+            
+            document.getElementById('gainValueSent').textContent = targetValue + ' dB';
+            
+            // Verrouiller le slider pendant la manipulation
+            gainSliderLocked = true;
+            if (gainSliderLockTimeout) {
+                clearTimeout(gainSliderLockTimeout);
+            }
+            
+            // Envoyer avec throttling
+            sendGainValue(targetValue);
+        };
+        
+        // Mettre à jour la valeur du gain (fonction interne)
         function updateGainValue(value) {
             if (isUpdatingGain) return;
             
             sentGainValue = value;
             document.getElementById('gainValueSent').textContent = value + ' dB';
+            
+            // Mettre à jour le slider
+            const slider = document.getElementById('gainSlider');
+            if (slider) {
+                slider.value = value;
+            }
             
             // Envoyer avec throttling
             sendGainValue(value);
@@ -1029,6 +1373,21 @@ HTML_TEMPLATE = """
             if (value !== null && value !== undefined) {
                 actualGainValue = value;
                 document.getElementById('gainValueActual').textContent = value + ' dB';
+                
+                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                if (!gainSliderLocked) {
+                    const slider = document.getElementById('gainSlider');
+                    if (slider) {
+                        // Trouver la valeur la plus proche dans supportedGains
+                        if (supportedGains.length > 0) {
+                            const nearestGain = findNearestGain(value);
+                            slider.value = nearestGain;
+                        } else {
+                            slider.value = value;
+                        }
+                    }
+                }
+                
                 // Si on reçoit des événements, le WebSocket fonctionne
                 updateGlobalStatus('connected', 'WebSocket caméra: Actif ✓');
                 console.log('Gain mis à jour via WebSocket:', value);
@@ -1412,17 +1771,44 @@ HTML_TEMPLATE = """
                 }
             }
             if (data.iris !== undefined) {
-                if (data.iris.normalised !== undefined) {
-                    actualIrisValue = data.iris.normalised;
-                    document.getElementById('irisValueActual').textContent = data.iris.normalised.toFixed(3);
-                }
                 if (data.iris.apertureStop !== undefined) {
-                    document.getElementById('irisApertureStop').textContent = data.iris.apertureStop.toFixed(2);
+                    actualIrisApertureStop = data.iris.apertureStop;
+                    document.getElementById('irisApertureStop').textContent = 'f/' + data.iris.apertureStop.toFixed(1);
+                    
+                    // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                    if (!irisSliderLocked) {
+                        const slider = document.getElementById('irisSlider');
+                        if (slider) {
+                            // Trouver la valeur la plus proche dans supportedApertureStops
+                            if (supportedApertureStops.length > 0) {
+                                const nearestAperture = findNearestApertureStop(data.iris.apertureStop);
+                                slider.value = nearestAperture;
+                            } else {
+                                slider.value = data.iris.apertureStop;
+                            }
+                        }
+                    }
+                } else {
+                    document.getElementById('irisApertureStop').textContent = '-';
                 }
             }
             if (data.gain !== undefined) {
                 actualGainValue = data.gain;
                 document.getElementById('gainValueActual').textContent = data.gain + ' dB';
+                
+                // Mettre à jour le slider seulement si on n'est pas en train de le manipuler
+                if (!gainSliderLocked) {
+                    const slider = document.getElementById('gainSlider');
+                    if (slider) {
+                        // Trouver la valeur la plus proche dans supportedGains
+                        if (supportedGains.length > 0) {
+                            const nearestGain = findNearestGain(data.gain);
+                            slider.value = nearestGain;
+                        } else {
+                            slider.value = data.gain;
+                        }
+                    }
+                }
             }
             if (data.shutter !== undefined && data.shutter.shutterSpeed !== undefined) {
                 actualShutterValue = data.shutter.shutterSpeed;
@@ -1474,6 +1860,14 @@ HTML_TEMPLATE = """
                         .then(data => {
                             if (data.success) {
                                 updateValuesFromData(data);
+                                // Stocker la description du zoom si disponible
+                                if (data.zoomDescription) {
+                                    window.zoomDescription = data.zoomDescription;
+                                }
+                                // Charger les ouvertures supportées depuis la description de l'iris
+                                if (data.irisDescription) {
+                                    loadSupportedApertureStopsFromDescription(data.irisDescription);
+                                }
                             }
                         })
                         .catch(error => {
@@ -1712,15 +2106,25 @@ HTML_TEMPLATE = """
                     }
                 }, 1000);
                 
-                // Charger les valeurs supportées (gain, shutter)
+                // Charger les valeurs supportées (gain, shutter, iris)
                 loadSupportedGains();
                 loadSupportedShutters();
+                loadSupportedApertureStops();
                 // Récupérer les valeurs initiales via HTTP (fallback si WebSocket ne fonctionne pas)
                 fetch('/get_initial_values')
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
                             updateValuesFromData(data);
+                            // Stocker la description du zoom si disponible
+                            if (data.zoomDescription) {
+                                window.zoomDescription = data.zoomDescription;
+                                console.log('Description du zoom récupérée:', data.zoomDescription);
+                            }
+                            // Charger les ouvertures supportées depuis la description de l'iris
+                            if (data.irisDescription) {
+                                loadSupportedApertureStopsFromDescription(data.irisDescription);
+                            }
                             console.log('Valeurs initiales récupérées via HTTP');
                         }
                     })
@@ -1748,36 +2152,14 @@ HTML_TEMPLATE = """
 @app.route('/')
 def index():
     """Page principale avec l'interface."""
-    # #region agent log
-    import json
-    import time
-    try:
-        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({'location':'focus_ui.py:1697','message':'index route called','data':{'controller_exists':controller is not None},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'run1','hypothesisId':'A'})+'\n')
-    except:
-        pass
-    # #endregion
     if controller is None:
         return "Erreur: Contrôleur non initialisé. Vérifiez les paramètres de connexion.", 500
     try:
         result = render_template_string(HTML_TEMPLATE)
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({'location':'focus_ui.py:1704','message':'index route returning HTML','data':{'html_length':len(result)},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'run1','hypothesisId':'A'})+'\n')
-        except:
-            pass
-        # #endregion
         return result
     except Exception as e:
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({'location':'focus_ui.py:1706','message':'index route exception','data':{'error':str(e)},'timestamp':int(time.time()*1000),'sessionId':'debug-session','runId':'run1','hypothesisId':'B'})+'\n')
-        except:
-            pass
-        # #endregion
-        return f"Erreur lors du rendu du template: {str(e)}", 500
+        logging.error(f"Erreur lors du rendu du template: {e}")
+        return f"Erreur lors du rendu de la page: {str(e)}", 500
 
 @app.route('/set_focus', methods=['POST'])
 def set_focus():
@@ -2039,6 +2421,22 @@ def get_initial_values():
     """Récupère toutes les valeurs initiales via HTTP (fallback si WebSocket ne fonctionne pas)."""
     result = {'success': True}
     
+    # Récupérer la description du zoom
+    try:
+        zoom_description = controller.get_zoom_description()
+        if zoom_description is not None:
+            result['zoomDescription'] = zoom_description
+    except Exception as e:
+        logging.error(f"Erreur lors de la récupération de la description du zoom: {e}")
+    
+    # Récupérer la description de l'iris (pour connaître les stops supportés)
+    try:
+        iris_description = controller.get_iris_description()
+        if iris_description is not None:
+            result['irisDescription'] = iris_description
+    except Exception as e:
+        logging.error(f"Erreur lors de la récupération de la description de l'iris: {e}")
+    
     # Récupérer les valeurs principales (focus, iris, gain, shutter, zoom)
     # Ces valeurs sont essentielles et doivent fonctionner
     try:
@@ -2138,7 +2536,7 @@ def handle_connect():
     """Gère la connexion d'un client WebSocket."""
     logging.info("Client WebSocket connecté")
     try:
-        emit('connected', {'status': 'connected'})
+        emit("connected", {"status": "connected"})
     except Exception as emit_err:
         logging.error(f"Erreur lors de l'émission de l'événement 'connected': {emit_err}")
     
@@ -2296,6 +2694,7 @@ def main():
     
     # Créer le contrôleur
     global controller, websocket_client
+<<<<<<< HEAD
     # #region agent log
     try:
         with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
@@ -2321,6 +2720,13 @@ def main():
         except:
             pass
         # #endregion
+=======
+    try:
+        controller = BlackmagicFocusController(args.url, args.user, args.password)
+        logging.info("Contrôleur initialisé avec succès")
+    except Exception as e:
+        logging.error(f"Erreur lors de l'initialisation du contrôleur: {e}")
+>>>>>>> 28f77b6d7fecd32c78e5333a11555f25ceedf063
         raise
     
     # Démarrer le thread qui traite la queue d'événements
