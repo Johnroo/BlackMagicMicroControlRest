@@ -10,7 +10,8 @@ import logging
 import time
 import json
 import os
-from typing import Optional
+from typing import Optional, Dict, Any
+from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
@@ -23,6 +24,40 @@ from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSoc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CameraData:
+    """Données pour une caméra."""
+    # Configuration
+    url: str = ""
+    username: str = ""
+    password: str = ""
+    
+    # Connexions
+    controller: Optional[Any] = None  # BlackmagicFocusController
+    websocket_client: Optional[Any] = None  # BlackmagicWebSocketClient
+    connected: bool = False
+    
+    # Valeurs
+    focus_sent_value: float = 0.0
+    focus_actual_value: float = 0.0
+    iris_sent_value: float = 0.0
+    iris_actual_value: float = 0.0
+    gain_sent_value: int = 0
+    gain_actual_value: int = 0
+    shutter_sent_value: int = 0
+    shutter_actual_value: int = 0
+    zoom_sent_value: float = 0.0
+    zoom_actual_value: float = 0.0
+    
+    # État
+    supported_gains: list = field(default_factory=list)
+    supported_shutter_speeds: list = field(default_factory=list)
+    
+    # Presets
+    presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    active_preset: Optional[int] = None  # Numéro du preset actuellement actif (1-10)
 
 
 class CameraSignals(QObject):
@@ -42,13 +77,14 @@ class CameraSignals(QObject):
 class ConnectionDialog(QDialog):
     """Dialog pour la connexion à la caméra."""
     
-    def __init__(self, parent=None, camera_url: str = "", username: str = "", password: str = "", connected: bool = False):
+    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", connected: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Paramètres de connexion")
+        self.setWindowTitle(f"Paramètres de connexion - Caméra {camera_id}")
         self.setMinimumWidth(400)
         self.setModal(True)
         
         # Variables
+        self.camera_id = camera_id
         self.connected = connected
         
         # Layout principal
@@ -222,19 +258,13 @@ class ConnectionDialog(QDialog):
 class MainWindow(QMainWindow):
     """Fenêtre principale de l'application PySide6."""
     
-    def __init__(self, camera_url: str = "http://Micro-Studio-Camera-4K-G2.local", 
-                 username: str = "roo", password: str = "koko"):
+    def __init__(self):
         super().__init__()
-        self.camera_url = camera_url.rstrip('/')
-        self.username = username
-        self.password = password
         self.signals = CameraSignals()
         
-        # Variables de connexion
-        self.controller = None
-        self.websocket_client = None
-        self.websocket_connected = False
-        self.connected = False
+        # Variables de connexion (remplacées par cameras dict)
+        self.cameras: Dict[int, CameraData] = {}
+        self.active_camera_id: int = 1
         
         # Variables pour le throttling
         self.last_iris_send_time = 0
@@ -256,17 +286,8 @@ class MainWindow(QMainWindow):
         self.keyboard_focus_queue = []
         self.keyboard_focus_processing = False
         
-        # Variables pour les valeurs
-        self.focus_sent_value = 0.0
-        self.focus_actual_value = 0.0
-        self.iris_sent_value = 0.0
-        self.iris_actual_value = 0.0
-        self.gain_sent_value = 0
-        self.gain_actual_value = 0
-        self.shutter_sent_value = 0
-        self.shutter_actual_value = 0
-        self.supported_gains = []
-        self.supported_shutter_speeds = []
+        # Charger la configuration des caméras
+        self.load_cameras_config()
         
         # Initialiser l'UI
         self.init_ui()
@@ -274,9 +295,98 @@ class MainWindow(QMainWindow):
         # Connecter les signaux
         self.connect_signals()
         
-        # Connexion automatique si des valeurs sont disponibles
-        if self.camera_url and self.username and self.password:
-            self.connect_to_camera(self.camera_url, self.username, self.password)
+        # Charger les valeurs de la caméra active dans l'UI
+        self._update_ui_from_camera_data(self.get_active_camera_data())
+        
+        # Connexion automatique si la caméra active a des paramètres configurés
+        cam_data = self.get_active_camera_data()
+        if cam_data.url and cam_data.username and cam_data.password:
+            self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
+    
+    def load_cameras_config(self):
+        """Charge la configuration des caméras depuis cameras_config.json."""
+        config_file = "cameras_config.json"
+        
+        try:
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+            else:
+                # Créer une configuration par défaut
+                config = {
+                    "camera_1": {
+                        "url": "http://Micro-Studio-Camera-4K-G2.local",
+                        "username": "roo",
+                        "password": "koko",
+                        "presets": {}
+                    }
+                }
+                for i in range(2, 9):
+                    config[f"camera_{i}"] = {
+                        "url": "",
+                        "username": "",
+                        "password": "",
+                        "presets": {}
+                    }
+                config["active_camera"] = 1
+            
+            # Initialiser les 8 caméras
+            for i in range(1, 9):
+                cam_key = f"camera_{i}"
+                if cam_key in config:
+                    cam_config = config[cam_key]
+                    # Initialiser les presets vides si absents
+                    if "presets" not in cam_config:
+                        cam_config["presets"] = {}
+                    
+                    self.cameras[i] = CameraData(
+                        url=cam_config.get("url", "").rstrip('/'),
+                        username=cam_config.get("username", ""),
+                        password=cam_config.get("password", ""),
+                        presets=cam_config.get("presets", {})
+                    )
+                else:
+                    # Créer une caméra vide
+                    self.cameras[i] = CameraData()
+            
+            # Définir la caméra active
+            self.active_camera_id = config.get("active_camera", 1)
+            
+        except Exception as e:
+            logger.error(f"Erreur lors du chargement de la configuration: {e}")
+            # Initialiser avec des valeurs par défaut
+            for i in range(1, 9):
+                self.cameras[i] = CameraData()
+            self.active_camera_id = 1
+    
+    def save_cameras_config(self):
+        """Sauvegarde la configuration des caméras dans cameras_config.json."""
+        config_file = "cameras_config.json"
+        
+        try:
+            config = {
+                "active_camera": self.active_camera_id
+            }
+            
+            for i in range(1, 9):
+                cam_data = self.cameras[i]
+                config[f"camera_{i}"] = {
+                    "url": cam_data.url,
+                    "username": cam_data.username,
+                    "password": cam_data.password,
+                    "presets": cam_data.presets
+                }
+            
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            logger.info("Configuration des caméras sauvegardée")
+        except Exception as e:
+            logger.error(f"Erreur lors de la sauvegarde de la configuration: {e}")
+    
+    def get_active_camera_data(self) -> CameraData:
+        """Retourne les données de la caméra active."""
+        return self.cameras.get(self.active_camera_id, CameraData())
     
     def init_ui(self):
         """Initialise l'interface utilisateur."""
@@ -286,13 +396,61 @@ class MainWindow(QMainWindow):
         # Activer le focus pour recevoir les événements clavier
         self.setFocusPolicy(Qt.StrongFocus)
         
+        # Layout principal vertical
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Sélecteur de caméra - 8 boutons
+        camera_selector_layout = QHBoxLayout()
+        camera_selector_layout.setContentsMargins(10, 5, 10, 5)
+        camera_selector_layout.setSpacing(5)
+        camera_label = QLabel("Caméra:")
+        camera_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        camera_selector_layout.addWidget(camera_label)
+        
+        # Créer 8 boutons pour les caméras
+        self.camera_buttons = []
+        for i in range(1, 9):
+            btn = QPushButton(str(i))
+            btn.setFixedSize(35, 30)
+            btn.setCheckable(True)
+            if i == self.active_camera_id:
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, cam_id=i: self.switch_active_camera(cam_id))
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 5px;
+                    background-color: #333;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    color: #fff;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    border-color: #777;
+                    background-color: #444;
+                }
+                QPushButton:checked {
+                    background-color: #0066cc;
+                    border-color: #0088ff;
+                }
+            """)
+            self.camera_buttons.append(btn)
+            camera_selector_layout.addWidget(btn)
+        
+        camera_selector_layout.addStretch()
+        
+        camera_selector_widget = QWidget()
+        camera_selector_widget.setLayout(camera_selector_layout)
+        camera_selector_widget.setStyleSheet("background-color: #1a1a1a; border-bottom: 1px solid #444;")
+        main_layout.addWidget(camera_selector_widget)
         
         # Widget central avec layout horizontal
         central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(20)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        central_layout = QHBoxLayout(central_widget)
+        central_layout.setSpacing(20)
+        central_layout.setContentsMargins(20, 20, 20, 20)
         
         # Appliquer le style sombre
         self.setStyleSheet("""
@@ -313,13 +471,21 @@ class MainWindow(QMainWindow):
         self.zoom_panel = self.create_zoom_panel()
         self.controls_panel = self.create_controls_panel()
         
-        # Ajouter les panneaux au layout
-        main_layout.addWidget(self.focus_panel)
-        main_layout.addWidget(self.iris_panel)
-        main_layout.addWidget(self.gain_panel)
-        main_layout.addWidget(self.shutter_panel)
-        main_layout.addWidget(self.zoom_panel)
-        main_layout.addWidget(self.controls_panel)
+        # Ajouter les panneaux au layout central
+        central_layout.addWidget(self.focus_panel)
+        central_layout.addWidget(self.iris_panel)
+        central_layout.addWidget(self.gain_panel)
+        central_layout.addWidget(self.shutter_panel)
+        central_layout.addWidget(self.zoom_panel)
+        central_layout.addWidget(self.controls_panel)
+        
+        # Ajouter le widget central au layout principal
+        main_layout.addWidget(central_widget)
+        
+        # Créer le widget principal et le définir comme central widget
+        main_widget = QWidget()
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
         
         # Connecter le redimensionnement de la fenêtre pour adapter le slider
         # Créer un filtre d'événements pour détecter les redimensionnements
@@ -372,6 +538,82 @@ class MainWindow(QMainWindow):
                 border-top: 1px solid #444;
             }
         """)
+    
+    def switch_active_camera(self, camera_id: int):
+        """Bascule vers la caméra spécifiée (pour l'affichage UI)."""
+        if camera_id < 1 or camera_id > 8:
+            logger.warning(f"ID de caméra invalide: {camera_id}")
+            return
+        
+        self.active_camera_id = camera_id
+        cam_data = self.cameras[camera_id]
+        
+        # Mettre à jour le sélecteur
+        # Mettre à jour les boutons de caméra
+        for i, btn in enumerate(self.camera_buttons, start=1):
+            btn.blockSignals(True)
+            btn.setChecked(i == camera_id)
+            btn.blockSignals(False)
+        
+        # Charger les valeurs de la caméra sélectionnée dans l'UI
+        self._update_ui_from_camera_data(cam_data)
+        
+        # Mettre à jour l'encadré du preset actif
+        self.update_preset_highlight()
+        
+        # Mettre à jour le status label
+        if cam_data.connected:
+            self.status_label.setText(f"✓ Caméra {camera_id} - Connectée à {cam_data.url}")
+            self.status_label.setStyleSheet("color: #0f0;")
+        else:
+            if cam_data.url:
+                self.status_label.setText(f"✗ Caméra {camera_id} - Déconnectée ({cam_data.url})")
+            else:
+                self.status_label.setText(f"✗ Caméra {camera_id} - Non configurée")
+            self.status_label.setStyleSheet("color: #f00;")
+        
+        # Activer/désactiver les contrôles selon l'état de connexion
+        self.set_controls_enabled(cam_data.connected)
+        
+        # Sauvegarder la caméra active dans la config
+        self.save_cameras_config()
+        
+        logger.info(f"Caméra active changée vers {camera_id}")
+    
+    def _update_ui_from_camera_data(self, cam_data: CameraData):
+        """Met à jour l'UI avec les données de la caméra spécifiée."""
+        # Focus
+        self.focus_sent_value = cam_data.focus_sent_value
+        self.focus_actual_value = cam_data.focus_actual_value
+        if hasattr(self, 'focus_value_sent'):
+            self.focus_value_sent.setText(f"{cam_data.focus_sent_value:.3f}")
+        if hasattr(self, 'focus_value_actual'):
+            self.focus_value_actual.setText(f"{cam_data.focus_actual_value:.3f}")
+        if hasattr(self, 'focus_slider'):
+            slider_value = int(cam_data.focus_actual_value * 1000)
+            self.focus_slider.blockSignals(True)
+            self.focus_slider.setValue(slider_value)
+            self.focus_slider.blockSignals(False)
+        
+        # Iris
+        self.iris_sent_value = cam_data.iris_sent_value
+        self.iris_actual_value = cam_data.iris_actual_value
+        # TODO: Mettre à jour les widgets iris
+        
+        # Gain
+        self.gain_sent_value = cam_data.gain_sent_value
+        self.gain_actual_value = cam_data.gain_actual_value
+        # TODO: Mettre à jour les widgets gain
+        
+        # Shutter
+        self.shutter_sent_value = cam_data.shutter_sent_value
+        self.shutter_actual_value = cam_data.shutter_actual_value
+        # TODO: Mettre à jour les widgets shutter
+        
+        # Zoom
+        self.zoom_sent_value = cam_data.zoom_sent_value
+        self.zoom_actual_value = cam_data.zoom_actual_value
+        # TODO: Mettre à jour les widgets zoom
     
     def create_focus_panel(self):
         """Crée le panneau de contrôle du focus."""
@@ -505,6 +747,48 @@ class MainWindow(QMainWindow):
         # Ajouter le slider container avec un stretch factor pour qu'il prenne tout l'espace disponible
         # Utiliser un stretch factor élevé pour garantir qu'il prend le maximum d'espace
         layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
+        
+        # Stocker slider_container pour pouvoir le forcer à une hauteur
+        panel.slider_container = slider_container
+        panel.focus_slider = self.focus_slider
+        
+        # Fonction pour forcer la hauteur du slider
+        def force_slider_height():
+            try:
+                # Calculer la hauteur disponible de manière plus précise
+                panel_height = panel.height()
+                if panel_height <= 0:
+                    return  # Pas encore initialisé
+                
+                # Obtenir les hauteurs réelles des éléments
+                title = layout.itemAt(0).widget() if layout.count() > 0 else None
+                focus_display = layout.itemAt(1).widget() if layout.count() > 1 else None
+                
+                title_height = title.height() if title else 40
+                display_height = focus_display.height() if focus_display else 80
+                
+                # Marges du layout (top + bottom)
+                layout_margins = layout.contentsMargins()
+                margins_height = layout_margins.top() + layout_margins.bottom()
+                
+                # Espacement entre les widgets
+                spacing = layout.spacing() * 2  # Espacement avant et après le slider
+                
+                # Calculer la hauteur disponible
+                available_height = panel_height - title_height - display_height - margins_height - spacing
+                
+                # S'assurer qu'on a au moins une hauteur minimale raisonnable
+                available_height = max(200, available_height)
+                
+                slider_container.setMinimumHeight(available_height)
+                slider_container.setMaximumHeight(available_height)
+            except Exception as e:
+                pass
+        
+        panel.force_slider_height = force_slider_height
+        
+        # Appeler une première fois après que la fenêtre soit affichée
+        QTimer.singleShot(100, force_slider_height)
         
         # Connecter les signaux du slider
         self.focus_slider.sliderPressed.connect(self.on_focus_slider_pressed)
@@ -645,18 +929,20 @@ class MainWindow(QMainWindow):
         return panel
     
     def increment_iris(self):
-        """Incrémente l'iris de 0.05."""
-        if not self.connected or not self.controller:
+        """Incrémente l'iris de 0.05 pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        current_value = self.iris_actual_value if self.iris_actual_value is not None else self.iris_sent_value
+        current_value = cam_data.iris_actual_value if cam_data.iris_actual_value is not None else cam_data.iris_sent_value
         new_value = min(1.0, current_value + 0.05)
         self.update_iris_value(new_value)
     
     def decrement_iris(self):
-        """Décrémente l'iris de 0.05."""
-        if not self.connected or not self.controller:
+        """Décrémente l'iris de 0.05 pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        current_value = self.iris_actual_value if self.iris_actual_value is not None else self.iris_sent_value
+        current_value = cam_data.iris_actual_value if cam_data.iris_actual_value is not None else cam_data.iris_sent_value
         new_value = max(0.0, current_value - 0.05)
         self.update_iris_value(new_value)
     
@@ -806,61 +1092,68 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
     
-    def load_supported_gains(self):
-        """Charge la liste des gains supportés."""
-        if not self.controller:
+    def load_supported_gains(self, camera_id: int):
+        """Charge la liste des gains supportés pour la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.controller:
             return
         try:
-            gains = self.controller.get_supported_gains()
+            gains = cam_data.controller.get_supported_gains()
             if gains:
-                self.supported_gains = sorted(gains)
-                logger.info(f"Gains supportés chargés: {self.supported_gains}")
+                cam_data.supported_gains = sorted(gains)
+                logger.info(f"Caméra {camera_id} - Gains supportés chargés: {cam_data.supported_gains}")
         except Exception as e:
-            logger.error(f"Erreur lors du chargement des gains supportés: {e}")
+            logger.error(f"Caméra {camera_id} - Erreur lors du chargement des gains supportés: {e}")
     
     def increment_gain(self):
-        """Incrémente le gain vers la valeur suivante supportée."""
-        if not self.connected or not self.controller:
+        """Incrémente le gain vers la valeur suivante supportée pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        if not self.supported_gains:
+        if not cam_data.supported_gains:
             return
-        current_value = self.gain_actual_value if self.gain_actual_value is not None else self.gain_sent_value
+        current_value = cam_data.gain_actual_value if cam_data.gain_actual_value is not None else cam_data.gain_sent_value
         try:
-            current_index = self.supported_gains.index(current_value)
-            if current_index < len(self.supported_gains) - 1:
-                new_value = self.supported_gains[current_index + 1]
+            current_index = cam_data.supported_gains.index(current_value)
+            if current_index < len(cam_data.supported_gains) - 1:
+                new_value = cam_data.supported_gains[current_index + 1]
                 self.update_gain_value(new_value)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
-            nearest = min(self.supported_gains, key=lambda x: abs(x - current_value))
-            nearest_index = self.supported_gains.index(nearest)
-            if nearest_index < len(self.supported_gains) - 1:
-                new_value = self.supported_gains[nearest_index + 1]
+            nearest = min(cam_data.supported_gains, key=lambda x: abs(x - current_value))
+            nearest_index = cam_data.supported_gains.index(nearest)
+            if nearest_index < len(cam_data.supported_gains) - 1:
+                new_value = cam_data.supported_gains[nearest_index + 1]
                 self.update_gain_value(new_value)
     
     def decrement_gain(self):
-        """Décrémente le gain vers la valeur précédente supportée."""
-        if not self.connected or not self.controller:
+        """Décrémente le gain vers la valeur précédente supportée pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        if not self.supported_gains:
+        if not cam_data.supported_gains:
             return
-        current_value = self.gain_actual_value if self.gain_actual_value is not None else self.gain_sent_value
+        current_value = cam_data.gain_actual_value if cam_data.gain_actual_value is not None else cam_data.gain_sent_value
         try:
-            current_index = self.supported_gains.index(current_value)
+            current_index = cam_data.supported_gains.index(current_value)
             if current_index > 0:
-                new_value = self.supported_gains[current_index - 1]
+                new_value = cam_data.supported_gains[current_index - 1]
                 self.update_gain_value(new_value)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
-            nearest = min(self.supported_gains, key=lambda x: abs(x - current_value))
-            nearest_index = self.supported_gains.index(nearest)
+            nearest = min(cam_data.supported_gains, key=lambda x: abs(x - current_value))
+            nearest_index = cam_data.supported_gains.index(nearest)
             if nearest_index > 0:
-                new_value = self.supported_gains[nearest_index - 1]
+                new_value = cam_data.supported_gains[nearest_index - 1]
                 self.update_gain_value(new_value)
     
     def update_gain_value(self, value: int):
-        """Met à jour la valeur du gain."""
-        self.gain_sent_value = value
+        """Met à jour la valeur du gain pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        cam_data.gain_sent_value = value
         self.gain_value_sent.setText(f"{value} dB")
         self.send_gain_value(value)
     
@@ -1003,56 +1296,62 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
     
-    def load_supported_shutters(self):
-        """Charge la liste des vitesses de shutter supportées."""
-        if not self.controller:
+    def load_supported_shutters(self, camera_id: int):
+        """Charge la liste des vitesses de shutter supportées pour la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.controller:
             return
         try:
-            shutters = self.controller.get_supported_shutters()
+            shutters = cam_data.controller.get_supported_shutters()
             if shutters and 'shutterSpeeds' in shutters:
-                self.supported_shutter_speeds = sorted(shutters['shutterSpeeds'])
-                logger.info(f"Vitesses de shutter supportées chargées: {self.supported_shutter_speeds}")
+                cam_data.supported_shutter_speeds = sorted(shutters['shutterSpeeds'])
+                logger.info(f"Caméra {camera_id} - Vitesses de shutter supportées chargées: {cam_data.supported_shutter_speeds}")
         except Exception as e:
-            logger.error(f"Erreur lors du chargement des vitesses de shutter supportées: {e}")
+            logger.error(f"Caméra {camera_id} - Erreur lors du chargement des vitesses de shutter supportées: {e}")
     
     def increment_shutter(self):
-        """Incrémente le shutter vers la vitesse suivante supportée."""
-        if not self.connected or not self.controller:
+        """Incrémente le shutter vers la vitesse suivante supportée pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        if not self.supported_shutter_speeds:
+        if not cam_data.supported_shutter_speeds:
             return
-        current_value = self.shutter_actual_value if self.shutter_actual_value is not None else self.shutter_sent_value
+        current_value = cam_data.shutter_actual_value if cam_data.shutter_actual_value is not None else cam_data.shutter_sent_value
         try:
-            current_index = self.supported_shutter_speeds.index(current_value)
-            if current_index < len(self.supported_shutter_speeds) - 1:
-                new_value = self.supported_shutter_speeds[current_index + 1]
+            current_index = cam_data.supported_shutter_speeds.index(current_value)
+            if current_index < len(cam_data.supported_shutter_speeds) - 1:
+                new_value = cam_data.supported_shutter_speeds[current_index + 1]
                 self.update_shutter_value(new_value)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
-            nearest = min(self.supported_shutter_speeds, key=lambda x: abs(x - current_value))
-            nearest_index = self.supported_shutter_speeds.index(nearest)
-            if nearest_index < len(self.supported_shutter_speeds) - 1:
-                new_value = self.supported_shutter_speeds[nearest_index + 1]
+            nearest = min(cam_data.supported_shutter_speeds, key=lambda x: abs(x - current_value))
+            nearest_index = cam_data.supported_shutter_speeds.index(nearest)
+            if nearest_index < len(cam_data.supported_shutter_speeds) - 1:
+                new_value = cam_data.supported_shutter_speeds[nearest_index + 1]
                 self.update_shutter_value(new_value)
     
     def decrement_shutter(self):
-        """Décrémente le shutter vers la vitesse précédente supportée."""
-        if not self.connected or not self.controller:
+        """Décrémente le shutter vers la vitesse précédente supportée pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
-        if not self.supported_shutter_speeds:
+        if not cam_data.supported_shutter_speeds:
             return
-        current_value = self.shutter_actual_value if self.shutter_actual_value is not None else self.shutter_sent_value
+        current_value = cam_data.shutter_actual_value if cam_data.shutter_actual_value is not None else cam_data.shutter_sent_value
         try:
-            current_index = self.supported_shutter_speeds.index(current_value)
+            current_index = cam_data.supported_shutter_speeds.index(current_value)
             if current_index > 0:
-                new_value = self.supported_shutter_speeds[current_index - 1]
+                new_value = cam_data.supported_shutter_speeds[current_index - 1]
                 self.update_shutter_value(new_value)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
-            nearest = min(self.supported_shutter_speeds, key=lambda x: abs(x - current_value))
-            nearest_index = self.supported_shutter_speeds.index(nearest)
+            nearest = min(cam_data.supported_shutter_speeds, key=lambda x: abs(x - current_value))
+            nearest_index = cam_data.supported_shutter_speeds.index(nearest)
             if nearest_index > 0:
-                new_value = self.supported_shutter_speeds[nearest_index - 1]
+                new_value = cam_data.supported_shutter_speeds[nearest_index - 1]
                 self.update_shutter_value(new_value)
     
     def update_shutter_value(self, value: int):
@@ -1194,8 +1493,8 @@ class MainWindow(QMainWindow):
         self.zebra_toggle.setStyleSheet("""
             QPushButton {
                 width: 100%;
-                padding: 15px;
-                font-size: 12px;
+                padding: 8px;
+                font-size: 10px;
                 font-weight: bold;
                 border: 2px solid #555;
                 border-radius: 8px;
@@ -1219,8 +1518,8 @@ class MainWindow(QMainWindow):
         self.focusAssist_toggle.setStyleSheet("""
             QPushButton {
                 width: 100%;
-                padding: 15px;
-                font-size: 12px;
+                padding: 8px;
+                font-size: 10px;
                 font-weight: bold;
                 border: 2px solid #555;
                 border-radius: 8px;
@@ -1244,8 +1543,8 @@ class MainWindow(QMainWindow):
         self.falseColor_toggle.setStyleSheet("""
             QPushButton {
                 width: 100%;
-                padding: 15px;
-                font-size: 12px;
+                padding: 8px;
+                font-size: 10px;
                 font-weight: bold;
                 border: 2px solid #555;
                 border-radius: 8px;
@@ -1269,8 +1568,8 @@ class MainWindow(QMainWindow):
         self.cleanfeed_toggle.setStyleSheet("""
             QPushButton {
                 width: 100%;
-                padding: 15px;
-                font-size: 12px;
+                padding: 8px;
+                font-size: 10px;
                 font-weight: bold;
                 border: 2px solid #555;
                 border-radius: 8px;
@@ -1294,8 +1593,8 @@ class MainWindow(QMainWindow):
         self.autofocus_btn.setStyleSheet("""
             QPushButton {
                 width: 100%;
-                padding: 20px;
-                font-size: 12px;
+                padding: 10px;
+                font-size: 11px;
                 font-weight: bold;
                 border: 2px solid #555;
                 border-radius: 8px;
@@ -1318,7 +1617,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.autofocus_btn)
         
         # Section Presets
-        layout.addSpacing(20)
+        layout.addSpacing(10)
         presets_label = QLabel("Presets")
         presets_label.setAlignment(Qt.AlignCenter)
         presets_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
@@ -1415,11 +1714,12 @@ class MainWindow(QMainWindow):
         self.send_cleanfeed(new_state)
     
     def send_zebra(self, enabled: bool):
-        """Envoie l'état du zebra."""
-        if not self.connected or not self.controller:
+        """Envoie l'état du zebra pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         try:
-            success = self.controller.set_zebra(enabled, silent=True)
+            success = cam_data.controller.set_zebra(enabled, silent=True)
             if not success:
                 # Revert on error
                 self.zebra_enabled = not enabled
@@ -1438,11 +1738,12 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de l'envoi du zebra: {e}")
     
     def send_focus_assist(self, enabled: bool):
-        """Envoie l'état du focus assist."""
-        if not self.connected or not self.controller:
+        """Envoie l'état du focus assist pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         try:
-            success = self.controller.set_focus_assist(enabled, silent=True)
+            success = cam_data.controller.set_focus_assist(enabled, silent=True)
             if not success:
                 self.focusAssist_enabled = not enabled
                 self.focusAssist_toggle.blockSignals(True)
@@ -1459,11 +1760,12 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de l'envoi du focus assist: {e}")
     
     def send_false_color(self, enabled: bool):
-        """Envoie l'état du false color."""
-        if not self.connected or not self.controller:
+        """Envoie l'état du false color pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         try:
-            success = self.controller.set_false_color(enabled, silent=True)
+            success = cam_data.controller.set_false_color(enabled, silent=True)
             if not success:
                 self.falseColor_enabled = not enabled
                 self.falseColor_toggle.blockSignals(True)
@@ -1480,11 +1782,12 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de l'envoi du false color: {e}")
     
     def send_cleanfeed(self, enabled: bool):
-        """Envoie l'état du cleanfeed."""
-        if not self.connected or not self.controller:
+        """Envoie l'état du cleanfeed pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         try:
-            success = self.controller.set_cleanfeed(enabled, silent=True)
+            success = cam_data.controller.set_cleanfeed(enabled, silent=True)
             if not success:
                 self.cleanfeed_enabled = not enabled
                 self.cleanfeed_toggle.blockSignals(True)
@@ -1501,14 +1804,15 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de l'envoi du cleanfeed: {e}")
     
     def do_autofocus(self):
-        """Déclenche l'autofocus."""
-        if not self.connected or not self.controller:
+        """Déclenche l'autofocus pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         self.autofocus_btn.setEnabled(False)
         self.autofocus_btn.setText("🔍 Autofocus...")
         
         try:
-            success = self.controller.do_autofocus(0.5, 0.5, silent=True)
+            success = cam_data.controller.do_autofocus(0.5, 0.5, silent=True)
             if success:
                 self.autofocus_btn.setText("✓ Autofocus OK")
                 # Attendre un peu que l'autofocus se termine, puis récupérer la valeur normalisée
@@ -1528,22 +1832,39 @@ class MainWindow(QMainWindow):
     
     def _update_focus_after_autofocus(self):
         """Récupère la valeur du focus après l'autofocus et met à jour l'affichage."""
-        if not self.connected or not self.controller:
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         try:
-            focus_value = self.controller.get_focus()
-            if focus_value is not None:
-                # Mettre à jour la valeur réelle
-                self.focus_actual_value = focus_value
-                self.focus_value_actual.setText(f"{focus_value:.3f}")
+            focus_data = cam_data.controller.get_focus()
+            if focus_data:
+                # get_focus() peut retourner soit un dict avec 'normalised', soit directement un float
+                if isinstance(focus_data, dict) and 'normalised' in focus_data:
+                    focus_value = float(focus_data['normalised'])
+                elif isinstance(focus_data, (int, float)):
+                    focus_value = float(focus_data)
+                else:
+                    focus_value = None
                 
-                # Mettre à jour le slider si l'utilisateur ne le touche pas
-                if not self.focus_slider_user_touching:
-                    slider_value = int(focus_value * 1000)
-                    self.focus_slider.blockSignals(True)
-                    self.focus_slider.setValue(slider_value)
-                    self.focus_slider.blockSignals(False)
+                if focus_value is not None:
+                    # Mettre à jour les données de la caméra
+                    cam_data.focus_actual_value = focus_value
+                    cam_data.focus_sent_value = focus_value
+                    
+                    # Mettre à jour l'UI
+                    self.focus_value_actual.setText(f"{focus_value:.3f}")
+                    self.focus_value_sent.setText(f"{focus_value:.3f}")
+                    
+                    # Mettre à jour le slider si l'utilisateur ne le touche pas
+                    if not self.focus_slider_user_touching:
+                        slider_value = int(focus_value * 1000)
+                        self.focus_slider.blockSignals(True)
+                        self.focus_slider.setValue(slider_value)
+                        self.focus_slider.blockSignals(False)
+                else:
+                    logger.warning("Aucune valeur de focus récupérée après l'autofocus")
         except Exception as e:
+            logger.error(f"Erreur lors de la récupération du focus après autofocus: {e}")
             logger.error(f"Erreur lors de la récupération du focus après autofocus: {e}")
     
     def connect_signals(self):
@@ -1557,126 +1878,131 @@ class MainWindow(QMainWindow):
         self.signals.focusAssist_changed.connect(self.on_focusAssist_changed)
         self.signals.falseColor_changed.connect(self.on_falseColor_changed)
         self.signals.cleanfeed_changed.connect(self.on_cleanfeed_changed)
-        self.signals.websocket_status.connect(self.on_websocket_status)
+        # Note: websocket_status n'est plus utilisé car on utilise maintenant _handle_websocket_change avec camera_id
     
     def on_parameter_change(self, param_name: str, param_data: dict):
-        """Callback appelé quand un paramètre change via WebSocket."""
-        try:
-            if param_name == 'focus':
-                value = param_data.get('normalised') or param_data.get('value')
-                if value is not None:
-                    self.signals.focus_changed.emit(float(value))
-            elif param_name == 'iris':
-                self.signals.iris_changed.emit(param_data)
-            elif param_name == 'gain':
-                value = param_data.get('gain') or param_data.get('value')
-                if value is not None:
-                    self.signals.gain_changed.emit(int(value))
-            elif param_name == 'shutter':
-                self.signals.shutter_changed.emit(param_data)
-            elif param_name == 'zoom':
-                self.signals.zoom_changed.emit(param_data)
-            elif param_name == 'zebra':
-                enabled = param_data.get('enabled') or param_data.get('value', False)
-                self.signals.zebra_changed.emit(bool(enabled))
-            elif param_name == 'focusAssist':
-                enabled = param_data.get('enabled') or param_data.get('value', False)
-                self.signals.focusAssist_changed.emit(bool(enabled))
-            elif param_name == 'falseColor':
-                enabled = param_data.get('enabled') or param_data.get('value', False)
-                self.signals.falseColor_changed.emit(bool(enabled))
-            elif param_name == 'cleanfeed':
-                enabled = param_data.get('enabled') or param_data.get('value', False)
-                self.signals.cleanfeed_changed.emit(bool(enabled))
-        except Exception as e:
-            logger.error(f"Erreur dans on_parameter_change pour {param_name}: {e}")
+        """Callback appelé quand un paramètre change via WebSocket (déprécié)."""
+        # Cette méthode est dépréciée car on utilise maintenant _handle_websocket_change avec camera_id
+        # qui est appelée directement depuis connect_websocket
+        pass
     
     def on_websocket_connection_status(self, connected: bool, message: str):
-        """Callback appelé quand l'état de connexion WebSocket change."""
-        self.websocket_connected = connected
-        self.signals.websocket_status.emit(connected, message)
+        """Callback appelé quand l'état de connexion WebSocket change (déprécié)."""
+        # Cette méthode est dépréciée car on utilise maintenant connect_websocket avec camera_id
+        # qui appelle directement on_websocket_status avec camera_id
+        pass
     
     def open_connection_dialog(self):
-        """Ouvre le dialog de connexion."""
+        """Ouvre le dialog de connexion pour la caméra active."""
+        cam_data = self.get_active_camera_data()
         dialog = ConnectionDialog(
             self,
-            camera_url=self.camera_url,
-            username=self.username,
-            password=self.password,
-            connected=self.connected
+            camera_id=self.active_camera_id,
+            camera_url=cam_data.url,
+            username=cam_data.username,
+            password=cam_data.password,
+            connected=cam_data.connected
         )
-        dialog.exec()
+        if dialog.exec():
+            # Sauvegarder la configuration
+            cam_data.url = dialog.url_input.text().rstrip('/')
+            cam_data.username = dialog.username_input.text()
+            cam_data.password = dialog.password_input.text()
+            
+            # Sauvegarder dans le fichier
+            self.save_cameras_config()
+            
+            # Optionnel: se connecter si demandé
+            if dialog.connected and dialog.connect_btn.text() == "Connecter":
+                self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
     
-    def connect_to_camera(self, camera_url: str, username: str, password: str):
+    def connect_to_camera(self, camera_id: int, camera_url: str, username: str, password: str):
         """Se connecte à la caméra avec les paramètres fournis."""
+        if camera_id < 1 or camera_id > 8:
+            logger.error(f"ID de caméra invalide: {camera_id}")
+            return
+        
+        cam_data = self.cameras[camera_id]
+        
         try:
             # Mettre à jour les valeurs de connexion
-            self.camera_url = camera_url.rstrip('/')
-            self.username = username
-            self.password = password
+            cam_data.url = camera_url.rstrip('/')
+            cam_data.username = username
+            cam_data.password = password
             
-            # Déconnecter si déjà connecté
-            if self.connected:
-                self.disconnect_from_camera()
+            # Déconnecter si déjà connecté (pour cette caméra)
+            if cam_data.connected:
+                self.disconnect_from_camera(camera_id)
             
             # Créer le contrôleur
-            self.controller = BlackmagicFocusController(self.camera_url, self.username, self.password)
+            cam_data.controller = BlackmagicFocusController(cam_data.url, cam_data.username, cam_data.password)
             
             # Se connecter au WebSocket
-            self.connect_websocket()
+            self.connect_websocket(camera_id)
             
             # Charger les valeurs initiales
-            self.load_initial_values()
+            self.load_initial_values(camera_id)
             
             # Charger les gains et shutters supportés
-            self.load_supported_gains()
-            self.load_supported_shutters()
+            self.load_supported_gains(camera_id)
+            self.load_supported_shutters(camera_id)
             
             # Mettre à jour l'état
-            self.connected = True
-            self.status_label.setText(f"✓ Connecté à {self.camera_url}")
-            self.status_label.setStyleSheet("color: #0f0;")
+            cam_data.connected = True
             
-            # Activer tous les contrôles
-            self.set_controls_enabled(True)
+            # Mettre à jour l'UI seulement si c'est la caméra active
+            if camera_id == self.active_camera_id:
+                self.status_label.setText(f"✓ Caméra {camera_id} - Connectée à {cam_data.url}")
+                self.status_label.setStyleSheet("color: #0f0;")
+                # Activer tous les contrôles
+                self.set_controls_enabled(True)
             
-            logger.info(f"Connecté à {self.camera_url}")
+            logger.info(f"Caméra {camera_id} connectée à {cam_data.url}")
         except Exception as e:
-            logger.error(f"Erreur lors de la connexion: {e}")
-            self.connected = False
-            self.status_label.setText(f"✗ Erreur de connexion: {e}")
-            self.status_label.setStyleSheet("color: #f00;")
-            self.set_controls_enabled(False)
-            if self.controller:
-                self.controller = None
+            logger.error(f"Erreur lors de la connexion de la caméra {camera_id}: {e}")
+            cam_data.connected = False
+            if camera_id == self.active_camera_id:
+                self.status_label.setText(f"✗ Caméra {camera_id} - Erreur de connexion: {e}")
+                self.status_label.setStyleSheet("color: #f00;")
+                self.set_controls_enabled(False)
+            if cam_data.controller:
+                cam_data.controller = None
     
-    def disconnect_from_camera(self):
-        """Se déconnecte de la caméra."""
+    def disconnect_from_camera(self, camera_id: int):
+        """Se déconnecte de la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            logger.error(f"ID de caméra invalide: {camera_id}")
+            return
+        
+        cam_data = self.cameras[camera_id]
+        
         try:
             # Arrêter le WebSocket
-            if self.websocket_client:
-                self.websocket_client.stop()
-                self.websocket_client = None
+            if cam_data.websocket_client:
+                cam_data.websocket_client.stop()
+                cam_data.websocket_client = None
             
             # Détruire le contrôleur
-            self.controller = None
+            cam_data.controller = None
             
             # Mettre à jour l'état
-            self.connected = False
-            self.websocket_connected = False
-            self.status_label.setText("✗ Déconnecté")
-            self.status_label.setStyleSheet("color: #f00;")
+            cam_data.connected = False
             
-            # Désactiver tous les contrôles
-            self.set_controls_enabled(False)
+            # Mettre à jour l'UI seulement si c'est la caméra active
+            if camera_id == self.active_camera_id:
+                self.status_label.setText(f"✗ Caméra {camera_id} - Déconnectée")
+                self.status_label.setStyleSheet("color: #f00;")
+                # Désactiver tous les contrôles
+                self.set_controls_enabled(False)
             
-            logger.info("Déconnecté de la caméra")
+            logger.info(f"Caméra {camera_id} déconnectée")
         except Exception as e:
-            logger.error(f"Erreur lors de la déconnexion: {e}")
+            logger.error(f"Erreur lors de la déconnexion de la caméra {camera_id}: {e}")
     
     def keyPressEvent(self, event: QKeyEvent):
         """Gère les événements clavier pour ajuster le focus avec les flèches."""
-        if not self.connected or not self.controller:
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             super().keyPressEvent(event)
             return
         
@@ -1751,18 +2077,20 @@ class MainWindow(QMainWindow):
     
     def _adjust_focus_precise_increment(self, increment: float):
         """Ajuste le focus d'un incrément donné."""
+        cam_data = self.get_active_camera_data()
         # Utiliser focus_sent_value pour s'assurer qu'on part de la dernière valeur envoyée
-        current_value = self.focus_sent_value if self.focus_sent_value is not None else (self.focus_actual_value if self.focus_actual_value is not None else 0.0)
+        current_value = cam_data.focus_sent_value if cam_data.focus_sent_value is not None else (cam_data.focus_actual_value if cam_data.focus_actual_value is not None else 0.0)
         new_value = max(0.0, min(1.0, current_value + increment))
         self._adjust_focus_precise(new_value)
     
     def _adjust_focus_precise(self, value: float):
         """Ajuste le focus de manière très précise."""
+        cam_data = self.get_active_camera_data()
         # Note: focus_keyboard_adjusting n'est plus utilisé pour bloquer les mises à jour socket
         # Les valeurs socket sont toujours acceptées et affichées pour refléter l'état réel de la caméra
         
         # Mettre à jour la valeur envoyée
-        self.focus_sent_value = value
+        cam_data.focus_sent_value = value
         self.focus_value_sent.setText(f"{value:.3f}")
         
         # Mettre à jour le slider
@@ -1772,7 +2100,7 @@ class MainWindow(QMainWindow):
         self.focus_slider.blockSignals(False)
         
         # Ajouter à la file d'attente au lieu d'envoyer directement
-        if self.controller:
+        if cam_data.controller:
             # Toujours ajouter la valeur à la file (on gardera seulement la dernière lors du traitement)
             self.keyboard_focus_queue.append(value)
             # Traiter la file d'attente seulement si pas déjà en cours
@@ -1781,7 +2109,8 @@ class MainWindow(QMainWindow):
     
     def _process_keyboard_focus_queue(self):
         """Traite la file d'attente des valeurs clavier."""
-        if not self.controller or self.keyboard_focus_processing or self.focus_sending:
+        cam_data = self.get_active_camera_data()
+        if not cam_data.controller or self.keyboard_focus_processing or self.focus_sending:
             return
         
         if not self.keyboard_focus_queue:
@@ -1811,7 +2140,8 @@ class MainWindow(QMainWindow):
     
     def _process_keyboard_focus_queue_direct(self, value: float):
         """Traite directement une valeur clavier sans passer par la file."""
-        if not self.controller:
+        cam_data = self.get_active_camera_data()
+        if not cam_data.controller:
             self.focus_sending = False
             self.keyboard_focus_processing = False
             return
@@ -1824,7 +2154,7 @@ class MainWindow(QMainWindow):
         self.focus_sending = True
         
         try:
-            success = self.controller.set_focus(value, silent=True)
+            success = cam_data.controller.set_focus(value, silent=True)
             # Attendre 50ms avant de permettre le prochain envoi (comme pour le slider)
             QTimer.singleShot(50, self._on_keyboard_focus_send_complete)
         except Exception as e:
@@ -1858,75 +2188,174 @@ class MainWindow(QMainWindow):
         # Autofocus
         self.autofocus_btn.setEnabled(enabled)
     
-    def connect_websocket(self):
-        """Se connecte au WebSocket de la caméra."""
-        if not self.controller:
+    def connect_websocket(self, camera_id: int):
+        """Se connecte au WebSocket de la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            logger.error(f"ID de caméra invalide: {camera_id}")
             return
-        try:
-            self.websocket_client = BlackmagicWebSocketClient(
-                self.camera_url,
-                self.username,
-                self.password,
-                on_change_callback=self.on_parameter_change,
-                on_connection_status_callback=self.on_websocket_connection_status
-            )
-            self.websocket_client.start()
-            logger.info(f"WebSocket client démarré pour {self.camera_url}")
-        except Exception as e:
-            logger.error(f"Erreur lors du démarrage du WebSocket: {e}")
-            self.signals.websocket_status.emit(False, f"Erreur WebSocket: {e}")
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.controller:
+            return
+        
+        def on_websocket_status(connected: bool, message: str):
+            # Capturer camera_id dans le closure pour éviter les problèmes de référence
+            cam_id = camera_id
+            # Appeler la méthode avec camera_id de manière thread-safe
+            self.on_websocket_status(cam_id, connected, message)
+        
+        # Créer des callbacks wrappés qui incluent camera_id
+        cam_data.websocket_client = BlackmagicWebSocketClient(
+            cam_data.url,
+            cam_data.username,
+            cam_data.password,
+            on_change_callback=lambda param_name, data: self._handle_websocket_change(camera_id, param_name, data),
+            on_connection_status_callback=on_websocket_status
+        )
+        
+        cam_data.websocket_client.start()
     
-    def load_initial_values(self):
-        """Charge les valeurs initiales depuis la caméra."""
-        if not self.controller:
+    def _handle_websocket_change(self, camera_id: int, param_name: str, data: dict):
+        """Gère les changements de paramètres reçus via WebSocket pour une caméra spécifique."""
+        if camera_id < 1 or camera_id > 8:
             return
+        
+        cam_data = self.cameras[camera_id]
+        
+        if param_name == 'focus':
+            if 'normalised' in data:
+                value = float(data['normalised'])
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.focus_actual_value = value
+                # Mettre à jour l'UI seulement si c'est la caméra active
+                if camera_id == self.active_camera_id:
+                    self.signals.focus_changed.emit(value)
+        elif param_name == 'iris':
+            # TOUJOURS mettre à jour les données de la caméra
+            if 'normalised' in data:
+                cam_data.iris_actual_value = float(data['normalised'])
+            if camera_id == self.active_camera_id:
+                self.signals.iris_changed.emit(data)
+        elif param_name == 'gain':
+            if 'gain' in data:
+                value = int(data['gain'])
+                cam_data.gain_actual_value = value
+                if camera_id == self.active_camera_id:
+                    self.signals.gain_changed.emit(value)
+        elif param_name == 'shutter':
+            if camera_id == self.active_camera_id:
+                self.signals.shutter_changed.emit(data)
+        elif param_name == 'zebra':
+            if 'enabled' in data:
+                if camera_id == self.active_camera_id:
+                    self.signals.zebra_changed.emit(bool(data['enabled']))
+        elif param_name == 'focusAssist':
+            if 'enabled' in data:
+                if camera_id == self.active_camera_id:
+                    self.signals.focusAssist_changed.emit(bool(data['enabled']))
+        elif param_name == 'falseColor':
+            if 'enabled' in data:
+                if camera_id == self.active_camera_id:
+                    self.signals.falseColor_changed.emit(bool(data['enabled']))
+        elif param_name == 'cleanfeed':
+            if 'enabled' in data:
+                if camera_id == self.active_camera_id:
+                    self.signals.cleanfeed_changed.emit(bool(data['enabled']))
+        elif param_name == 'zoom':
+            if camera_id == self.active_camera_id:
+                self.signals.zoom_changed.emit(data)
+    
+    def load_initial_values(self, camera_id: int):
+        """Charge les valeurs initiales depuis la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
         try:
             # Focus
-            focus_value = self.controller.get_focus()
-            if focus_value is not None:
-                self.on_focus_changed(focus_value)
+            focus_data = cam_data.controller.get_focus()
+            if focus_data:
+                # get_focus() peut retourner soit un dict avec 'normalised', soit directement un float
+                if isinstance(focus_data, dict) and 'normalised' in focus_data:
+                    value = float(focus_data['normalised'])
+                elif isinstance(focus_data, (int, float)):
+                    value = float(focus_data)
+                else:
+                    value = None
+                
+                if value is not None:
+                    cam_data.focus_actual_value = value
+                    cam_data.focus_sent_value = value
+                    
+                    # Mettre à jour l'UI seulement si c'est la caméra active
+                    if camera_id == self.active_camera_id:
+                        self.focus_value_actual.setText(f"{value:.3f}")
+                        self.focus_value_sent.setText(f"{value:.3f}")
+                        slider_value = int(value * 1000)
+                        self.focus_slider.blockSignals(True)
+                        self.focus_slider.setValue(slider_value)
+                        self.focus_slider.blockSignals(False)
             
             # Iris
-            iris_data = self.controller.get_iris()
-            if iris_data:
-                self.on_iris_changed(iris_data)
+            iris_data = cam_data.controller.get_iris()
+            if iris_data and 'normalised' in iris_data:
+                value = float(iris_data['normalised'])
+                cam_data.iris_actual_value = value
+                cam_data.iris_sent_value = value
+                if camera_id == self.active_camera_id:
+                    self.on_iris_changed(iris_data)
             
             # Gain
-            gain_value = self.controller.get_gain()
+            gain_value = cam_data.controller.get_gain()
             if gain_value is not None:
-                self.on_gain_changed(gain_value)
+                cam_data.gain_actual_value = gain_value
+                cam_data.gain_sent_value = gain_value
+                if camera_id == self.active_camera_id:
+                    self.on_gain_changed(gain_value)
             
             # Shutter
-            shutter_data = self.controller.get_shutter()
+            shutter_data = cam_data.controller.get_shutter()
             if shutter_data:
-                self.on_shutter_changed(shutter_data)
+                if 'shutterSpeed' in shutter_data:
+                    cam_data.shutter_actual_value = int(shutter_data['shutterSpeed'])
+                    cam_data.shutter_sent_value = int(shutter_data['shutterSpeed'])
+                if camera_id == self.active_camera_id:
+                    self.on_shutter_changed(shutter_data)
             
             # Zoom
-            zoom_data = self.controller.get_zoom()
+            zoom_data = cam_data.controller.get_zoom()
             if zoom_data:
-                self.on_zoom_changed(zoom_data)
+                if camera_id == self.active_camera_id:
+                    self.on_zoom_changed(zoom_data)
             
             # Zebra
-            zebra_value = self.controller.get_zebra()
+            zebra_value = cam_data.controller.get_zebra()
             if zebra_value is not None:
-                self.on_zebra_changed(zebra_value)
+                if camera_id == self.active_camera_id:
+                    self.on_zebra_changed(zebra_value)
             
             # Focus Assist
-            focusAssist_value = self.controller.get_focus_assist()
+            focusAssist_value = cam_data.controller.get_focus_assist()
             if focusAssist_value is not None:
-                self.on_focusAssist_changed(focusAssist_value)
+                if camera_id == self.active_camera_id:
+                    self.on_focusAssist_changed(focusAssist_value)
             
             # False Color
-            falseColor_value = self.controller.get_false_color()
+            falseColor_value = cam_data.controller.get_false_color()
             if falseColor_value is not None:
-                self.on_falseColor_changed(falseColor_value)
+                if camera_id == self.active_camera_id:
+                    self.on_falseColor_changed(falseColor_value)
             
             # Cleanfeed
-            cleanfeed_value = self.controller.get_cleanfeed()
+            cleanfeed_value = cam_data.controller.get_cleanfeed()
             if cleanfeed_value is not None:
-                self.on_cleanfeed_changed(cleanfeed_value)
+                if camera_id == self.active_camera_id:
+                    self.on_cleanfeed_changed(cleanfeed_value)
         except Exception as e:
-            logger.error(f"Erreur lors du chargement des valeurs initiales: {e}")
+            logger.error(f"Erreur lors du chargement des valeurs initiales pour la caméra {camera_id}: {e}")
     
     # Slots pour les signaux
     def on_focus_changed(self, value: float):
@@ -1951,6 +2380,8 @@ class MainWindow(QMainWindow):
     
     def on_focus_slider_pressed(self):
         """Appelé quand on appuie sur le slider."""
+        cam_data = self.get_active_camera_data()
+        
         # Marquer que l'utilisateur touche le slider
         self.focus_slider_user_touching = True
         
@@ -1959,7 +2390,7 @@ class MainWindow(QMainWindow):
         current_focus_value = current_slider_value / 1000.0
         
         # Mettre à jour l'affichage avec la valeur actuelle
-        self.focus_sent_value = current_focus_value
+        cam_data.focus_sent_value = current_focus_value
         self.focus_value_sent.setText(f"{current_focus_value:.3f}")
         
         # Envoyer immédiatement la valeur sur laquelle l'utilisateur a cliqué (si le verrou est ouvert)
@@ -1968,24 +2399,28 @@ class MainWindow(QMainWindow):
     
     def on_focus_slider_released(self):
         """Appelé quand on relâche le slider."""
+        cam_data = self.get_active_camera_data()
+        
         # Marquer que l'utilisateur ne touche plus le slider
         self.focus_slider_user_touching = False
         
         # Remettre immédiatement le slider à la valeur réelle du focus
-        slider_value = int(self.focus_actual_value * 1000)
+        slider_value = int(cam_data.focus_actual_value * 1000)
         self.focus_slider.blockSignals(True)
         self.focus_slider.setValue(slider_value)
         self.focus_slider.blockSignals(False)
     
     def on_focus_slider_value_changed(self, value: int):
         """Appelé quand la valeur du slider change."""
+        cam_data = self.get_active_camera_data()
+        
         # Envoyer SEULEMENT si l'utilisateur touche physiquement le slider
         if not self.focus_slider_user_touching:
             return
         
         # L'utilisateur touche le slider, mettre à jour l'affichage
         focus_value = value / 1000.0
-        self.focus_sent_value = focus_value
+        cam_data.focus_sent_value = focus_value
         self.focus_value_sent.setText(f"{focus_value:.3f}")
         
         # Envoyer seulement si le verrou est ouvert (pas de requête en cours)
@@ -1993,8 +2428,9 @@ class MainWindow(QMainWindow):
             self._send_focus_value_now(focus_value)
     
     def _send_focus_value_now(self, value: float):
-        """Envoie la valeur du focus, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
-        if not self.connected or not self.controller:
+        """Envoie la valeur du focus à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         if not self.focus_slider_user_touching:
             self.focus_sending = False
@@ -2004,7 +2440,7 @@ class MainWindow(QMainWindow):
         
         try:
             # Envoyer la requête (synchrone, attend la réponse)
-            success = self.controller.set_focus(value, silent=True)
+            success = cam_data.controller.set_focus(value, silent=True)
             
             if not success:
                 logger.error(f"Erreur lors de l'envoi du focus")
@@ -2023,9 +2459,10 @@ class MainWindow(QMainWindow):
         
         # Si l'utilisateur touche toujours le slider, lire la position actuelle et l'envoyer
         if self.focus_slider_user_touching:
+            cam_data = self.get_active_camera_data()
             current_slider_value = self.focus_slider.value()
             current_focus_value = current_slider_value / 1000.0
-            self.focus_sent_value = current_focus_value
+            cam_data.focus_sent_value = current_focus_value
             self.focus_value_sent.setText(f"{current_focus_value:.3f}")
             self._send_focus_value_now(current_focus_value)
     
@@ -2089,89 +2526,66 @@ class MainWindow(QMainWindow):
         self.cleanfeed_toggle.blockSignals(False)
     
     def on_websocket_status(self, connected: bool, message: str):
-        """Slot appelé quand le statut WebSocket change."""
-        self.websocket_connected = connected
-        if connected:
-            self.status_label.setText(f"✓ {message}")
-            self.status_label.setStyleSheet("color: #0f0;")
-            self.connected = True
-        else:
-            self.status_label.setText(f"✗ {message}")
-            self.status_label.setStyleSheet("color: #f00;")
-            self.connected = False
+        """Slot appelé quand le statut WebSocket change (déprécié - utiliser on_websocket_status avec camera_id)."""
+        # Cette méthode est appelée par les anciens signaux, on l'ignore car on utilise maintenant _handle_websocket_change
+        pass
     
     def save_preset(self, preset_number: int):
-        """Sauvegarde les valeurs actuelles dans un preset."""
-        if not self.connected or not self.controller:
+        """Sauvegarde les valeurs actuelles dans un preset pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             logger.warning("Impossible de sauvegarder le preset : non connecté")
             return
         
         try:
             # Récupérer les valeurs actuelles
             preset_data = {
-                "focus": self.focus_actual_value,
-                "iris": self.iris_actual_value,
-                "gain": self.gain_actual_value,
-                "shutter": self.shutter_actual_value,
+                "focus": cam_data.focus_actual_value,
+                "iris": cam_data.iris_actual_value,
+                "gain": cam_data.gain_actual_value,
+                "shutter": cam_data.shutter_actual_value,
                 "zoom": 0.0  # Valeur par défaut si non disponible
             }
             
             # Récupérer la valeur de zoom normalisée si disponible
             try:
-                zoom_data = self.controller.get_zoom()
+                zoom_data = cam_data.controller.get_zoom()
                 if zoom_data and 'normalised' in zoom_data:
                     preset_data["zoom"] = zoom_data['normalised']
             except:
                 pass
             
-            # Charger ou créer le fichier presets.json
-            presets_file = "presets.json"
-            if os.path.exists(presets_file):
-                with open(presets_file, 'r') as f:
-                    presets = json.load(f)
-            else:
-                presets = {}
+            # Sauvegarder le preset dans la caméra active
+            cam_data.presets[f"preset_{preset_number}"] = preset_data
             
-            # Sauvegarder le preset
-            presets[f"preset_{preset_number}"] = preset_data
+            # Sauvegarder dans le fichier
+            self.save_cameras_config()
             
-            # Écrire le fichier
-            with open(presets_file, 'w') as f:
-                json.dump(presets, f, indent=2)
-            
-            logger.info(f"Preset {preset_number} sauvegardé: {preset_data}")
+            logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} sauvegardé: {preset_data}")
         except Exception as e:
             logger.error(f"Erreur lors de la sauvegarde du preset {preset_number}: {e}")
     
     def recall_preset(self, preset_number: int):
-        """Rappelle et applique un preset sauvegardé."""
-        if not self.connected or not self.controller:
+        """Rappelle et applique un preset sauvegardé pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             logger.warning("Impossible de rappeler le preset : non connecté")
             return
         
         try:
-            # Charger le fichier presets.json
-            presets_file = "presets.json"
-            if not os.path.exists(presets_file):
-                logger.warning(f"Fichier {presets_file} introuvable")
-                return
-            
-            with open(presets_file, 'r') as f:
-                presets = json.load(f)
-            
             preset_key = f"preset_{preset_number}"
-            if preset_key not in presets:
-                logger.warning(f"Preset {preset_number} introuvable")
+            if preset_key not in cam_data.presets:
+                logger.warning(f"Preset {preset_number} introuvable pour la caméra {self.active_camera_id}")
                 return
             
-            preset_data = presets[preset_key]
+            preset_data = cam_data.presets[preset_key]
             
             # Appliquer les valeurs
             # Focus
             if 'focus' in preset_data:
                 focus_value = float(preset_data['focus'])
-                self.controller.set_focus(focus_value, silent=True)
-                self.focus_sent_value = focus_value
+                cam_data.controller.set_focus(focus_value, silent=True)
+                cam_data.focus_sent_value = focus_value
                 self.focus_value_sent.setText(f"{focus_value:.3f}")
                 # Mettre à jour le slider
                 slider_value = int(focus_value * 1000)
@@ -2198,44 +2612,90 @@ class MainWindow(QMainWindow):
             if 'zoom' in preset_data:
                 zoom_value = float(preset_data['zoom'])
                 try:
-                    if hasattr(self.controller, 'set_zoom'):
-                        self.controller.set_zoom(zoom_value, silent=True)
+                    if hasattr(cam_data.controller, 'set_zoom'):
+                        cam_data.controller.set_zoom(zoom_value, silent=True)
                 except:
                     pass
             
-            logger.info(f"Preset {preset_number} rappelé: {preset_data}")
+            # Marquer ce preset comme actif
+            cam_data.active_preset = preset_number
+            self.save_cameras_config()
+            
+            # Mettre à jour l'affichage visuel
+            self.update_preset_highlight()
+            
+            # Marquer ce preset comme actif
+            cam_data.active_preset = preset_number
+            self.save_cameras_config()
+            
+            # Mettre à jour l'affichage visuel
+            self.update_preset_highlight()
+            
+            logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} rappelé: {preset_data}")
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
+    
+    def update_preset_highlight(self):
+        """Met à jour l'encadré coloré autour du preset actif."""
+        cam_data = self.get_active_camera_data()
+        active_preset_num = cam_data.active_preset
+        
+        for i, recall_btn in enumerate(self.preset_recall_buttons, start=1):
+            if i == active_preset_num:
+                # Style pour le preset actif - encadré coloré
+                recall_btn.setStyleSheet("""
+                    QPushButton {
+                        padding: 8px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: 3px solid #ff0;
+                        border-radius: 4px;
+                        background-color: #0a5;
+                        color: #fff;
+                    }
+                    QPushButton:hover {
+                        background-color: #0c7;
+                        border: 3px solid #ffa;
+                    }
+                    QPushButton:disabled {
+                        opacity: 0.5;
+                    }
+                """)
+            else:
+                # Style normal pour les autres presets
+                recall_btn.setStyleSheet("""
+                    QPushButton {
+                        padding: 8px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: 1px solid #555;
+                        border-radius: 4px;
+                        background-color: #0a5;
+                        color: #fff;
+                    }
+                    QPushButton:hover {
+                        background-color: #0c7;
+                    }
+                    QPushButton:disabled {
+                        opacity: 0.5;
+                    }
+                """)
 
 
 def main():
     """Fonction principale."""
     parser = argparse.ArgumentParser(
-        description="Interface PySide6 standalone pour contrôler le focus Blackmagic",
+        description="Interface PySide6 standalone pour contrôler le focus Blackmagic (multi-caméras)",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    parser.add_argument(
-        "--url",
-        default="http://Micro-Studio-Camera-4K-G2.local",
-        help="URL de base de la caméra (défaut: http://Micro-Studio-Camera-4K-G2.local)"
-    )
-    parser.add_argument(
-        "--user",
-        default="roo",
-        help="Nom d'utilisateur pour l'authentification (défaut: roo)"
-    )
-    parser.add_argument(
-        "--pass",
-        dest="password",
-        default="koko",
-        help="Mot de passe pour l'authentification (défaut: koko)"
-    )
+    # Les arguments sont ignorés maintenant car la configuration est chargée depuis cameras_config.json
+    # Gardons-les pour compatibilité mais sans effet
     
     args = parser.parse_args()
     
     app = QApplication(sys.argv)
-    window = MainWindow(camera_url=args.url, username=args.user, password=args.password)
+    window = MainWindow()
     window.show()
     
     sys.exit(app.exec())

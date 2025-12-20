@@ -1,0 +1,66 @@
+{
+  "active_camera": 1,
+  "camera_1": {
+    "url": "http://Micro-Studio-Camera-4K-G2.local",
+    "username": "roo",
+    "password": "koko",
+    "presets": {
+      "preset_1": {
+        "focus": 0.8003136515617371,
+        "iris": 0.0,
+        "gain": 0,
+        "shutter": 0,
+        "zoom": 0.0
+      },
+      "preset_2": {
+        "focus": 0.36905384063720703,
+        "iris": 0.0,
+        "gain": 0,
+        "shutter": 0,
+        "zoom": 0.0
+      }
+    }
+  },
+  "camera_2": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_3": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_4": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_5": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_6": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_7": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  },
+  "camera_8": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "presets": {}
+  }
+}
