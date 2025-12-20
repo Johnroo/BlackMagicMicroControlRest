@@ -8,12 +8,16 @@ import sys
 import argparse
 import logging
 import time
+import json
+import os
 from typing import Optional
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QSlider, QPushButton
+    QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
+    QDialogButtonBox, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent
+from PySide6.QtGui import QResizeEvent, QKeyEvent
 
 from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSocketClient
 
@@ -35,6 +39,186 @@ class CameraSignals(QObject):
     websocket_status = Signal(bool, str)
 
 
+class ConnectionDialog(QDialog):
+    """Dialog pour la connexion à la caméra."""
+    
+    def __init__(self, parent=None, camera_url: str = "", username: str = "", password: str = "", connected: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("Paramètres de connexion")
+        self.setMinimumWidth(400)
+        self.setModal(True)
+        
+        # Variables
+        self.connected = connected
+        
+        # Layout principal
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Titre
+        title = QLabel("Connexion à la caméra")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #fff;")
+        layout.addWidget(title)
+        
+        # Champ URL
+        url_label = QLabel("URL de la caméra:")
+        url_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(url_label)
+        self.url_input = QLineEdit()
+        self.url_input.setText(camera_url)
+        self.url_input.setPlaceholderText("http://Micro-Studio-Camera-4K-G2.local")
+        self.url_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+        """)
+        layout.addWidget(self.url_input)
+        
+        # Champ Username
+        user_label = QLabel("Nom d'utilisateur:")
+        user_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(user_label)
+        self.username_input = QLineEdit()
+        self.username_input.setText(username)
+        self.username_input.setPlaceholderText("roo")
+        self.username_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+        """)
+        layout.addWidget(self.username_input)
+        
+        # Champ Password
+        pass_label = QLabel("Mot de passe:")
+        pass_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(pass_label)
+        self.password_input = QLineEdit()
+        self.password_input.setText(password)
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setPlaceholderText("koko")
+        self.password_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+        """)
+        layout.addWidget(self.password_input)
+        
+        # Voyant de statut
+        status_layout = QHBoxLayout()
+        status_label = QLabel("Statut:")
+        status_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        status_layout.addWidget(status_label)
+        self.status_indicator = QLabel("●")
+        self.status_indicator.setStyleSheet("font-size: 20px; color: #f00;")
+        self.status_text = QLabel("Déconnecté")
+        self.status_text.setStyleSheet("font-size: 12px; color: #aaa;")
+        status_layout.addWidget(self.status_indicator)
+        status_layout.addWidget(self.status_text)
+        status_layout.addStretch()
+        layout.addLayout(status_layout)
+        
+        # Bouton Connect/Disconnect
+        self.connect_btn = QPushButton("Connecter")
+        self.connect_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px;
+                font-size: 14px;
+                font-weight: bold;
+                background-color: #0a5;
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+        """)
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        layout.addWidget(self.connect_btn)
+        
+        # Boutons de dialog
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.accept)
+        layout.addWidget(button_box)
+        
+        # Mettre à jour l'affichage initial
+        self.update_status_display()
+    
+    def toggle_connection(self):
+        """Émet un signal pour connecter/déconnecter."""
+        if self.connected:
+            # Déconnecter
+            self.connected = False
+            if self.parent():
+                self.parent().disconnect_from_camera()
+        else:
+            # Connecter
+            if self.parent():
+                self.parent().connect_to_camera(
+                    self.url_input.text().strip(),
+                    self.username_input.text().strip(),
+                    self.password_input.text().strip()
+                )
+        self.update_status_display()
+    
+    def update_status_display(self):
+        """Met à jour l'affichage du statut."""
+        if self.connected:
+            self.status_indicator.setStyleSheet("font-size: 20px; color: #0f0;")
+            self.status_text.setText("Connecté")
+            self.connect_btn.setText("Déconnecter")
+            self.connect_btn.setStyleSheet("""
+                QPushButton {
+                    padding: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    background-color: #a50;
+                    color: #fff;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #c70;
+                }
+            """)
+        else:
+            self.status_indicator.setStyleSheet("font-size: 20px; color: #f00;")
+            self.status_text.setText("Déconnecté")
+            self.connect_btn.setText("Connecter")
+            self.connect_btn.setStyleSheet("""
+                QPushButton {
+                    padding: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    background-color: #0a5;
+                    color: #fff;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #0c7;
+                }
+            """)
+    
+    def set_connected(self, connected: bool):
+        """Met à jour l'état de connexion."""
+        self.connected = connected
+        self.update_status_display()
+
+
 class MainWindow(QMainWindow):
     """Fenêtre principale de l'application PySide6."""
     
@@ -46,8 +230,11 @@ class MainWindow(QMainWindow):
         self.password = password
         self.signals = CameraSignals()
         
-        # Créer le contrôleur de caméra
-        self.controller = BlackmagicFocusController(self.camera_url, self.username, self.password)
+        # Variables de connexion
+        self.controller = None
+        self.websocket_client = None
+        self.websocket_connected = False
+        self.connected = False
         
         # Variables pour le throttling
         self.last_iris_send_time = 0
@@ -59,6 +246,15 @@ class MainWindow(QMainWindow):
         self.focus_slider_user_touching = False  # True seulement quand l'utilisateur touche physiquement le slider
         self.focus_send_sequence = 0  # Compteur pour annuler les envois différés
         self.focus_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
+        self.focus_keyboard_adjusting = False  # True quand on ajuste avec les flèches clavier
+        
+        # Variables pour la répétition des touches flèches
+        self.key_repeat_timer = None
+        self.key_repeat_direction = None  # 'up' ou 'down'
+        
+        # File d'attente pour les valeurs clavier (pour ne pas perdre de valeurs)
+        self.keyboard_focus_queue = []
+        self.keyboard_focus_processing = False
         
         # Variables pour les valeurs
         self.focus_sent_value = 0.0
@@ -72,30 +268,24 @@ class MainWindow(QMainWindow):
         self.supported_gains = []
         self.supported_shutter_speeds = []
         
-        # WebSocket client
-        self.websocket_client = None
-        self.websocket_connected = False
-        
         # Initialiser l'UI
         self.init_ui()
         
         # Connecter les signaux
         self.connect_signals()
         
-        # Se connecter au WebSocket
-        self.connect_websocket()
-        
-        # Charger les valeurs initiales
-        self.load_initial_values()
-        
-        # Charger les gains et shutters supportés
-        self.load_supported_gains()
-        self.load_supported_shutters()
+        # Connexion automatique si des valeurs sont disponibles
+        if self.camera_url and self.username and self.password:
+            self.connect_to_camera(self.camera_url, self.username, self.password)
     
     def init_ui(self):
         """Initialise l'interface utilisateur."""
         self.setWindowTitle("Contrôle Focus Blackmagic (Standalone)")
         self.setMinimumSize(1200, 700)
+        
+        # Activer le focus pour recevoir les événements clavier
+        self.setFocusPolicy(Qt.StrongFocus)
+        
         
         # Widget central avec layout horizontal
         central_widget = QWidget()
@@ -131,6 +321,47 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.zoom_panel)
         main_layout.addWidget(self.controls_panel)
         
+        # Connecter le redimensionnement de la fenêtre pour adapter le slider
+        # Créer un filtre d'événements pour détecter les redimensionnements
+        class ResizeEventFilter(QObject):
+            def __init__(self, parent, callback):
+                super().__init__(parent)
+                self.callback = callback
+                self.last_size = None
+            
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Resize:
+                    current_size = obj.size()
+                    if self.last_size != current_size:
+                        self.last_size = current_size
+                        QTimer.singleShot(50, self.callback)
+                return super().eventFilter(obj, event)
+        
+        def schedule_slider_update():
+            if hasattr(self.focus_panel, 'force_slider_height'):
+                self.focus_panel.force_slider_height()
+        
+        self.resize_filter = ResizeEventFilter(self, schedule_slider_update)
+        self.installEventFilter(self.resize_filter)
+        
+        # Bouton engrenage pour ouvrir les paramètres de connexion
+        settings_btn = QPushButton("⚙️")
+        settings_btn.setFixedSize(30, 30)
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+        """)
+        settings_btn.clicked.connect(self.open_connection_dialog)
+        self.statusBar().addPermanentWidget(settings_btn)
+        
         # Status bar pour afficher l'état de connexion
         self.status_label = QLabel("Initialisation...")
         self.statusBar().addWidget(self.status_label)
@@ -146,6 +377,8 @@ class MainWindow(QMainWindow):
         """Crée le panneau de contrôle du focus."""
         panel = QWidget()
         panel.setFixedWidth(200)
+        # Permettre au panneau de s'étirer en hauteur
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet("""
             QWidget {
                 background-color: #1a1a1a;
@@ -161,7 +394,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Focus Control")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 16px; color: #fff; margin-bottom: 20px;")
-        layout.addWidget(title)
+        layout.addWidget(title, stretch=0)  # Pas de stretch pour le titre
         
         # Section d'affichage des valeurs
         focus_display = QWidget()
@@ -204,32 +437,37 @@ class MainWindow(QMainWindow):
         value_layout.addWidget(self.focus_value_actual)
         
         focus_display_layout.addWidget(value_container)
-        layout.addWidget(focus_display)
+        layout.addWidget(focus_display, stretch=0)  # Pas de stretch pour l'affichage
         
-        # Slider vertical
+        # Slider vertical - utiliser un layout vertical directement au lieu d'un QWidget
+        # Cela permet un meilleur contrôle de l'expansion
         slider_container = QWidget()
+        slider_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         slider_layout = QHBoxLayout(slider_container)
         slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(0)
         
         # Slider vertical
         self.focus_slider = QSlider(Qt.Vertical)
         self.focus_slider.setMinimum(0)
         self.focus_slider.setMaximum(1000)  # 0.001 de précision
-        self.focus_slider.setValue(0)
-        self.focus_slider.setFixedHeight(320)
+        self.focus_slider.setValue(0)# Forcer le slider à s'étirer pour occuper tout l'espace disponible
+        self.focus_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Pas de hauteur minimale fixe - le slider doit s'étirer pour occuper tout l'espace disponible
+        # Le minimum par défaut de Qt est suffisant
         self.focus_slider.setStyleSheet("""
             QSlider::groove:vertical {
                 background: #333;
-                width: 8px;
+                width: 24px;
                 border: 1px solid #555;
-                border-radius: 4px;
+                border-radius: 12px;
             }
             QSlider::handle:vertical {
                 background: #666;
                 border: 1px solid #888;
-                border-radius: 3px;
-                width: 20px;
-                height: 50px;
+                border-radius: 6px;
+                width: 36px;
+                height: 10px;
                 margin: 0 -6px;
             }
             QSlider::handle:vertical:hover {
@@ -259,18 +497,20 @@ class MainWindow(QMainWindow):
         label_0.setStyleSheet("font-size: 9px; color: #aaa;")
         slider_labels_layout.addWidget(label_0)
         
-        slider_layout.addWidget(self.focus_slider)
+        # Le slider doit prendre toute la hauteur disponible dans le container
+        slider_layout.addWidget(self.focus_slider, stretch=1)
         slider_layout.addWidget(slider_labels_container)
         slider_layout.addStretch()
         
-        layout.addWidget(slider_container, alignment=Qt.AlignCenter)
+        # Ajouter le slider container avec un stretch factor pour qu'il prenne tout l'espace disponible
+        # Utiliser un stretch factor élevé pour garantir qu'il prend le maximum d'espace
+        layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
         
         # Connecter les signaux du slider
         self.focus_slider.sliderPressed.connect(self.on_focus_slider_pressed)
         self.focus_slider.sliderReleased.connect(self.on_focus_slider_released)
         self.focus_slider.valueChanged.connect(self.on_focus_slider_value_changed)
         
-        layout.addStretch()
         return panel
     
     def create_iris_panel(self):
@@ -406,12 +646,16 @@ class MainWindow(QMainWindow):
     
     def increment_iris(self):
         """Incrémente l'iris de 0.05."""
+        if not self.connected or not self.controller:
+            return
         current_value = self.iris_actual_value if self.iris_actual_value is not None else self.iris_sent_value
         new_value = min(1.0, current_value + 0.05)
         self.update_iris_value(new_value)
     
     def decrement_iris(self):
         """Décrémente l'iris de 0.05."""
+        if not self.connected or not self.controller:
+            return
         current_value = self.iris_actual_value if self.iris_actual_value is not None else self.iris_sent_value
         new_value = max(0.0, current_value - 0.05)
         self.update_iris_value(new_value)
@@ -425,6 +669,8 @@ class MainWindow(QMainWindow):
     
     def send_iris_value(self, value: float):
         """Envoie la valeur de l'iris avec throttling."""
+        if not self.connected or not self.controller:
+            return
         now = int(time.time() * 1000)
         time_since_last_send = now - self.last_iris_send_time
         
@@ -562,6 +808,8 @@ class MainWindow(QMainWindow):
     
     def load_supported_gains(self):
         """Charge la liste des gains supportés."""
+        if not self.controller:
+            return
         try:
             gains = self.controller.get_supported_gains()
             if gains:
@@ -572,6 +820,8 @@ class MainWindow(QMainWindow):
     
     def increment_gain(self):
         """Incrémente le gain vers la valeur suivante supportée."""
+        if not self.connected or not self.controller:
+            return
         if not self.supported_gains:
             return
         current_value = self.gain_actual_value if self.gain_actual_value is not None else self.gain_sent_value
@@ -590,6 +840,8 @@ class MainWindow(QMainWindow):
     
     def decrement_gain(self):
         """Décrémente le gain vers la valeur précédente supportée."""
+        if not self.connected or not self.controller:
+            return
         if not self.supported_gains:
             return
         current_value = self.gain_actual_value if self.gain_actual_value is not None else self.gain_sent_value
@@ -614,6 +866,8 @@ class MainWindow(QMainWindow):
     
     def send_gain_value(self, value: int):
         """Envoie la valeur du gain avec throttling."""
+        if not self.connected or not self.controller:
+            return
         now = int(time.time() * 1000)
         time_since_last_send = now - self.last_gain_send_time
         
@@ -751,6 +1005,8 @@ class MainWindow(QMainWindow):
     
     def load_supported_shutters(self):
         """Charge la liste des vitesses de shutter supportées."""
+        if not self.controller:
+            return
         try:
             shutters = self.controller.get_supported_shutters()
             if shutters and 'shutterSpeeds' in shutters:
@@ -761,6 +1017,8 @@ class MainWindow(QMainWindow):
     
     def increment_shutter(self):
         """Incrémente le shutter vers la vitesse suivante supportée."""
+        if not self.connected or not self.controller:
+            return
         if not self.supported_shutter_speeds:
             return
         current_value = self.shutter_actual_value if self.shutter_actual_value is not None else self.shutter_sent_value
@@ -779,6 +1037,8 @@ class MainWindow(QMainWindow):
     
     def decrement_shutter(self):
         """Décrémente le shutter vers la vitesse précédente supportée."""
+        if not self.connected or not self.controller:
+            return
         if not self.supported_shutter_speeds:
             return
         current_value = self.shutter_actual_value if self.shutter_actual_value is not None else self.shutter_sent_value
@@ -803,6 +1063,8 @@ class MainWindow(QMainWindow):
     
     def send_shutter_value(self, value: int):
         """Envoie la valeur du shutter avec throttling."""
+        if not self.connected or not self.controller:
+            return
         now = int(time.time() * 1000)
         time_since_last_send = now - self.last_shutter_send_time
         
@@ -1055,6 +1317,72 @@ class MainWindow(QMainWindow):
         self.autofocus_btn.clicked.connect(self.do_autofocus)
         layout.addWidget(self.autofocus_btn)
         
+        # Section Presets
+        layout.addSpacing(20)
+        presets_label = QLabel("Presets")
+        presets_label.setAlignment(Qt.AlignCenter)
+        presets_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
+        layout.addWidget(presets_label)
+        
+        # Grille de presets (2 colonnes x 5 lignes)
+        presets_grid = QGridLayout()
+        presets_grid.setSpacing(5)
+        
+        self.preset_save_buttons = []
+        self.preset_recall_buttons = []
+        
+        for i in range(1, 11):
+            row = (i - 1) // 2
+            col = (i - 1) % 2
+            
+            # Bouton Save
+            save_btn = QPushButton(f"Save {i}")
+            save_btn.setStyleSheet("""
+                QPushButton {
+                    padding: 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    background-color: #333;
+                    color: #fff;
+                }
+                QPushButton:hover {
+                    background-color: #444;
+                }
+                QPushButton:disabled {
+                    opacity: 0.5;
+                }
+            """)
+            save_btn.clicked.connect(lambda checked, n=i: self.save_preset(n))
+            presets_grid.addWidget(save_btn, row * 2, col)
+            self.preset_save_buttons.append(save_btn)
+            
+            # Bouton Recall
+            recall_btn = QPushButton(f"Recall {i}")
+            recall_btn.setStyleSheet("""
+                QPushButton {
+                    padding: 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    background-color: #0a5;
+                    color: #fff;
+                }
+                QPushButton:hover {
+                    background-color: #0c7;
+                }
+                QPushButton:disabled {
+                    opacity: 0.5;
+                }
+            """)
+            recall_btn.clicked.connect(lambda checked, n=i: self.recall_preset(n))
+            presets_grid.addWidget(recall_btn, row * 2 + 1, col)
+            self.preset_recall_buttons.append(recall_btn)
+        
+        layout.addLayout(presets_grid)
+        
         layout.addStretch()
         return panel
     
@@ -1088,6 +1416,8 @@ class MainWindow(QMainWindow):
     
     def send_zebra(self, enabled: bool):
         """Envoie l'état du zebra."""
+        if not self.connected or not self.controller:
+            return
         try:
             success = self.controller.set_zebra(enabled, silent=True)
             if not success:
@@ -1109,6 +1439,8 @@ class MainWindow(QMainWindow):
     
     def send_focus_assist(self, enabled: bool):
         """Envoie l'état du focus assist."""
+        if not self.connected or not self.controller:
+            return
         try:
             success = self.controller.set_focus_assist(enabled, silent=True)
             if not success:
@@ -1128,6 +1460,8 @@ class MainWindow(QMainWindow):
     
     def send_false_color(self, enabled: bool):
         """Envoie l'état du false color."""
+        if not self.connected or not self.controller:
+            return
         try:
             success = self.controller.set_false_color(enabled, silent=True)
             if not success:
@@ -1147,6 +1481,8 @@ class MainWindow(QMainWindow):
     
     def send_cleanfeed(self, enabled: bool):
         """Envoie l'état du cleanfeed."""
+        if not self.connected or not self.controller:
+            return
         try:
             success = self.controller.set_cleanfeed(enabled, silent=True)
             if not success:
@@ -1166,6 +1502,8 @@ class MainWindow(QMainWindow):
     
     def do_autofocus(self):
         """Déclenche l'autofocus."""
+        if not self.connected or not self.controller:
+            return
         self.autofocus_btn.setEnabled(False)
         self.autofocus_btn.setText("🔍 Autofocus...")
         
@@ -1190,12 +1528,14 @@ class MainWindow(QMainWindow):
     
     def _update_focus_after_autofocus(self):
         """Récupère la valeur du focus après l'autofocus et met à jour l'affichage."""
+        if not self.connected or not self.controller:
+            return
         try:
             focus_value = self.controller.get_focus()
             if focus_value is not None:
                 # Mettre à jour la valeur réelle
                 self.focus_actual_value = focus_value
-                self.focus_value_actual.setText(f"{focus_value:.2f}")
+                self.focus_value_actual.setText(f"{focus_value:.3f}")
                 
                 # Mettre à jour le slider si l'utilisateur ne le touche pas
                 if not self.focus_slider_user_touching:
@@ -1256,8 +1596,272 @@ class MainWindow(QMainWindow):
         self.websocket_connected = connected
         self.signals.websocket_status.emit(connected, message)
     
+    def open_connection_dialog(self):
+        """Ouvre le dialog de connexion."""
+        dialog = ConnectionDialog(
+            self,
+            camera_url=self.camera_url,
+            username=self.username,
+            password=self.password,
+            connected=self.connected
+        )
+        dialog.exec()
+    
+    def connect_to_camera(self, camera_url: str, username: str, password: str):
+        """Se connecte à la caméra avec les paramètres fournis."""
+        try:
+            # Mettre à jour les valeurs de connexion
+            self.camera_url = camera_url.rstrip('/')
+            self.username = username
+            self.password = password
+            
+            # Déconnecter si déjà connecté
+            if self.connected:
+                self.disconnect_from_camera()
+            
+            # Créer le contrôleur
+            self.controller = BlackmagicFocusController(self.camera_url, self.username, self.password)
+            
+            # Se connecter au WebSocket
+            self.connect_websocket()
+            
+            # Charger les valeurs initiales
+            self.load_initial_values()
+            
+            # Charger les gains et shutters supportés
+            self.load_supported_gains()
+            self.load_supported_shutters()
+            
+            # Mettre à jour l'état
+            self.connected = True
+            self.status_label.setText(f"✓ Connecté à {self.camera_url}")
+            self.status_label.setStyleSheet("color: #0f0;")
+            
+            # Activer tous les contrôles
+            self.set_controls_enabled(True)
+            
+            logger.info(f"Connecté à {self.camera_url}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la connexion: {e}")
+            self.connected = False
+            self.status_label.setText(f"✗ Erreur de connexion: {e}")
+            self.status_label.setStyleSheet("color: #f00;")
+            self.set_controls_enabled(False)
+            if self.controller:
+                self.controller = None
+    
+    def disconnect_from_camera(self):
+        """Se déconnecte de la caméra."""
+        try:
+            # Arrêter le WebSocket
+            if self.websocket_client:
+                self.websocket_client.stop()
+                self.websocket_client = None
+            
+            # Détruire le contrôleur
+            self.controller = None
+            
+            # Mettre à jour l'état
+            self.connected = False
+            self.websocket_connected = False
+            self.status_label.setText("✗ Déconnecté")
+            self.status_label.setStyleSheet("color: #f00;")
+            
+            # Désactiver tous les contrôles
+            self.set_controls_enabled(False)
+            
+            logger.info("Déconnecté de la caméra")
+        except Exception as e:
+            logger.error(f"Erreur lors de la déconnexion: {e}")
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        """Gère les événements clavier pour ajuster le focus avec les flèches."""
+        if not self.connected or not self.controller:
+            super().keyPressEvent(event)
+            return
+        
+        # Ajustement très précis du focus avec les flèches haut/bas
+        if event.key() == Qt.Key_Up:
+            # Arrêter toute répétition en cours
+            self._stop_key_repeat()
+            # Incrémenter immédiatement
+            self._adjust_focus_precise_increment(0.001)
+            # Démarrer la répétition
+            self._start_key_repeat('up')
+            event.accept()
+        elif event.key() == Qt.Key_Down:
+            # Arrêter toute répétition en cours
+            self._stop_key_repeat()
+            # Décrémenter immédiatement
+            self._adjust_focus_precise_increment(-0.001)
+            # Démarrer la répétition
+            self._start_key_repeat('down')
+            event.accept()
+        else:
+            self._stop_key_repeat()
+            super().keyPressEvent(event)
+    
+    def keyReleaseEvent(self, event: QKeyEvent):
+        """Arrête la répétition quand la touche est relâchée."""
+        if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+            self._stop_key_repeat()
+            event.accept()
+        else:
+            super().keyReleaseEvent(event)
+    
+    def _start_key_repeat(self, direction: str):
+        """Démarre la répétition automatique de l'ajustement du focus."""
+        self.key_repeat_direction = direction# Démarrer un timer qui se répète toutes les 50ms
+        # Délai initial de 300ms, puis répétition toutes les 50ms
+        def repeat_action():
+            if self.key_repeat_direction == 'up':
+                self._adjust_focus_precise_increment(0.001)
+            elif self.key_repeat_direction == 'down':
+                self._adjust_focus_precise_increment(-0.001)
+        
+        # Premier délai plus long (300ms), puis répétition rapide (50ms)
+        QTimer.singleShot(300, lambda: self._continue_key_repeat(repeat_action))
+    
+    def _continue_key_repeat(self, action):
+        """Continue la répétition avec un timer récurrent."""
+        if self.key_repeat_direction is None:
+            return
+        
+        # Exécuter l'action immédiatement
+        action()
+        
+        # Programmer la prochaine répétition (50ms)
+        if self.key_repeat_direction is not None:
+            # Créer le timer s'il n'existe pas
+            if self.key_repeat_timer is None:
+                self.key_repeat_timer = QTimer()
+                self.key_repeat_timer.setSingleShot(False)  # Timer récurrent
+                self.key_repeat_timer.timeout.connect(action)
+            
+            # Démarrer ou redémarrer le timer
+            if not self.key_repeat_timer.isActive():
+                self.key_repeat_timer.start(50)  # Répéter toutes les 50ms
+    
+    def _stop_key_repeat(self):
+        """Arrête la répétition automatique."""
+        self.key_repeat_direction = None
+        if self.key_repeat_timer:
+            self.key_repeat_timer.stop()
+            self.key_repeat_timer = None
+    
+    def _adjust_focus_precise_increment(self, increment: float):
+        """Ajuste le focus d'un incrément donné."""
+        # Utiliser focus_sent_value pour s'assurer qu'on part de la dernière valeur envoyée
+        current_value = self.focus_sent_value if self.focus_sent_value is not None else (self.focus_actual_value if self.focus_actual_value is not None else 0.0)
+        new_value = max(0.0, min(1.0, current_value + increment))
+        self._adjust_focus_precise(new_value)
+    
+    def _adjust_focus_precise(self, value: float):
+        """Ajuste le focus de manière très précise."""
+        # Note: focus_keyboard_adjusting n'est plus utilisé pour bloquer les mises à jour socket
+        # Les valeurs socket sont toujours acceptées et affichées pour refléter l'état réel de la caméra
+        
+        # Mettre à jour la valeur envoyée
+        self.focus_sent_value = value
+        self.focus_value_sent.setText(f"{value:.3f}")
+        
+        # Mettre à jour le slider
+        slider_value = int(value * 1000)
+        self.focus_slider.blockSignals(True)
+        self.focus_slider.setValue(slider_value)
+        self.focus_slider.blockSignals(False)
+        
+        # Ajouter à la file d'attente au lieu d'envoyer directement
+        if self.controller:
+            # Toujours ajouter la valeur à la file (on gardera seulement la dernière lors du traitement)
+            self.keyboard_focus_queue.append(value)
+            # Traiter la file d'attente seulement si pas déjà en cours
+            if not self.keyboard_focus_processing and not self.focus_sending:
+                self._process_keyboard_focus_queue()
+    
+    def _process_keyboard_focus_queue(self):
+        """Traite la file d'attente des valeurs clavier."""
+        if not self.controller or self.keyboard_focus_processing or self.focus_sending:
+            return
+        
+        if not self.keyboard_focus_queue:
+            return
+        
+        # Prendre la dernière valeur de la file (la plus récente)
+        value = self.keyboard_focus_queue[-1]
+        # Vider la file (on envoie seulement la dernière valeur)
+        self.keyboard_focus_queue.clear()# Utiliser la méthode directe pour l'envoi
+        self._process_keyboard_focus_queue_direct(value)
+    
+    def _on_keyboard_focus_send_complete(self):
+        """Appelé après le délai de 50ms pour permettre le prochain envoi."""
+        self.focus_sending = False
+        self.keyboard_focus_processing = False# Si la file d'attente n'est pas vide, traiter la dernière valeur (la plus récente)
+        # Cela garantit que toutes les valeurs sont envoyées, comme pour le slider
+        if self.keyboard_focus_queue:
+            # Prendre la dernière valeur (la plus récente) et vider la file
+            value = self.keyboard_focus_queue[-1]
+            self.keyboard_focus_queue.clear()# Envoyer directement cette valeur
+            self._process_keyboard_focus_queue_direct(value)
+        else:
+            # Si pas de file d'attente, vérifier s'il y a une nouvelle valeur à envoyer
+            # (la valeur actuelle du focus_sent_value devrait être à jour)
+            # Mais on ne relit pas automatiquement car l'utilisateur doit appuyer à nouveau sur la flèche
+            pass
+    
+    def _process_keyboard_focus_queue_direct(self, value: float):
+        """Traite directement une valeur clavier sans passer par la file."""
+        if not self.controller:
+            self.focus_sending = False
+            self.keyboard_focus_processing = False
+            return
+        
+        if self.focus_sending:
+            # Si déjà en cours, ne rien faire (sera traité dans _on_keyboard_focus_send_complete)
+            return
+        
+        self.keyboard_focus_processing = True
+        self.focus_sending = True
+        
+        try:
+            success = self.controller.set_focus(value, silent=True)
+            # Attendre 50ms avant de permettre le prochain envoi (comme pour le slider)
+            QTimer.singleShot(50, self._on_keyboard_focus_send_complete)
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi du focus précis: {e}")
+            self.focus_sending = False
+            self.keyboard_focus_processing = False
+    
+    def set_controls_enabled(self, enabled: bool):
+        """Active ou désactive tous les contrôles."""
+        # Focus
+        self.focus_slider.setEnabled(enabled)
+        
+        # Iris
+        self.iris_plus_btn.setEnabled(enabled)
+        self.iris_minus_btn.setEnabled(enabled)
+        
+        # Gain
+        self.gain_plus_btn.setEnabled(enabled)
+        self.gain_minus_btn.setEnabled(enabled)
+        
+        # Shutter
+        self.shutter_plus_btn.setEnabled(enabled)
+        self.shutter_minus_btn.setEnabled(enabled)
+        
+        # Toggles
+        self.zebra_toggle.setEnabled(enabled)
+        self.focusAssist_toggle.setEnabled(enabled)
+        self.falseColor_toggle.setEnabled(enabled)
+        self.cleanfeed_toggle.setEnabled(enabled)
+        
+        # Autofocus
+        self.autofocus_btn.setEnabled(enabled)
+    
     def connect_websocket(self):
         """Se connecte au WebSocket de la caméra."""
+        if not self.controller:
+            return
         try:
             self.websocket_client = BlackmagicWebSocketClient(
                 self.camera_url,
@@ -1274,6 +1878,8 @@ class MainWindow(QMainWindow):
     
     def load_initial_values(self):
         """Charge les valeurs initiales depuis la caméra."""
+        if not self.controller:
+            return
         try:
             # Focus
             focus_value = self.controller.get_focus()
@@ -1325,14 +1931,20 @@ class MainWindow(QMainWindow):
     # Slots pour les signaux
     def on_focus_changed(self, value: float):
         """Slot appelé quand le focus change."""
-        self.focus_actual_value = value
+        # Arrondir la valeur à la même précision que le slider (0.001)
+        # Cela garantit une résolution cohérente entre le fader et les flèches
+        value_rounded = round(value, 3)# TOUJOURS accepter les mises à jour socket et les afficher en bleu
+        # Les valeurs socket reflètent l'état réel de la caméra et doivent toujours être affichées
+        self.focus_actual_value = value_rounded
         
-        # Mettre à jour l'affichage de la valeur réelle
-        self.focus_value_actual.setText(f"{value:.2f}")
+        # Mettre à jour l'affichage de la valeur réelle avec la valeur arrondie (affichage bleu)
+        self.focus_value_actual.setText(f"{value_rounded:.3f}")
         
-        # Mettre à jour le slider seulement si l'utilisateur ne le touche pas
+        # Mettre à jour le slider avec la valeur socket
+        # Même pendant l'ajustement clavier, on peut mettre à jour le slider pour refléter la valeur réelle
+        # Le flag focus_keyboard_adjusting n'empêche plus les mises à jour
         if not self.focus_slider_user_touching:
-            slider_value = int(value * 1000)
+            slider_value = int(value_rounded * 1000)
             self.focus_slider.blockSignals(True)
             self.focus_slider.setValue(slider_value)
             self.focus_slider.blockSignals(False)
@@ -1348,7 +1960,7 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour l'affichage avec la valeur actuelle
         self.focus_sent_value = current_focus_value
-        self.focus_value_sent.setText(f"{current_focus_value:.2f}")
+        self.focus_value_sent.setText(f"{current_focus_value:.3f}")
         
         # Envoyer immédiatement la valeur sur laquelle l'utilisateur a cliqué (si le verrou est ouvert)
         if not self.focus_sending:
@@ -1374,7 +1986,7 @@ class MainWindow(QMainWindow):
         # L'utilisateur touche le slider, mettre à jour l'affichage
         focus_value = value / 1000.0
         self.focus_sent_value = focus_value
-        self.focus_value_sent.setText(f"{focus_value:.2f}")
+        self.focus_value_sent.setText(f"{focus_value:.3f}")
         
         # Envoyer seulement si le verrou est ouvert (pas de requête en cours)
         if not self.focus_sending:
@@ -1382,6 +1994,8 @@ class MainWindow(QMainWindow):
     
     def _send_focus_value_now(self, value: float):
         """Envoie la valeur du focus, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
+        if not self.connected or not self.controller:
+            return
         if not self.focus_slider_user_touching:
             self.focus_sending = False
             return
@@ -1412,7 +2026,7 @@ class MainWindow(QMainWindow):
             current_slider_value = self.focus_slider.value()
             current_focus_value = current_slider_value / 1000.0
             self.focus_sent_value = current_focus_value
-            self.focus_value_sent.setText(f"{current_focus_value:.2f}")
+            self.focus_value_sent.setText(f"{current_focus_value:.3f}")
             self._send_focus_value_now(current_focus_value)
     
     
@@ -1476,12 +2090,122 @@ class MainWindow(QMainWindow):
     
     def on_websocket_status(self, connected: bool, message: str):
         """Slot appelé quand le statut WebSocket change."""
+        self.websocket_connected = connected
         if connected:
             self.status_label.setText(f"✓ {message}")
             self.status_label.setStyleSheet("color: #0f0;")
+            self.connected = True
         else:
             self.status_label.setText(f"✗ {message}")
             self.status_label.setStyleSheet("color: #f00;")
+            self.connected = False
+    
+    def save_preset(self, preset_number: int):
+        """Sauvegarde les valeurs actuelles dans un preset."""
+        if not self.connected or not self.controller:
+            logger.warning("Impossible de sauvegarder le preset : non connecté")
+            return
+        
+        try:
+            # Récupérer les valeurs actuelles
+            preset_data = {
+                "focus": self.focus_actual_value,
+                "iris": self.iris_actual_value,
+                "gain": self.gain_actual_value,
+                "shutter": self.shutter_actual_value,
+                "zoom": 0.0  # Valeur par défaut si non disponible
+            }
+            
+            # Récupérer la valeur de zoom normalisée si disponible
+            try:
+                zoom_data = self.controller.get_zoom()
+                if zoom_data and 'normalised' in zoom_data:
+                    preset_data["zoom"] = zoom_data['normalised']
+            except:
+                pass
+            
+            # Charger ou créer le fichier presets.json
+            presets_file = "presets.json"
+            if os.path.exists(presets_file):
+                with open(presets_file, 'r') as f:
+                    presets = json.load(f)
+            else:
+                presets = {}
+            
+            # Sauvegarder le preset
+            presets[f"preset_{preset_number}"] = preset_data
+            
+            # Écrire le fichier
+            with open(presets_file, 'w') as f:
+                json.dump(presets, f, indent=2)
+            
+            logger.info(f"Preset {preset_number} sauvegardé: {preset_data}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la sauvegarde du preset {preset_number}: {e}")
+    
+    def recall_preset(self, preset_number: int):
+        """Rappelle et applique un preset sauvegardé."""
+        if not self.connected or not self.controller:
+            logger.warning("Impossible de rappeler le preset : non connecté")
+            return
+        
+        try:
+            # Charger le fichier presets.json
+            presets_file = "presets.json"
+            if not os.path.exists(presets_file):
+                logger.warning(f"Fichier {presets_file} introuvable")
+                return
+            
+            with open(presets_file, 'r') as f:
+                presets = json.load(f)
+            
+            preset_key = f"preset_{preset_number}"
+            if preset_key not in presets:
+                logger.warning(f"Preset {preset_number} introuvable")
+                return
+            
+            preset_data = presets[preset_key]
+            
+            # Appliquer les valeurs
+            # Focus
+            if 'focus' in preset_data:
+                focus_value = float(preset_data['focus'])
+                self.controller.set_focus(focus_value, silent=True)
+                self.focus_sent_value = focus_value
+                self.focus_value_sent.setText(f"{focus_value:.3f}")
+                # Mettre à jour le slider
+                slider_value = int(focus_value * 1000)
+                self.focus_slider.blockSignals(True)
+                self.focus_slider.setValue(slider_value)
+                self.focus_slider.blockSignals(False)
+            
+            # Iris
+            if 'iris' in preset_data:
+                iris_value = float(preset_data['iris'])
+                self.update_iris_value(iris_value)
+            
+            # Gain
+            if 'gain' in preset_data:
+                gain_value = int(preset_data['gain'])
+                self.update_gain_value(gain_value)
+            
+            # Shutter
+            if 'shutter' in preset_data:
+                shutter_value = int(preset_data['shutter'])
+                self.update_shutter_value(shutter_value)
+            
+            # Zoom (si la méthode existe)
+            if 'zoom' in preset_data:
+                zoom_value = float(preset_data['zoom'])
+                try:
+                    if hasattr(self.controller, 'set_zoom'):
+                        self.controller.set_zoom(zoom_value, silent=True)
+                except:
+                    pass
+            
+            logger.info(f"Preset {preset_number} rappelé: {preset_data}")
+        except Exception as e:
+            logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
 
 
 def main():
