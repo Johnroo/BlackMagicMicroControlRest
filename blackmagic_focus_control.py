@@ -348,6 +348,7 @@ class BlackmagicFocusController:
         """
         self.base_url = base_url.rstrip('/')
         self.focus_endpoint = f"{self.base_url}/control/api/v1/lens/focus"
+        self.autofocus_endpoint = f"{self.base_url}/control/api/v1/lens/focus/doAutoFocus"
         self.iris_endpoint = f"{self.base_url}/control/api/v1/lens/iris"
         self.zoom_endpoint = f"{self.base_url}/control/api/v1/lens/zoom"
         self.gain_endpoint = f"{self.base_url}/control/api/v1/video/gain"
@@ -524,6 +525,74 @@ class BlackmagicFocusController:
             if hasattr(e, 'response') and e.response is not None:
                 print(f"Status code: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
+            return False
+    
+    def do_autofocus(self, x: float = 0.5, y: float = 0.5, silent: bool = False) -> bool:
+        """
+        Déclenche l'autofocus à une position donnée.
+        
+        Args:
+            x: Position X normalisée (0.0 à 1.0) pour le point de focus
+            y: Position Y normalisée (0.0 à 1.0) pour le point de focus
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si l'autofocus a été déclenché avec succès, False sinon
+        """
+        if not (0.0 <= x <= 1.0) or not (0.0 <= y <= 1.0):
+            error_msg = f"Erreur: Les positions doivent être entre 0.0 et 1.0, reçu: x={x}, y={y}"
+            if not silent:
+                print(error_msg)
+            return False
+        
+        try:
+            # Format selon la documentation: {"position": {"x": x, "y": y}}
+            payload = {"position": {"x": x, "y": y}}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {self.autofocus_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+            
+            # Utiliser PUT selon la documentation
+            response = self.session.put(
+                self.autofocus_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            # L'API peut retourner 204 (No Content) ou 200 pour indiquer le succès
+            if response.status_code in [200, 204]:
+                if not silent:
+                    print(f"Autofocus déclenché à la position ({x:.2f}, {y:.2f})")
+                return True
+            else:
+                error_msg = f"Status code inattendu: {response.status_code}, Response: {response.text}"
+                if not silent:
+                    print(f"Erreur: {error_msg}")
+                return False
+        except requests.exceptions.SSLError as e:
+            error_msg = f"Erreur SSL lors du déclenchement de l'autofocus: {e}"
+            if not silent:
+                print(error_msg)
+            return False
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Erreur de connexion lors du déclenchement de l'autofocus: {e}"
+            if not silent:
+                print(error_msg)
+                print(f"Vérifiez que la caméra est accessible à: {self.autofocus_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Erreur lors du déclenchement de l'autofocus: {e}"
+            if not silent:
+                print(error_msg)
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
             return False
     
     def get_iris(self) -> Optional[dict]:

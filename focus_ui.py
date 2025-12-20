@@ -2250,8 +2250,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=5000,
-        help="Port pour le serveur web (défaut: 5000)"
+        default=5002,
+        help="Port pour le serveur web (défaut: 5002)"
     )
     parser.add_argument(
         "--host",

@@ -125,7 +125,7 @@ fi
 success "requirements.txt trouvé"
 
 # 4. Définir les paramètres par défaut avant de tuer les processus (pour kill_existing_processes)
-PORT="5000"
+PORT="5002"
 HOST="127.0.0.1"
 
 # 5. Arrêter les processus existants
