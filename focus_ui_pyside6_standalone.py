@@ -58,6 +58,11 @@ class CameraData:
     # Presets
     presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     active_preset: Optional[int] = None  # Numéro du preset actuellement actif (1-10)
+    
+    # Throttling pour les autres paramètres
+    last_iris_send_time: int = 0
+    last_gain_send_time: int = 0
+    last_shutter_send_time: int = 0
 
 
 class CameraSignals(QObject):
@@ -266,10 +271,7 @@ class MainWindow(QMainWindow):
         self.cameras: Dict[int, CameraData] = {}
         self.active_camera_id: int = 1
         
-        # Variables pour le throttling
-        self.last_iris_send_time = 0
-        self.last_gain_send_time = 0
-        self.last_shutter_send_time = 0
+        # Variables pour le throttling (les timestamps sont maintenant dans CameraData)
         self.OTHER_MIN_INTERVAL = 500  # ms
         
         # Variables pour le slider focus
@@ -285,6 +287,14 @@ class MainWindow(QMainWindow):
         # File d'attente pour les valeurs clavier (pour ne pas perdre de valeurs)
         self.keyboard_focus_queue = []
         self.keyboard_focus_processing = False
+        
+        # Transition progressive entre presets
+        self.smooth_preset_transition = False
+        self.preset_transition_timer = None
+        self.preset_transition_start_time = None
+        self.preset_transition_duration = 2000  # 2 secondes
+        self.preset_transition_start_values = {}
+        self.preset_transition_target_values = {}
         
         # Charger la configuration des caméras
         self.load_cameras_config()
@@ -947,28 +957,30 @@ class MainWindow(QMainWindow):
         self.update_iris_value(new_value)
     
     def update_iris_value(self, value: float):
-        """Met à jour la valeur de l'iris."""
+        """Met à jour la valeur de l'iris pour la caméra active."""
+        cam_data = self.get_active_camera_data()
         value = max(0.0, min(1.0, value))
-        self.iris_sent_value = value
+        cam_data.iris_sent_value = value
         self.iris_value_sent.setText(f"{value:.2f}")
         self.send_iris_value(value)
     
     def send_iris_value(self, value: float):
-        """Envoie la valeur de l'iris avec throttling."""
-        if not self.connected or not self.controller:
+        """Envoie la valeur de l'iris avec throttling pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         now = int(time.time() * 1000)
-        time_since_last_send = now - self.last_iris_send_time
+        time_since_last_send = now - cam_data.last_iris_send_time
         
         if time_since_last_send < self.OTHER_MIN_INTERVAL:
             QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
                             lambda: self.send_iris_value(value))
             return
         
-        self.last_iris_send_time = now
+        cam_data.last_iris_send_time = now
         
         try:
-            success = self.controller.set_iris(value, silent=True)
+            success = cam_data.controller.set_iris(value, silent=True)
             if not success:
                 logger.error(f"Erreur lors de l'envoi de l'iris")
         except Exception as e:
@@ -1158,21 +1170,22 @@ class MainWindow(QMainWindow):
         self.send_gain_value(value)
     
     def send_gain_value(self, value: int):
-        """Envoie la valeur du gain avec throttling."""
-        if not self.connected or not self.controller:
+        """Envoie la valeur du gain avec throttling pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         now = int(time.time() * 1000)
-        time_since_last_send = now - self.last_gain_send_time
+        time_since_last_send = now - cam_data.last_gain_send_time
         
         if time_since_last_send < self.OTHER_MIN_INTERVAL:
             QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
                             lambda: self.send_gain_value(value))
             return
         
-        self.last_gain_send_time = now
+        cam_data.last_gain_send_time = now
         
         try:
-            success = self.controller.set_gain(value, silent=True)
+            success = cam_data.controller.set_gain(value, silent=True)
             if not success:
                 logger.error(f"Erreur lors de l'envoi du gain")
         except Exception as e:
@@ -1355,27 +1368,29 @@ class MainWindow(QMainWindow):
                 self.update_shutter_value(new_value)
     
     def update_shutter_value(self, value: int):
-        """Met à jour la valeur du shutter."""
-        self.shutter_sent_value = value
+        """Met à jour la valeur du shutter pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        cam_data.shutter_sent_value = value
         self.shutter_value_sent.setText(f"1/{value}s")
         self.send_shutter_value(value)
     
     def send_shutter_value(self, value: int):
-        """Envoie la valeur du shutter avec throttling."""
-        if not self.connected or not self.controller:
+        """Envoie la valeur du shutter avec throttling pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
             return
         now = int(time.time() * 1000)
-        time_since_last_send = now - self.last_shutter_send_time
+        time_since_last_send = now - cam_data.last_shutter_send_time
         
         if time_since_last_send < self.OTHER_MIN_INTERVAL:
             QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
                             lambda: self.send_shutter_value(value))
             return
         
-        self.last_shutter_send_time = now
+        cam_data.last_shutter_send_time = now
         
         try:
-            success = self.controller.set_shutter(shutter_speed=value, silent=True)
+            success = cam_data.controller.set_shutter(shutter_speed=value, silent=True)
             if not success:
                 logger.error(f"Erreur lors de l'envoi du shutter")
         except Exception as e:
@@ -1616,6 +1631,33 @@ class MainWindow(QMainWindow):
         self.autofocus_btn.clicked.connect(self.do_autofocus)
         layout.addWidget(self.autofocus_btn)
         
+        # Bouton pour activer/désactiver la transition progressive
+        self.smooth_transition_toggle = QPushButton("Transition\nProgressive\nOFF")
+        self.smooth_transition_toggle.setCheckable(True)
+        self.smooth_transition_toggle.setChecked(self.smooth_preset_transition)
+        self.smooth_transition_toggle.setStyleSheet("""
+            QPushButton {
+                width: 100%;
+                padding: 8px;
+                font-size: 9px;
+                font-weight: bold;
+                border: 2px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #0a5;
+                color: #fff;
+                border-color: #0f0;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        self.smooth_transition_toggle.clicked.connect(self.toggle_smooth_transition)
+        layout.addWidget(self.smooth_transition_toggle)
+        
         # Section Presets
         layout.addSpacing(10)
         presets_label = QLabel("Presets")
@@ -1623,19 +1665,21 @@ class MainWindow(QMainWindow):
         presets_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
         layout.addWidget(presets_label)
         
-        # Grille de presets (2 colonnes x 5 lignes)
-        presets_grid = QGridLayout()
-        presets_grid.setSpacing(5)
+        # Conteneur pour les deux colonnes
+        presets_container = QHBoxLayout()
+        presets_container.setSpacing(10)
+        
+        # Colonne Save
+        save_column = QVBoxLayout()
+        save_column.setSpacing(5)
+        save_label = QLabel("Save")
+        save_label.setAlignment(Qt.AlignCenter)
+        save_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa;")
+        save_column.addWidget(save_label)
         
         self.preset_save_buttons = []
-        self.preset_recall_buttons = []
-        
         for i in range(1, 11):
-            row = (i - 1) // 2
-            col = (i - 1) % 2
-            
-            # Bouton Save
-            save_btn = QPushButton(f"Save {i}")
+            save_btn = QPushButton(f"{i}")
             save_btn.setStyleSheet("""
                 QPushButton {
                     padding: 8px;
@@ -1654,11 +1698,20 @@ class MainWindow(QMainWindow):
                 }
             """)
             save_btn.clicked.connect(lambda checked, n=i: self.save_preset(n))
-            presets_grid.addWidget(save_btn, row * 2, col)
+            save_column.addWidget(save_btn)
             self.preset_save_buttons.append(save_btn)
-            
-            # Bouton Recall
-            recall_btn = QPushButton(f"Recall {i}")
+        
+        # Colonne Recall
+        recall_column = QVBoxLayout()
+        recall_column.setSpacing(5)
+        recall_label = QLabel("Recall")
+        recall_label.setAlignment(Qt.AlignCenter)
+        recall_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa;")
+        recall_column.addWidget(recall_label)
+        
+        self.preset_recall_buttons = []
+        for i in range(1, 11):
+            recall_btn = QPushButton(f"{i}")
             recall_btn.setStyleSheet("""
                 QPushButton {
                     padding: 8px;
@@ -1677,10 +1730,14 @@ class MainWindow(QMainWindow):
                 }
             """)
             recall_btn.clicked.connect(lambda checked, n=i: self.recall_preset(n))
-            presets_grid.addWidget(recall_btn, row * 2 + 1, col)
+            recall_column.addWidget(recall_btn)
             self.preset_recall_buttons.append(recall_btn)
         
-        layout.addLayout(presets_grid)
+        # Ajouter les deux colonnes au conteneur
+        presets_container.addLayout(save_column)
+        presets_container.addLayout(recall_column)
+        
+        layout.addLayout(presets_container)
         
         layout.addStretch()
         return panel
@@ -2565,6 +2622,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Erreur lors de la sauvegarde du preset {preset_number}: {e}")
     
+    def toggle_smooth_transition(self):
+        """Active/désactive la transition progressive entre presets."""
+        self.smooth_preset_transition = self.smooth_transition_toggle.isChecked()
+        state_text = "ON" if self.smooth_preset_transition else "OFF"
+        self.smooth_transition_toggle.setText(f"Transition\nProgressive\n{state_text}")
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"A","location":"toggle_smooth_transition","message":"Toggle transition progressive","data":{"enabled":self.smooth_preset_transition},"timestamp":int(time.time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        logger.info(f"Transition progressive: {state_text}")
+    
     def recall_preset(self, preset_number: int):
         """Rappelle et applique un preset sauvegardé pour la caméra active."""
         cam_data = self.get_active_camera_data()
@@ -2580,60 +2650,237 @@ class MainWindow(QMainWindow):
             
             preset_data = cam_data.presets[preset_key]
             
-            # Appliquer les valeurs
-            # Focus
-            if 'focus' in preset_data:
-                focus_value = float(preset_data['focus'])
-                cam_data.controller.set_focus(focus_value, silent=True)
-                cam_data.focus_sent_value = focus_value
-                self.focus_value_sent.setText(f"{focus_value:.3f}")
-                # Mettre à jour le slider
-                slider_value = int(focus_value * 1000)
-                self.focus_slider.blockSignals(True)
-                self.focus_slider.setValue(slider_value)
-                self.focus_slider.blockSignals(False)
+            # Arrêter toute transition en cours
+            if self.preset_transition_timer:
+                self.preset_transition_timer.stop()
+                self.preset_transition_timer = None
             
-            # Iris
-            if 'iris' in preset_data:
-                iris_value = float(preset_data['iris'])
-                self.update_iris_value(iris_value)
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"Recall preset called","data":{"preset_number":preset_number,"smooth_transition":self.smooth_preset_transition,"has_focus":'focus' in preset_data},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
             
-            # Gain
-            if 'gain' in preset_data:
-                gain_value = int(preset_data['gain'])
-                self.update_gain_value(gain_value)
-            
-            # Shutter
-            if 'shutter' in preset_data:
-                shutter_value = int(preset_data['shutter'])
-                self.update_shutter_value(shutter_value)
-            
-            # Zoom (si la méthode existe)
-            if 'zoom' in preset_data:
-                zoom_value = float(preset_data['zoom'])
+            # Si transition progressive activée, faire une transition
+            if self.smooth_preset_transition:
+                # #region agent log
                 try:
-                    if hasattr(cam_data.controller, 'set_zoom'):
-                        cam_data.controller.set_zoom(zoom_value, silent=True)
-                except:
-                    pass
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"About to call _start_smooth_preset_transition","data":{},"timestamp":int(time.time()*1000)}) + '\n')
+                except: pass
+                # #endregion
+                try:
+                    self._start_smooth_preset_transition(preset_data, preset_number)
+                except Exception as e:
+                    # #region agent log
+                    try:
+                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"Exception in _start_smooth_preset_transition","data":{"error":str(e)},"timestamp":int(time.time()*1000)}) + '\n')
+                    except: pass
+                    # #endregion
+                    logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
+                    raise
+            else:
+                # Appliquer les valeurs instantanément
+                self._apply_preset_values_instant(preset_data, preset_number)
             
-            # Marquer ce preset comme actif
-            cam_data.active_preset = preset_number
-            self.save_cameras_config()
-            
-            # Mettre à jour l'affichage visuel
-            self.update_preset_highlight()
-            
-            # Marquer ce preset comme actif
-            cam_data.active_preset = preset_number
-            self.save_cameras_config()
-            
-            # Mettre à jour l'affichage visuel
-            self.update_preset_highlight()
-            
-            logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} rappelé: {preset_data}")
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
+    
+    def _apply_preset_values_instant(self, preset_data: dict, preset_number: int):
+        """Applique les valeurs du preset instantanément (sauf focus si transition progressive activée)."""
+        cam_data = self.get_active_camera_data()
+        
+        # Focus - seulement si transition progressive désactivée
+        if 'focus' in preset_data and not self.smooth_preset_transition:
+            focus_value = float(preset_data['focus'])
+            cam_data.controller.set_focus(focus_value, silent=True)
+            cam_data.focus_sent_value = focus_value
+            self.focus_value_sent.setText(f"{focus_value:.3f}")
+            slider_value = int(focus_value * 1000)
+            self.focus_slider.blockSignals(True)
+            self.focus_slider.setValue(slider_value)
+            self.focus_slider.blockSignals(False)
+        
+        # Iris - toujours instantané
+        if 'iris' in preset_data:
+            iris_value = float(preset_data['iris'])
+            self.update_iris_value(iris_value)
+        
+        # Gain - toujours instantané
+        if 'gain' in preset_data:
+            gain_value = int(preset_data['gain'])
+            self.update_gain_value(gain_value)
+        
+        # Shutter - toujours instantané
+        if 'shutter' in preset_data:
+            shutter_value = int(preset_data['shutter'])
+            self.update_shutter_value(shutter_value)
+        
+        # Zoom - toujours instantané
+        if 'zoom' in preset_data:
+            zoom_value = float(preset_data['zoom'])
+            try:
+                if hasattr(cam_data.controller, 'set_zoom'):
+                    cam_data.controller.set_zoom(zoom_value, silent=True)
+            except:
+                pass
+        
+        # Marquer ce preset comme actif
+        cam_data.active_preset = preset_number
+        self.save_cameras_config()
+        self.update_preset_highlight()
+        
+        logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} rappelé instantanément")
+    
+    def _start_smooth_preset_transition(self, preset_data: dict, preset_number: int):
+        """Démarre une transition progressive vers les valeurs du preset (focus uniquement)."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Method entered","data":{"preset_data_keys":list(preset_data.keys())},"timestamp":int(time.time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        cam_data = self.get_active_camera_data()
+        
+        # Appliquer les autres paramètres instantanément (iris, gain, shutter, zoom)
+        if 'iris' in preset_data:
+            iris_value = float(preset_data['iris'])
+            self.update_iris_value(iris_value)
+        
+        if 'gain' in preset_data:
+            gain_value = int(preset_data['gain'])
+            self.update_gain_value(gain_value)
+        
+        if 'shutter' in preset_data:
+            shutter_value = int(preset_data['shutter'])
+            self.update_shutter_value(shutter_value)
+        
+        if 'zoom' in preset_data:
+            zoom_value = float(preset_data['zoom'])
+            try:
+                if hasattr(cam_data.controller, 'set_zoom'):
+                    cam_data.controller.set_zoom(zoom_value, silent=True)
+            except:
+                pass
+        
+        # Stocker les valeurs de départ et cibles pour le focus uniquement
+        if 'focus' in preset_data:
+            start_focus = cam_data.focus_actual_value
+            target_focus = float(preset_data['focus'])
+            
+            self.preset_transition_start_values = {
+                'focus': start_focus
+            }
+            
+            self.preset_transition_target_values = {
+                'focus': target_focus
+            }
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Starting smooth transition","data":{"start_focus":start_focus,"target_focus":target_focus,"focus_sending":self.focus_sending,"focus_slider_user_touching":self.focus_slider_user_touching},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            
+            # Démarrer le timer pour la transition du focus
+            self.preset_transition_start_time = time.time() * 1000  # en millisecondes
+            self.preset_transition_timer = QTimer()
+            self.preset_transition_timer.timeout.connect(self._update_smooth_preset_transition)
+            self.preset_transition_timer.start(20)  # Mise à jour toutes les 20ms (50 FPS)
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Timer started","data":{"timer_active":self.preset_transition_timer.isActive()},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+        else:
+            # Pas de focus dans le preset, pas de transition nécessaire
+            self.preset_transition_timer = None
+        
+        # Marquer ce preset comme actif immédiatement
+        cam_data.active_preset = preset_number
+        self.save_cameras_config()
+        self.update_preset_highlight()
+        
+        logger.info(f"Caméra {self.active_camera_id} - Début transition progressive du focus vers preset {preset_number}")
+    
+    def _update_smooth_preset_transition(self):
+        """Met à jour la transition progressive du focus uniquement (appelé par le timer)."""
+        if not self.preset_transition_timer:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"D","location":"_update_smooth_preset_transition","message":"Timer is None, returning","data":{},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            return
+        
+        current_time = time.time() * 1000
+        elapsed = current_time - self.preset_transition_start_time
+        progress = min(elapsed / self.preset_transition_duration, 1.0)  # 0.0 à 1.0
+        
+        # Fonction d'interpolation linéaire
+        def lerp(start, end, t):
+            return start + (end - start) * t
+        
+        cam_data = self.get_active_camera_data()
+        
+        # Interpoler uniquement le focus
+        if 'focus' in self.preset_transition_target_values:
+            focus_current = lerp(
+                self.preset_transition_start_values['focus'],
+                self.preset_transition_target_values['focus'],
+                progress
+            )
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"Updating focus value","data":{"progress":progress,"focus_current":focus_current,"focus_sending":self.focus_sending,"controller_exists":cam_data.controller is not None},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            
+            # Forcer l'envoi même si focus_sending est True (on ignore le verrou pendant la transition)
+            # On appelle directement set_focus sur le controller, sans passer par _send_focus_value_now
+            try:
+                success = cam_data.controller.set_focus(focus_current, silent=True)
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"set_focus called","data":{"success":success,"focus_value":focus_current},"timestamp":int(time.time()*1000)}) + '\n')
+                except: pass
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"set_focus error","data":{"error":str(e)},"timestamp":int(time.time()*1000)}) + '\n')
+                except: pass
+                # #endregion
+                pass
+            
+            cam_data.focus_sent_value = focus_current
+            self.focus_value_sent.setText(f"{focus_current:.3f}")
+            slider_value = int(focus_current * 1000)
+            self.focus_slider.blockSignals(True)
+            self.focus_slider.setValue(slider_value)
+            self.focus_slider.blockSignals(False)
+        
+        # Si la transition est terminée
+        if progress >= 1.0:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"Transition complete","data":{"final_focus":focus_current},"timestamp":int(time.time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            self.preset_transition_timer.stop()
+            self.preset_transition_timer = None
+            logger.info(f"Transition progressive du focus terminée")
     
     def update_preset_highlight(self):
         """Met à jour l'encadré coloré autour du preset actif."""
