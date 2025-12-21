@@ -549,6 +549,12 @@ class MainWindow(QMainWindow):
         def schedule_slider_update():
             if hasattr(self.focus_panel, 'force_slider_height'):
                 self.focus_panel.force_slider_height()
+            if hasattr(self.iris_panel, 'force_slider_height'):
+                self.iris_panel.force_slider_height()
+            if hasattr(self.gain_panel, 'force_slider_height'):
+                self.gain_panel.force_slider_height()
+            if hasattr(self.shutter_panel, 'force_slider_height'):
+                self.shutter_panel.force_slider_height()
         
         self.resize_filter = ResizeEventFilter(self, schedule_slider_update)
         self.installEventFilter(self.resize_filter)
@@ -950,7 +956,7 @@ class MainWindow(QMainWindow):
         iris_display_layout.addWidget(aperture_label)
         self.iris_aperture_stop = QLabel("-")
         self.iris_aperture_stop.setAlignment(Qt.AlignCenter)
-        self.iris_aperture_stop.setStyleSheet("font-size: 9px; color: #888;")
+        self.iris_aperture_stop.setStyleSheet("font-size: 9px; color: #0ff; font-weight: bold;")
         iris_display_layout.addWidget(self.iris_aperture_stop)
         
         iris_display_layout.addWidget(value_container)
@@ -1015,7 +1021,6 @@ class MainWindow(QMainWindow):
         
         slider_layout.addWidget(self.iris_slider, stretch=1)
         slider_layout.addWidget(slider_labels_container)
-        slider_layout.addStretch()
         
         layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
         
@@ -1026,20 +1031,29 @@ class MainWindow(QMainWindow):
         # Fonction pour forcer la hauteur du slider
         def force_slider_height():
             try:
+                # Calculer la hauteur disponible de manière plus précise
                 panel_height = panel.height()
                 if panel_height <= 0:
-                    return
+                    return  # Pas encore initialisé
                 
+                # Obtenir les hauteurs réelles des éléments
                 title = layout.itemAt(0).widget() if layout.count() > 0 else None
                 iris_display = layout.itemAt(1).widget() if layout.count() > 1 else None
                 
                 title_height = title.height() if title else 40
                 display_height = iris_display.height() if iris_display else 80
+                
+                # Marges du layout (top + bottom)
                 layout_margins = layout.contentsMargins()
                 margins_height = layout_margins.top() + layout_margins.bottom()
-                spacing = layout.spacing() * 2
                 
+                # Espacement entre les widgets
+                spacing = layout.spacing() * 2  # Espacement avant et après le slider
+                
+                # Calculer la hauteur disponible
                 available_height = panel_height - title_height - display_height - margins_height - spacing
+                
+                # S'assurer qu'on a au moins une hauteur minimale raisonnable
                 available_height = max(200, available_height)
                 
                 slider_container.setMinimumHeight(available_height)
@@ -1057,7 +1071,6 @@ class MainWindow(QMainWindow):
         self.iris_slider.sliderReleased.connect(self.on_iris_slider_released)
         self.iris_slider.valueChanged.connect(self.on_iris_slider_value_changed)
         
-        layout.addStretch()
         return panel
     
     def update_iris_value(self, value: float):
@@ -2540,10 +2553,14 @@ class MainWindow(QMainWindow):
                     self.signals.focus_changed.emit(value)
         elif param_name == 'iris':
             # TOUJOURS mettre à jour les données de la caméra
+            logger.debug(f"WebSocket iris reçu pour caméra {camera_id}: {data}")
             if 'normalised' in data:
                 cam_data.iris_actual_value = float(data['normalised'])
                 update_kwargs['iris'] = cam_data.iris_actual_value
+            # Toujours émettre le signal pour mettre à jour l'UI, même si 'normalised' n'est pas présent
+            # (les données peuvent contenir 'apertureStop' ou d'autres champs)
             if camera_id == self.active_camera_id:
+                logger.debug(f"Émission du signal iris_changed pour caméra active {camera_id}")
                 self.signals.iris_changed.emit(data)
         elif param_name == 'gain':
             if 'gain' in data:
@@ -2842,8 +2859,13 @@ class MainWindow(QMainWindow):
     
     def on_iris_changed(self, data: dict):
         """Slot appelé quand l'iris change."""
+        logger.debug(f"on_iris_changed appelé avec données: {data}")
         cam_data = self.get_active_camera_data()
+        
+        # Les données iris peuvent contenir 'normalised' et/ou 'apertureStop'
+        # On met toujours à jour 'iris_actual_value' si 'normalised' est présent
         if 'normalised' in data:
+            logger.debug(f"Mise à jour iris avec normalised: {data['normalised']}")
             value = float(data['normalised'])
             cam_data.iris_actual_value = value
             self.iris_value_actual.setText(f"{value:.2f}")
@@ -2855,6 +2877,8 @@ class MainWindow(QMainWindow):
                 self.iris_slider.blockSignals(True)
                 self.iris_slider.setValue(slider_value)
                 self.iris_slider.blockSignals(False)
+        
+        # Toujours mettre à jour l'aperture stop si présent
         if 'apertureStop' in data:
             self.iris_aperture_stop.setText(f"{data['apertureStop']:.2f}")
     

@@ -283,7 +283,13 @@ class BlackmagicWebSocketClient:
                         param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
                     elif '/lens/iris' in prop_path:
                         param_type = 'iris'
-                        param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
+                        # Si prop_value est un dict, l'utiliser tel quel (contient normalised, apertureStop, etc.)
+                        # Sinon, créer un dict avec normalised
+                        if isinstance(prop_value, dict):
+                            param_data = prop_value
+                        else:
+                            param_data = {'normalised': prop_value}
+                        self.logger.debug(f"Données iris reçues: {param_data}")
                     elif '/lens/zoom' in prop_path:
                         param_type = 'zoom'
                         param_data = prop_value if isinstance(prop_value, dict) else prop_value
@@ -339,7 +345,13 @@ class BlackmagicWebSocketClient:
                                 param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
                             elif '/lens/iris' in prop_path:
                                 param_type = 'iris'
-                                param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
+                                # Si prop_value est un dict, l'utiliser tel quel (contient normalised, apertureStop, etc.)
+                                # Sinon, créer un dict avec normalised
+                                if isinstance(prop_value, dict):
+                                    param_data = prop_value
+                                else:
+                                    param_data = {'normalised': prop_value}
+                                self.logger.debug(f"Valeur initiale iris reçue: {param_data}")
                             elif '/lens/zoom' in prop_path:
                                 param_type = 'zoom'
                                 param_data = prop_value if isinstance(prop_value, dict) else prop_value
