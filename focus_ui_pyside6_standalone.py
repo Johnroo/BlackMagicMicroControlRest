@@ -63,6 +63,7 @@ class CameraData:
     # État
     supported_gains: list = field(default_factory=list)
     supported_shutter_speeds: list = field(default_factory=list)
+    initial_values_received: bool = False  # True si les valeurs initiales ont été reçues du WebSocket
     
     # Presets
     presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -1135,13 +1136,6 @@ class MainWindow(QMainWindow):
     
     def _send_iris_value_now(self, value: float):
         """Envoie la valeur de l'iris à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"_send_iris_value_now","message":"Sending iris value to API","data":{"value":value,"slider_value":self.iris_slider.value() if hasattr(self, 'iris_slider') else None},"timestamp":int(time.time()*1000)}) + '\n')
-        except: pass
-        # #endregion
-        
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
@@ -2229,15 +2223,22 @@ class MainWindow(QMainWindow):
             # Créer le contrôleur
             cam_data.controller = BlackmagicFocusController(cam_data.url, cam_data.username, cam_data.password)
             
-            # Se connecter au WebSocket
+            # Réinitialiser le flag pour cette nouvelle connexion
+            cam_data.initial_values_received = False
+            
+            # Se connecter au WebSocket (qui enverra les valeurs initiales dans la réponse)
             self.connect_websocket(camera_id)
             
-            # Charger les valeurs initiales
-            self.load_initial_values(camera_id)
-            
-            # Charger les gains et shutters supportés
+            # Charger les gains et shutters supportés (toujours nécessaires)
             self.load_supported_gains(camera_id)
             self.load_supported_shutters(camera_id)
+            
+            # TEMPORAIRE: Charger aussi les valeurs initiales via GET pour s'assurer qu'on a les bonnes valeurs
+            # TODO: Retirer cette ligne une fois que le WebSocket fournit correctement les valeurs initiales
+            self.load_initial_values(camera_id)
+            
+            # Garder load_initial_values comme fallback après un délai (si WebSocket ne répond pas)
+            QTimer.singleShot(2000, lambda: self._fallback_load_initial_values(camera_id))
             
             # Mettre à jour l'état
             cam_data.connected = True
@@ -2284,6 +2285,7 @@ class MainWindow(QMainWindow):
             
             # Mettre à jour l'état
             cam_data.connected = False
+            cam_data.initial_values_received = False  # Réinitialiser le flag pour la prochaine connexion
             
             # Mettre à jour l'UI seulement si c'est la caméra active
             if camera_id == self.active_camera_id:
@@ -2518,6 +2520,12 @@ class MainWindow(QMainWindow):
         
         cam_data = self.cameras[camera_id]
         
+        # Marquer que nous avons reçu des valeurs du WebSocket (valeurs initiales ou mises à jour)
+        # On considère qu'on a reçu les valeurs initiales si on reçoit au moins focus
+        if param_name == 'focus' and not cam_data.initial_values_received:
+            cam_data.initial_values_received = True
+            logger.info(f"Valeurs initiales reçues du WebSocket pour la caméra {camera_id}")
+        
         # Mettre à jour le StateStore
         update_kwargs = {}
         
@@ -2703,8 +2711,24 @@ class MainWindow(QMainWindow):
                 update_kwargs['shutter'] = cam_data.shutter_actual_value
             if update_kwargs:
                 self.state_store.update_cam(camera_id, **update_kwargs)
+            
+            # Marquer que les valeurs initiales ont été chargées via GET
+            cam_data.initial_values_received = True
         except Exception as e:
             logger.error(f"Erreur lors du chargement des valeurs initiales pour la caméra {camera_id}: {e}")
+    
+    def _fallback_load_initial_values(self, camera_id: int):
+        """Charge les valeurs initiales via GET si le WebSocket ne les a pas fournies."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        
+        # Vérifier si on a déjà reçu des valeurs du WebSocket
+        # Si focus_actual_value est None, on fait les GET
+        if not cam_data.initial_values_received and cam_data.focus_actual_value is None:
+            logger.info(f"Fallback: Chargement des valeurs initiales via GET pour la caméra {camera_id}")
+            self.load_initial_values(camera_id)
     
     # Slots pour les signaux
     def on_focus_changed(self, value: float):
@@ -2968,12 +2992,6 @@ class MainWindow(QMainWindow):
         self.smooth_preset_transition = self.smooth_transition_toggle.isChecked()
         state_text = "ON" if self.smooth_preset_transition else "OFF"
         self.smooth_transition_toggle.setText(f"Transition\nProgressive\n{state_text}")
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"A","location":"toggle_smooth_transition","message":"Toggle transition progressive","data":{"enabled":self.smooth_preset_transition},"timestamp":int(time.time()*1000)}) + '\n')
-        except: pass
-        # #endregion
         logger.info(f"Transition progressive: {state_text}")
     
     def recall_preset(self, preset_number: int):
@@ -2996,30 +3014,11 @@ class MainWindow(QMainWindow):
                 self.preset_transition_timer.stop()
                 self.preset_transition_timer = None
             
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"Recall preset called","data":{"preset_number":preset_number,"smooth_transition":self.smooth_preset_transition,"has_focus":'focus' in preset_data},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
-            
             # Si transition progressive activée, faire une transition
             if self.smooth_preset_transition:
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"About to call _start_smooth_preset_transition","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-                except: pass
-                # #endregion
                 try:
                     self._start_smooth_preset_transition(preset_data, preset_number)
                 except Exception as e:
-                    # #region agent log
-                    try:
-                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"B","location":"recall_preset","message":"Exception in _start_smooth_preset_transition","data":{"error":str(e)},"timestamp":int(time.time()*1000)}) + '\n')
-                    except: pass
-                    # #endregion
                     logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
                     raise
             else:
@@ -3077,12 +3076,6 @@ class MainWindow(QMainWindow):
     
     def _start_smooth_preset_transition(self, preset_data: dict, preset_number: int):
         """Démarre une transition progressive vers les valeurs du preset (focus uniquement)."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Method entered","data":{"preset_data_keys":list(preset_data.keys())},"timestamp":int(time.time()*1000)}) + '\n')
-        except: pass
-        # #endregion
         cam_data = self.get_active_camera_data()
         
         # Appliquer les autres paramètres instantanément (iris, gain, shutter, zoom)
@@ -3119,25 +3112,11 @@ class MainWindow(QMainWindow):
                 'focus': target_focus
             }
             
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Starting smooth transition","data":{"start_focus":start_focus,"target_focus":target_focus,"focus_sending":self.focus_sending,"focus_slider_user_touching":self.focus_slider_user_touching},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
-            
             # Démarrer le timer pour la transition du focus
             self.preset_transition_start_time = time.time() * 1000  # en millisecondes
             self.preset_transition_timer = QTimer()
             self.preset_transition_timer.timeout.connect(self._update_smooth_preset_transition)
             self.preset_transition_timer.start(20)  # Mise à jour toutes les 20ms (50 FPS)
-            
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"C","location":"_start_smooth_preset_transition","message":"Timer started","data":{"timer_active":self.preset_transition_timer.isActive()},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
         else:
             # Pas de focus dans le preset, pas de transition nécessaire
             self.preset_transition_timer = None
@@ -3152,12 +3131,6 @@ class MainWindow(QMainWindow):
     def _update_smooth_preset_transition(self):
         """Met à jour la transition progressive du focus uniquement (appelé par le timer)."""
         if not self.preset_transition_timer:
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"D","location":"_update_smooth_preset_transition","message":"Timer is None, returning","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
             return
         
         current_time = time.time() * 1000
@@ -3178,30 +3151,11 @@ class MainWindow(QMainWindow):
                 progress
             )
             
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"Updating focus value","data":{"progress":progress,"focus_current":focus_current,"focus_sending":self.focus_sending,"controller_exists":cam_data.controller is not None},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
-            
             # Forcer l'envoi même si focus_sending est True (on ignore le verrou pendant la transition)
             # On appelle directement set_focus sur le controller, sans passer par _send_focus_value_now
             try:
                 success = cam_data.controller.set_focus(focus_current, silent=True)
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"set_focus called","data":{"success":success,"focus_value":focus_current},"timestamp":int(time.time()*1000)}) + '\n')
-                except: pass
-                # #endregion
             except Exception as e:
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"set_focus error","data":{"error":str(e)},"timestamp":int(time.time()*1000)}) + '\n')
-                except: pass
-                # #endregion
                 pass
             
             cam_data.focus_sent_value = focus_current
@@ -3213,12 +3167,6 @@ class MainWindow(QMainWindow):
         
         # Si la transition est terminée
         if progress >= 1.0:
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"transition","hypothesisId":"E","location":"_update_smooth_preset_transition","message":"Transition complete","data":{"final_focus":focus_current},"timestamp":int(time.time()*1000)}) + '\n')
-            except: pass
-            # #endregion
             self.preset_transition_timer.stop()
             self.preset_transition_timer = None
             logger.info(f"Transition progressive du focus terminée")

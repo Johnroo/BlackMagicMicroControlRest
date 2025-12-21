@@ -316,11 +316,55 @@ class BlackmagicWebSocketClient:
                     self.logger.debug(f"Action d'événement non gérée: {action}")
             
             elif msg_type == 'response':
-                # Message de réponse - peut contenir des données initiales
+                # Message de réponse - peut contenir des données initiales après l'abonnement
                 response_data = data.get('data', {})
                 self.logger.debug(f"Réponse WebSocket reçue: {response_data}")
-                # Les réponses peuvent contenir des données initiales, mais on les ignore
-                # car on récupère les valeurs initiales via HTTP
+                
+                # Si c'est une réponse à l'abonnement, elle peut contenir les valeurs initiales
+                # Format possible: {"data": {"properties": {"/lens/focus": {...}, "/lens/iris": {...}, ...}}}
+                # ou {"data": {"action": "subscribe", "properties": [...]}} avec valeurs dans chaque propriété
+                if 'properties' in response_data:
+                    properties = response_data.get('properties', {})
+                    if isinstance(properties, dict) and len(properties) > 0:
+                        self.logger.info(f"Valeurs initiales reçues du WebSocket: {list(properties.keys())}")
+                        
+                        # Traiter chaque propriété comme un événement propertyValueChanged
+                        for prop_path, prop_value in properties.items():
+                            # Utiliser la même logique que pour propertyValueChanged
+                            param_type = None
+                            param_data = {}
+                            
+                            if '/lens/focus' in prop_path:
+                                param_type = 'focus'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
+                            elif '/lens/iris' in prop_path:
+                                param_type = 'iris'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'normalised': prop_value}
+                            elif '/lens/zoom' in prop_path:
+                                param_type = 'zoom'
+                                param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                            elif '/video/gain' in prop_path:
+                                param_type = 'gain'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'gain': prop_value}
+                            elif '/video/shutter' in prop_path:
+                                param_type = 'shutter'
+                                param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                            elif '/monitoring/HDMI/zebra' in prop_path or '/video/zebra' in prop_path:
+                                param_type = 'zebra'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
+                            elif '/monitoring/HDMI/focusAssist' in prop_path or '/video/focusAssist' in prop_path:
+                                param_type = 'focusAssist'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
+                            elif '/monitoring/HDMI/falseColor' in prop_path or '/video/falseColor' in prop_path:
+                                param_type = 'falseColor'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
+                            elif '/monitoring/HDMI/cleanfeed' in prop_path or '/video/cleanfeed' in prop_path:
+                                param_type = 'cleanfeed'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
+                            
+                            if param_type and self.on_change_callback:
+                                self.logger.debug(f"Valeur initiale {param_type} reçue: {param_data}")
+                                self.on_change_callback(param_type, param_data)
             
             else:
                 # Format inattendu, essayer de parser quand même
