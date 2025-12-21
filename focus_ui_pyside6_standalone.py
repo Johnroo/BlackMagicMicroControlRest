@@ -648,6 +648,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'iris_value_actual') and cam_data.iris_actual_value is not None:
             self.iris_value_actual.setText(f"{cam_data.iris_actual_value:.2f}")
         if hasattr(self, 'iris_slider') and cam_data.iris_actual_value is not None:
+            # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
             slider_value = int(cam_data.iris_actual_value * 1000)
             self.iris_slider.blockSignals(True)
             self.iris_slider.setValue(slider_value)
@@ -962,11 +963,12 @@ class MainWindow(QMainWindow):
         slider_layout.setContentsMargins(0, 0, 0, 0)
         slider_layout.setSpacing(0)
         
-        # Slider vertical
+        # Slider vertical (inversé : 0 en haut, 1.0 en bas)
         self.iris_slider = QSlider(Qt.Vertical)
         self.iris_slider.setMinimum(0)
         self.iris_slider.setMaximum(1000)  # 0.001 de précision
         self.iris_slider.setValue(0)
+        self.iris_slider.setInvertedAppearance(True)  # Inverser pour avoir 0 en haut, 1.0 en bas
         self.iris_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.iris_slider.setStyleSheet("""
             QSlider::groove:vertical {
@@ -988,15 +990,15 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        # Labels pour le slider (1.0, 0.5, 0.0)
+        # Labels pour le slider (inversés : 0.0 en haut, 1.0 en bas)
         slider_labels_container = QWidget()
         slider_labels_layout = QVBoxLayout(slider_labels_container)
         slider_labels_layout.setContentsMargins(10, 0, 0, 0)
         slider_labels_layout.setSpacing(0)
         
-        label_1 = QLabel("1.0")
-        label_1.setStyleSheet("font-size: 9px; color: #aaa;")
-        slider_labels_layout.addWidget(label_1)
+        label_0 = QLabel("0.0")
+        label_0.setStyleSheet("font-size: 9px; color: #aaa;")
+        slider_labels_layout.addWidget(label_0)
         
         slider_labels_layout.addStretch()
         
@@ -1006,9 +1008,9 @@ class MainWindow(QMainWindow):
         
         slider_labels_layout.addStretch()
         
-        label_0 = QLabel("0.0")
-        label_0.setStyleSheet("font-size: 9px; color: #aaa;")
-        slider_labels_layout.addWidget(label_0)
+        label_1 = QLabel("1.0")
+        label_1.setStyleSheet("font-size: 9px; color: #aaa;")
+        slider_labels_layout.addWidget(label_1)
         
         slider_layout.addWidget(self.iris_slider, stretch=1)
         slider_layout.addWidget(slider_labels_container)
@@ -1072,6 +1074,8 @@ class MainWindow(QMainWindow):
         self.iris_slider_user_touching = True
         
         # Lire la position actuelle du slider au moment du clic
+        # Avec setInvertedAppearance(True), slider 0 est visuellement en haut, slider 1000 en bas
+        # Conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
         current_slider_value = self.iris_slider.value()
         current_iris_value = current_slider_value / 1000.0
         
@@ -1091,6 +1095,7 @@ class MainWindow(QMainWindow):
         self.iris_slider_user_touching = False
         
         # Remettre immédiatement le slider à la valeur réelle de l'iris
+        # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
         if cam_data.iris_actual_value is not None:
             slider_value = int(cam_data.iris_actual_value * 1000)
             self.iris_slider.blockSignals(True)
@@ -1106,6 +1111,7 @@ class MainWindow(QMainWindow):
             return
         
         # L'utilisateur touche le slider, mettre à jour l'affichage
+        # Avec setInvertedAppearance(True), conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
         iris_value = value / 1000.0
         cam_data.iris_sent_value = iris_value
         self.iris_value_sent.setText(f"{iris_value:.2f}")
@@ -1114,8 +1120,28 @@ class MainWindow(QMainWindow):
         if not self.iris_sending:
             self._send_iris_value_now(iris_value)
     
+    def send_iris_value(self, value: float):
+        """Envoie la valeur de l'iris directement (utilisé par Companion)."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        try:
+            success = cam_data.controller.set_iris(value, silent=True)
+            if not success:
+                logger.error(f"Erreur lors de l'envoi de l'iris")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi de l'iris: {e}")
+    
     def _send_iris_value_now(self, value: float):
         """Envoie la valeur de l'iris à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"_send_iris_value_now","message":"Sending iris value to API","data":{"value":value,"slider_value":self.iris_slider.value() if hasattr(self, 'iris_slider') else None},"timestamp":int(time.time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
@@ -1145,6 +1171,7 @@ class MainWindow(QMainWindow):
         self.iris_sending = False
         
         # Si l'utilisateur touche toujours le slider, lire la position actuelle et l'envoyer
+        # Avec setInvertedAppearance(True), conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
         if self.iris_slider_user_touching:
             cam_data = self.get_active_camera_data()
             current_slider_value = self.iris_slider.value()
@@ -1777,7 +1804,7 @@ class MainWindow(QMainWindow):
                 opacity: 0.5;
             }
         """)
-        self.autofocus_btn.clicked.connect(self.do_autofocus)
+        self.autofocus_btn.clicked.connect(lambda: self.do_autofocus())
         layout.addWidget(self.autofocus_btn)
         
         # Bouton pour activer/désactiver la transition progressive
@@ -2040,10 +2067,12 @@ class MainWindow(QMainWindow):
     def do_autofocus(self, camera_id: Optional[int] = None):
         """Déclenche l'autofocus pour la caméra spécifiée ou la caméra active."""
         # Utiliser la caméra spécifiée ou la caméra active
-        if camera_id is None:
+        # Si camera_id est False (venant du signal clicked), le traiter comme None
+        if camera_id is None or camera_id is False:
             camera_id = self.active_camera_id
         
-        if camera_id < 1 or camera_id > 8:
+        # Vérifier que camera_id est un entier valide
+        if not isinstance(camera_id, int) or camera_id < 1 or camera_id > 8:
             logger.warning(f"ID de caméra invalide pour autofocus: {camera_id}")
             return
         
@@ -2796,6 +2825,7 @@ class MainWindow(QMainWindow):
             self.iris_value_actual.setText(f"{value:.2f}")
             
             # Mettre à jour le slider seulement si l'utilisateur ne le touche pas
+            # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
             if not self.iris_slider_user_touching:
                 slider_value = int(value * 1000)
                 self.iris_slider.blockSignals(True)
