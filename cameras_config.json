@@ -32,49 +32,104 @@
         "gain": 0,
         "shutter": 0,
         "zoom": 0.0
+      },
+      "preset_5": {
+        "focus": 0.5744903087615967,
+        "iris": 0.0,
+        "gain": 18,
+        "shutter": 50,
+        "zoom": 0.0
       }
+    },
+    "recall_scope": {
+      "focus": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true
     }
   },
   "camera_2": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_3": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_4": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_5": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_6": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_7": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   },
   "camera_8": {
     "url": "",
     "username": "",
     "password": "",
-    "presets": {}
+    "presets": {},
+    "recall_scope": {
+      "focus": false,
+      "iris": false,
+      "gain": false,
+      "shutter": false
+    }
   }
 }

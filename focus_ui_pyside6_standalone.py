@@ -69,6 +69,14 @@ class CameraData:
     presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     active_preset: Optional[int] = None  # Numéro du preset actuellement actif (1-10)
     
+    # Recall Scope - paramètres à exclure lors du recall (True = exclu, False = inclus)
+    recall_scope: Dict[str, bool] = field(default_factory=lambda: {
+        'focus': False,
+        'iris': False,
+        'gain': False,
+        'shutter': False
+    })
+    
     # Throttling pour les autres paramètres
     last_iris_send_time: int = 0
     last_gain_send_time: int = 0
@@ -321,6 +329,9 @@ class MainWindow(QMainWindow):
         self.preset_transition_start_values = {}
         self.preset_transition_target_values = {}
         
+        # Recall scope checkboxes (initialisé dans create_presets_panel)
+        self.recall_scope_checkboxes = {}
+        
         # Charger la configuration des caméras
         self.load_cameras_config()
         
@@ -332,6 +343,9 @@ class MainWindow(QMainWindow):
         
         # Charger les valeurs de la caméra active dans l'UI
         self._update_ui_from_camera_data(self.get_active_camera_data())
+        
+        # Mettre à jour l'UI du recall scope
+        self.update_recall_scope_ui()
         
         # Initialiser le StateStore avec les presets existants
         for camera_id, cam_data in self.cameras.items():
@@ -382,11 +396,25 @@ class MainWindow(QMainWindow):
                     if "presets" not in cam_config:
                         cam_config["presets"] = {}
                     
+                    # Charger recall_scope avec valeurs par défaut si absent
+                    default_recall_scope = {
+                        'focus': False,
+                        'iris': False,
+                        'gain': False,
+                        'shutter': False
+                    }
+                    recall_scope = cam_config.get("recall_scope", default_recall_scope)
+                    # S'assurer que tous les paramètres sont présents
+                    for param in ['focus', 'iris', 'gain', 'shutter']:
+                        if param not in recall_scope:
+                            recall_scope[param] = False
+                    
                     self.cameras[i] = CameraData(
                         url=cam_config.get("url", "").rstrip('/'),
                         username=cam_config.get("username", ""),
                         password=cam_config.get("password", ""),
-                        presets=cam_config.get("presets", {})
+                        presets=cam_config.get("presets", {}),
+                        recall_scope=recall_scope
                     )
                 else:
                     # Créer une caméra vide
@@ -417,7 +445,8 @@ class MainWindow(QMainWindow):
                     "url": cam_data.url,
                     "username": cam_data.username,
                     "password": cam_data.password,
-                    "presets": cam_data.presets
+                    "presets": cam_data.presets,
+                    "recall_scope": cam_data.recall_scope
                 }
             
             with open(config_file, 'w') as f:
@@ -623,6 +652,9 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour l'encadré du preset actif
         self.update_preset_highlight()
+        
+        # Mettre à jour l'UI du recall scope
+        self.update_recall_scope_ui()
         
         # Mettre à jour le status label
         if cam_data.connected:
@@ -1949,6 +1981,126 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(presets_container)
         
+        # Section Recall Scope
+        layout.addSpacing(20)
+        recall_scope_label = QLabel("Recall Scope")
+        recall_scope_label.setAlignment(Qt.AlignCenter)
+        recall_scope_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
+        layout.addWidget(recall_scope_label)
+        
+        # Conteneur pour les checkboxes
+        recall_scope_container = QVBoxLayout()
+        recall_scope_container.setSpacing(8)
+        
+        # Dictionnaire pour stocker les références aux checkboxes
+        self.recall_scope_checkboxes = {}
+        
+        # Checkbox Focus
+        focus_checkbox = QPushButton("☐ Focus")
+        focus_checkbox.setCheckable(True)
+        focus_checkbox.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #444;
+                color: #fff;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        focus_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('focus', checked))
+        recall_scope_container.addWidget(focus_checkbox)
+        self.recall_scope_checkboxes['focus'] = focus_checkbox
+        
+        # Checkbox Iris
+        iris_checkbox = QPushButton("☐ Iris")
+        iris_checkbox.setCheckable(True)
+        iris_checkbox.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #444;
+                color: #fff;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        iris_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('iris', checked))
+        recall_scope_container.addWidget(iris_checkbox)
+        self.recall_scope_checkboxes['iris'] = iris_checkbox
+        
+        # Checkbox Gain
+        gain_checkbox = QPushButton("☐ Gain")
+        gain_checkbox.setCheckable(True)
+        gain_checkbox.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #444;
+                color: #fff;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        gain_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('gain', checked))
+        recall_scope_container.addWidget(gain_checkbox)
+        self.recall_scope_checkboxes['gain'] = gain_checkbox
+        
+        # Checkbox Shutter
+        shutter_checkbox = QPushButton("☐ Shutter")
+        shutter_checkbox.setCheckable(True)
+        shutter_checkbox.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #444;
+                color: #fff;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        shutter_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('shutter', checked))
+        recall_scope_container.addWidget(shutter_checkbox)
+        self.recall_scope_checkboxes['shutter'] = shutter_checkbox
+        
+        layout.addLayout(recall_scope_container)
+        
         layout.addStretch()
         return panel
     
@@ -3072,6 +3224,12 @@ class MainWindow(QMainWindow):
             
             preset_data = cam_data.presets[preset_key]
             
+            # Filtrer les paramètres selon le recall scope (exclure ceux où recall_scope[param] == True)
+            filtered_preset_data = {
+                param: value for param, value in preset_data.items()
+                if param not in cam_data.recall_scope or not cam_data.recall_scope[param]
+            }
+            
             # Arrêter toute transition en cours
             if self.preset_transition_timer:
                 self.preset_transition_timer.stop()
@@ -3080,13 +3238,13 @@ class MainWindow(QMainWindow):
             # Si transition progressive activée, faire une transition
             if self.smooth_preset_transition:
                 try:
-                    self._start_smooth_preset_transition(preset_data, preset_number)
+                    self._start_smooth_preset_transition(filtered_preset_data, preset_number)
                 except Exception as e:
                     logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
                     raise
             else:
                 # Appliquer les valeurs instantanément
-                self._apply_preset_values_instant(preset_data, preset_number)
+                self._apply_preset_values_instant(filtered_preset_data, preset_number)
             
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
@@ -3233,6 +3391,36 @@ class MainWindow(QMainWindow):
             self.preset_transition_timer.stop()
             self.preset_transition_timer = None
             logger.info(f"Transition progressive du focus terminée")
+    
+    def on_recall_scope_changed(self, param: str, excluded: bool):
+        """Appelé quand une checkbox de recall scope change."""
+        cam_data = self.get_active_camera_data()
+        cam_data.recall_scope[param] = excluded
+        
+        # Mettre à jour le texte de la checkbox
+        checkbox = self.recall_scope_checkboxes.get(param)
+        if checkbox:
+            checkbox.setText(f"{'☑' if excluded else '☐'} {param.capitalize()}")
+        
+        # Sauvegarder la configuration
+        self.save_cameras_config()
+        
+        logger.info(f"Recall scope pour {param}: {'exclu' if excluded else 'inclus'}")
+    
+    def update_recall_scope_ui(self):
+        """Met à jour l'UI des checkboxes de recall scope selon les valeurs de la caméra active."""
+        if not hasattr(self, 'recall_scope_checkboxes') or not self.recall_scope_checkboxes:
+            return
+        
+        cam_data = self.get_active_camera_data()
+        
+        for param, checkbox in self.recall_scope_checkboxes.items():
+            if checkbox:
+                excluded = cam_data.recall_scope.get(param, False)
+                checkbox.blockSignals(True)
+                checkbox.setChecked(excluded)
+                checkbox.setText(f"{'☑' if excluded else '☐'} {param.capitalize()}")
+                checkbox.blockSignals(False)
     
     def update_preset_highlight(self):
         """Met à jour l'encadré coloré autour du preset actif."""
