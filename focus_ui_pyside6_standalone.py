@@ -21,6 +21,9 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent
 from PySide6.QtGui import QResizeEvent, QKeyEvent
 
 from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSocketClient
+from state_store import StateStore
+from ws_server import CompanionWsServer
+from command_handler import CommandHandler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -267,6 +270,17 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.signals = CameraSignals()
         
+        # StateStore pour Companion
+        self.state_store = StateStore()
+        
+        # Companion WebSocket Server
+        self.companion_server = CompanionWsServer(self.state_store)
+        self.companion_server.command_received.connect(self._handle_companion_command)
+        self.companion_server.start(8765)
+        
+        # CommandHandler pour traiter les commandes Companion
+        self.command_handler = CommandHandler()
+        
         # Variables de connexion (remplacées par cameras dict)
         self.cameras: Dict[int, CameraData] = {}
         self.active_camera_id: int = 1
@@ -307,6 +321,14 @@ class MainWindow(QMainWindow):
         
         # Charger les valeurs de la caméra active dans l'UI
         self._update_ui_from_camera_data(self.get_active_camera_data())
+        
+        # Initialiser le StateStore avec les presets existants
+        for camera_id, cam_data in self.cameras.items():
+            for preset_name, preset_data in cam_data.presets.items():
+                self.state_store.set_preset(camera_id, preset_name, preset_data)
+        
+        # Initialiser active_cam dans le StateStore
+        self.state_store.set_active_cam(self.active_camera_id)
         
         # Connexion automatique si la caméra active a des paramètres configurés
         cam_data = self.get_active_camera_data()
@@ -557,6 +579,9 @@ class MainWindow(QMainWindow):
         
         self.active_camera_id = camera_id
         cam_data = self.cameras[camera_id]
+        
+        # Mettre à jour le StateStore
+        self.state_store.set_active_cam(camera_id)
         
         # Mettre à jour le sélecteur
         # Mettre à jour les boutons de caméra
@@ -1860,36 +1885,61 @@ class MainWindow(QMainWindow):
             self.cleanfeed_toggle.blockSignals(False)
             logger.error(f"Erreur lors de l'envoi du cleanfeed: {e}")
     
-    def do_autofocus(self):
-        """Déclenche l'autofocus pour la caméra active."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
+    def do_autofocus(self, camera_id: Optional[int] = None):
+        """Déclenche l'autofocus pour la caméra spécifiée ou la caméra active."""
+        # Utiliser la caméra spécifiée ou la caméra active
+        if camera_id is None:
+            camera_id = self.active_camera_id
+        
+        if camera_id < 1 or camera_id > 8:
+            logger.warning(f"ID de caméra invalide pour autofocus: {camera_id}")
             return
-        self.autofocus_btn.setEnabled(False)
-        self.autofocus_btn.setText("🔍 Autofocus...")
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.connected or not cam_data.controller:
+            logger.warning(f"Caméra {camera_id} non connectée pour autofocus")
+            return
+        
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        if camera_id == self.active_camera_id:
+            self.autofocus_btn.setEnabled(False)
+            self.autofocus_btn.setText("🔍 Autofocus...")
         
         try:
             success = cam_data.controller.do_autofocus(0.5, 0.5, silent=True)
             if success:
-                self.autofocus_btn.setText("✓ Autofocus OK")
-                # Attendre un peu que l'autofocus se termine, puis récupérer la valeur normalisée
-                QTimer.singleShot(500, self._update_focus_after_autofocus)
-                QTimer.singleShot(2000, lambda: (
-                    self.autofocus_btn.setText("🔍 Autofocus"),
-                    self.autofocus_btn.setEnabled(True)
-                ))
+                if camera_id == self.active_camera_id:
+                    self.autofocus_btn.setText("✓ Autofocus OK")
+                    # Attendre un peu que l'autofocus se termine, puis récupérer la valeur normalisée
+                    QTimer.singleShot(500, lambda: self._update_focus_after_autofocus(camera_id))
+                    QTimer.singleShot(2000, lambda: (
+                        self.autofocus_btn.setText("🔍 Autofocus"),
+                        self.autofocus_btn.setEnabled(True)
+                    ))
+                else:
+                    # Pour les caméras non actives, juste mettre à jour la valeur après un délai
+                    QTimer.singleShot(500, lambda: self._update_focus_after_autofocus(camera_id))
+                logger.info(f"Autofocus déclenché avec succès pour la caméra {camera_id}")
             else:
+                if camera_id == self.active_camera_id:
+                    self.autofocus_btn.setText("🔍 Autofocus")
+                    self.autofocus_btn.setEnabled(True)
+                logger.error(f"Erreur lors de l'autofocus pour la caméra {camera_id}")
+        except Exception as e:
+            if camera_id == self.active_camera_id:
                 self.autofocus_btn.setText("🔍 Autofocus")
                 self.autofocus_btn.setEnabled(True)
-                logger.error(f"Erreur lors de l'autofocus")
-        except Exception as e:
-            self.autofocus_btn.setText("🔍 Autofocus")
-            self.autofocus_btn.setEnabled(True)
-            logger.error(f"Erreur lors de l'autofocus: {e}")
+            logger.error(f"Erreur lors de l'autofocus pour la caméra {camera_id}: {e}")
     
-    def _update_focus_after_autofocus(self):
+    def _update_focus_after_autofocus(self, camera_id: Optional[int] = None):
         """Récupère la valeur du focus après l'autofocus et met à jour l'affichage."""
-        cam_data = self.get_active_camera_data()
+        if camera_id is None:
+            camera_id = self.active_camera_id
+        
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
         if not cam_data.connected or not cam_data.controller:
             return
         try:
@@ -1908,16 +1958,20 @@ class MainWindow(QMainWindow):
                     cam_data.focus_actual_value = focus_value
                     cam_data.focus_sent_value = focus_value
                     
-                    # Mettre à jour l'UI
-                    self.focus_value_actual.setText(f"{focus_value:.3f}")
-                    self.focus_value_sent.setText(f"{focus_value:.3f}")
+                    # Mettre à jour le StateStore
+                    self.state_store.update_cam(camera_id, focus=focus_value)
                     
-                    # Mettre à jour le slider si l'utilisateur ne le touche pas
-                    if not self.focus_slider_user_touching:
-                        slider_value = int(focus_value * 1000)
-                        self.focus_slider.blockSignals(True)
-                        self.focus_slider.setValue(slider_value)
-                        self.focus_slider.blockSignals(False)
+                    # Mettre à jour l'UI seulement si c'est la caméra active
+                    if camera_id == self.active_camera_id:
+                        self.focus_value_actual.setText(f"{focus_value:.3f}")
+                        self.focus_value_sent.setText(f"{focus_value:.3f}")
+                        
+                        # Mettre à jour le slider si l'utilisateur ne le touche pas
+                        if not self.focus_slider_user_touching:
+                            slider_value = int(focus_value * 1000)
+                            self.focus_slider.blockSignals(True)
+                            self.focus_slider.setValue(slider_value)
+                            self.focus_slider.blockSignals(False)
                 else:
                     logger.warning("Aucune valeur de focus récupérée après l'autofocus")
         except Exception as e:
@@ -2007,6 +2061,9 @@ class MainWindow(QMainWindow):
             # Mettre à jour l'état
             cam_data.connected = True
             
+            # Mettre à jour le StateStore avec l'état de connexion
+            self.state_store.update_cam(camera_id, connected=True)
+            
             # Mettre à jour l'UI seulement si c'est la caméra active
             if camera_id == self.active_camera_id:
                 self.status_label.setText(f"✓ Caméra {camera_id} - Connectée à {cam_data.url}")
@@ -2018,6 +2075,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Erreur lors de la connexion de la caméra {camera_id}: {e}")
             cam_data.connected = False
+            # Mettre à jour le StateStore avec l'état de déconnexion
+            self.state_store.update_cam(camera_id, connected=False)
             if camera_id == self.active_camera_id:
                 self.status_label.setText(f"✗ Caméra {camera_id} - Erreur de connexion: {e}")
                 self.status_label.setStyleSheet("color: #f00;")
@@ -2279,11 +2338,15 @@ class MainWindow(QMainWindow):
         
         cam_data = self.cameras[camera_id]
         
+        # Mettre à jour le StateStore
+        update_kwargs = {}
+        
         if param_name == 'focus':
             if 'normalised' in data:
                 value = float(data['normalised'])
                 # TOUJOURS mettre à jour les données de la caméra
                 cam_data.focus_actual_value = value
+                update_kwargs['focus'] = value
                 # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
                     self.signals.focus_changed.emit(value)
@@ -2291,15 +2354,21 @@ class MainWindow(QMainWindow):
             # TOUJOURS mettre à jour les données de la caméra
             if 'normalised' in data:
                 cam_data.iris_actual_value = float(data['normalised'])
+                update_kwargs['iris'] = cam_data.iris_actual_value
             if camera_id == self.active_camera_id:
                 self.signals.iris_changed.emit(data)
         elif param_name == 'gain':
             if 'gain' in data:
                 value = int(data['gain'])
                 cam_data.gain_actual_value = value
+                update_kwargs['gain'] = value
                 if camera_id == self.active_camera_id:
                     self.signals.gain_changed.emit(value)
         elif param_name == 'shutter':
+            if 'shutterSpeed' in data:
+                value = int(data['shutterSpeed'])
+                cam_data.shutter_actual_value = value
+                update_kwargs['shutter'] = value
             if camera_id == self.active_camera_id:
                 self.signals.shutter_changed.emit(data)
         elif param_name == 'zebra':
@@ -2319,8 +2388,14 @@ class MainWindow(QMainWindow):
                 if camera_id == self.active_camera_id:
                     self.signals.cleanfeed_changed.emit(bool(data['enabled']))
         elif param_name == 'zoom':
+            if 'normalised' in data:
+                update_kwargs['zoom'] = float(data['normalised'])
             if camera_id == self.active_camera_id:
                 self.signals.zoom_changed.emit(data)
+        
+        # Mettre à jour le StateStore si des valeurs ont changé
+        if update_kwargs:
+            self.state_store.update_cam(camera_id, **update_kwargs)
     
     def load_initial_values(self, camera_id: int):
         """Charge les valeurs initiales depuis la caméra spécifiée."""
@@ -2411,6 +2486,19 @@ class MainWindow(QMainWindow):
             if cleanfeed_value is not None:
                 if camera_id == self.active_camera_id:
                     self.on_cleanfeed_changed(cleanfeed_value)
+            
+            # Mettre à jour le StateStore avec toutes les valeurs initiales
+            update_kwargs = {}
+            if cam_data.focus_actual_value is not None:
+                update_kwargs['focus'] = cam_data.focus_actual_value
+            if cam_data.iris_actual_value is not None:
+                update_kwargs['iris'] = cam_data.iris_actual_value
+            if cam_data.gain_actual_value is not None:
+                update_kwargs['gain'] = cam_data.gain_actual_value
+            if cam_data.shutter_actual_value is not None:
+                update_kwargs['shutter'] = cam_data.shutter_actual_value
+            if update_kwargs:
+                self.state_store.update_cam(camera_id, **update_kwargs)
         except Exception as e:
             logger.error(f"Erreur lors du chargement des valeurs initiales pour la caméra {camera_id}: {e}")
     
@@ -2582,10 +2670,38 @@ class MainWindow(QMainWindow):
         self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if enabled else 'OFF'}")
         self.cleanfeed_toggle.blockSignals(False)
     
-    def on_websocket_status(self, connected: bool, message: str):
-        """Slot appelé quand le statut WebSocket change (déprécié - utiliser on_websocket_status avec camera_id)."""
-        # Cette méthode est appelée par les anciens signaux, on l'ignore car on utilise maintenant _handle_websocket_change
-        pass
+    def on_websocket_status(self, camera_id: int, connected: bool, message: str):
+        """Slot appelé quand le statut WebSocket change pour une caméra spécifique."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        cam_data.connected = connected
+        
+        # Mettre à jour le StateStore
+        self.state_store.update_cam(camera_id, connected=connected)
+        
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        if camera_id == self.active_camera_id:
+            if connected:
+                self.status_label.setText(f"✓ Caméra {camera_id} - Connectée à {cam_data.url}")
+                self.status_label.setStyleSheet("color: #0f0;")
+                self.set_controls_enabled(True)
+            else:
+                self.status_label.setText(f"✗ Caméra {camera_id} - Déconnectée ({cam_data.url})")
+                self.status_label.setStyleSheet("color: #f00;")
+                self.set_controls_enabled(False)
+        
+        logger.info(f"Caméra {camera_id} - WebSocket status: {connected} - {message}")
+    
+    def _handle_companion_command(self, client, cmd: dict):
+        """Traite une commande reçue de Companion via WebSocket."""
+        try:
+            ok, error = self.command_handler.handle(self, cmd)
+            self.companion_server.send_ack(client, ok, error)
+        except Exception as e:
+            logger.error(f"Erreur lors du traitement de la commande Companion: {e}")
+            self.companion_server.send_ack(client, False, str(e))
     
     def save_preset(self, preset_number: int):
         """Sauvegarde les valeurs actuelles dans un preset pour la caméra active."""
@@ -2614,6 +2730,9 @@ class MainWindow(QMainWindow):
             
             # Sauvegarder le preset dans la caméra active
             cam_data.presets[f"preset_{preset_number}"] = preset_data
+            
+            # Mettre à jour le StateStore
+            self.state_store.set_preset(self.active_camera_id, f"preset_{preset_number}", preset_data)
             
             # Sauvegarder dans le fichier
             self.save_cameras_config()

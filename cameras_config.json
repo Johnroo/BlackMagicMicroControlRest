@@ -18,6 +18,20 @@
         "gain": 0,
         "shutter": 0,
         "zoom": 0.0
+      },
+      "preset_4": {
+        "focus": 0.0010454654693603516,
+        "iris": 0.0,
+        "gain": 0,
+        "shutter": 0,
+        "zoom": 0.0
+      },
+      "preset_3": {
+        "focus": 1.0,
+        "iris": 0.0,
+        "gain": 0,
+        "shutter": 0,
+        "zoom": 0.0
       }
     }
   },
