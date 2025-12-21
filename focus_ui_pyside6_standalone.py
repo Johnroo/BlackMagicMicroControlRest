@@ -54,6 +54,12 @@ class CameraData:
     zoom_sent_value: float = 0.0
     zoom_actual_value: float = 0.0
     
+    # États des contrôles (zebra, focus assist, etc.)
+    zebra_enabled: bool = False
+    focusAssist_enabled: bool = False
+    falseColor_enabled: bool = False
+    cleanfeed_enabled: bool = False
+    
     # État
     supported_gains: list = field(default_factory=list)
     supported_shutter_speeds: list = field(default_factory=list)
@@ -293,6 +299,10 @@ class MainWindow(QMainWindow):
         self.focus_send_sequence = 0  # Compteur pour annuler les envois différés
         self.focus_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         self.focus_keyboard_adjusting = False  # True quand on ajuste avec les flèches clavier
+        
+        # Variables pour le slider iris
+        self.iris_slider_user_touching = False  # True seulement quand l'utilisateur touche physiquement le slider
+        self.iris_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         
         # Variables pour la répétition des touches flèches
         self.key_repeat_timer = None
@@ -633,7 +643,15 @@ class MainWindow(QMainWindow):
         # Iris
         self.iris_sent_value = cam_data.iris_sent_value
         self.iris_actual_value = cam_data.iris_actual_value
-        # TODO: Mettre à jour les widgets iris
+        if hasattr(self, 'iris_value_sent'):
+            self.iris_value_sent.setText(f"{cam_data.iris_sent_value:.2f}")
+        if hasattr(self, 'iris_value_actual') and cam_data.iris_actual_value is not None:
+            self.iris_value_actual.setText(f"{cam_data.iris_actual_value:.2f}")
+        if hasattr(self, 'iris_slider') and cam_data.iris_actual_value is not None:
+            slider_value = int(cam_data.iris_actual_value * 1000)
+            self.iris_slider.blockSignals(True)
+            self.iris_slider.setValue(slider_value)
+            self.iris_slider.blockSignals(False)
         
         # Gain
         self.gain_sent_value = cam_data.gain_sent_value
@@ -649,6 +667,35 @@ class MainWindow(QMainWindow):
         self.zoom_sent_value = cam_data.zoom_sent_value
         self.zoom_actual_value = cam_data.zoom_actual_value
         # TODO: Mettre à jour les widgets zoom
+        
+        # Zebra, Focus Assist, False Color, Cleanfeed
+        if hasattr(self, 'zebra_toggle'):
+            self.zebra_toggle.blockSignals(True)
+            self.zebra_toggle.setChecked(cam_data.zebra_enabled)
+            self.zebra_toggle.setText(f"Zebra\n{'ON' if cam_data.zebra_enabled else 'OFF'}")
+            self.zebra_toggle.blockSignals(False)
+            self.zebra_enabled = cam_data.zebra_enabled
+        
+        if hasattr(self, 'focusAssist_toggle'):
+            self.focusAssist_toggle.blockSignals(True)
+            self.focusAssist_toggle.setChecked(cam_data.focusAssist_enabled)
+            self.focusAssist_toggle.setText(f"Focus Assist\n{'ON' if cam_data.focusAssist_enabled else 'OFF'}")
+            self.focusAssist_toggle.blockSignals(False)
+            self.focusAssist_enabled = cam_data.focusAssist_enabled
+        
+        if hasattr(self, 'falseColor_toggle'):
+            self.falseColor_toggle.blockSignals(True)
+            self.falseColor_toggle.setChecked(cam_data.falseColor_enabled)
+            self.falseColor_toggle.setText(f"False Color\n{'ON' if cam_data.falseColor_enabled else 'OFF'}")
+            self.falseColor_toggle.blockSignals(False)
+            self.falseColor_enabled = cam_data.falseColor_enabled
+        
+        if hasattr(self, 'cleanfeed_toggle'):
+            self.cleanfeed_toggle.blockSignals(True)
+            self.cleanfeed_toggle.setChecked(cam_data.cleanfeed_enabled)
+            self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if cam_data.cleanfeed_enabled else 'OFF'}")
+            self.cleanfeed_toggle.blockSignals(False)
+            self.cleanfeed_enabled = cam_data.cleanfeed_enabled
     
     def create_focus_panel(self):
         """Crée le panneau de contrôle du focus."""
@@ -904,112 +951,207 @@ class MainWindow(QMainWindow):
         self.iris_aperture_stop.setStyleSheet("font-size: 9px; color: #888;")
         iris_display_layout.addWidget(self.iris_aperture_stop)
         
-        layout.addWidget(iris_display)
+        iris_display_layout.addWidget(value_container)
         
-        # Boutons de contrôle
-        buttons_container = QWidget()
-        buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(15)
-        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        layout.addWidget(iris_display, stretch=0)  # Pas de stretch pour l'affichage
         
-        self.iris_plus_btn = QPushButton("+")
-        self.iris_plus_btn.setFixedSize(60, 60)
-        self.iris_plus_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
+        # Slider vertical
+        slider_container = QWidget()
+        slider_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        slider_layout = QHBoxLayout(slider_container)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(0)
+        
+        # Slider vertical
+        self.iris_slider = QSlider(Qt.Vertical)
+        self.iris_slider.setMinimum(0)
+        self.iris_slider.setMaximum(1000)  # 0.001 de précision
+        self.iris_slider.setValue(0)
+        self.iris_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.iris_slider.setStyleSheet("""
+            QSlider::groove:vertical {
+                background: #333;
+                width: 24px;
+                border: 1px solid #555;
+                border-radius: 12px;
             }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
+            QSlider::handle:vertical {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 6px;
+                width: 36px;
+                height: 10px;
+                margin: 0 -6px;
             }
-            QPushButton:pressed {
-                background-color: #555;
-                transform: scale(0.95);
+            QSlider::handle:vertical:hover {
+                background: #777;
             }
         """)
-        self.iris_plus_btn.clicked.connect(self.increment_iris)
-        buttons_layout.addWidget(self.iris_plus_btn, alignment=Qt.AlignCenter)
         
-        self.iris_minus_btn = QPushButton("-")
-        self.iris_minus_btn.setFixedSize(60, 60)
-        self.iris_minus_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-                transform: scale(0.95);
-            }
-        """)
-        self.iris_minus_btn.clicked.connect(self.decrement_iris)
-        buttons_layout.addWidget(self.iris_minus_btn, alignment=Qt.AlignCenter)
+        # Labels pour le slider (1.0, 0.5, 0.0)
+        slider_labels_container = QWidget()
+        slider_labels_layout = QVBoxLayout(slider_labels_container)
+        slider_labels_layout.setContentsMargins(10, 0, 0, 0)
+        slider_labels_layout.setSpacing(0)
         
-        layout.addWidget(buttons_container)
+        label_1 = QLabel("1.0")
+        label_1.setStyleSheet("font-size: 9px; color: #aaa;")
+        slider_labels_layout.addWidget(label_1)
+        
+        slider_labels_layout.addStretch()
+        
+        label_05 = QLabel("0.5")
+        label_05.setStyleSheet("font-size: 9px; color: #aaa;")
+        slider_labels_layout.addWidget(label_05)
+        
+        slider_labels_layout.addStretch()
+        
+        label_0 = QLabel("0.0")
+        label_0.setStyleSheet("font-size: 9px; color: #aaa;")
+        slider_labels_layout.addWidget(label_0)
+        
+        slider_layout.addWidget(self.iris_slider, stretch=1)
+        slider_layout.addWidget(slider_labels_container)
+        slider_layout.addStretch()
+        
+        layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
+        
+        # Stocker slider_container pour pouvoir le forcer à une hauteur
+        panel.slider_container = slider_container
+        panel.iris_slider = self.iris_slider
+        
+        # Fonction pour forcer la hauteur du slider
+        def force_slider_height():
+            try:
+                panel_height = panel.height()
+                if panel_height <= 0:
+                    return
+                
+                title = layout.itemAt(0).widget() if layout.count() > 0 else None
+                iris_display = layout.itemAt(1).widget() if layout.count() > 1 else None
+                
+                title_height = title.height() if title else 40
+                display_height = iris_display.height() if iris_display else 80
+                layout_margins = layout.contentsMargins()
+                margins_height = layout_margins.top() + layout_margins.bottom()
+                spacing = layout.spacing() * 2
+                
+                available_height = panel_height - title_height - display_height - margins_height - spacing
+                available_height = max(200, available_height)
+                
+                slider_container.setMinimumHeight(available_height)
+                slider_container.setMaximumHeight(available_height)
+            except Exception as e:
+                pass
+        
+        panel.force_slider_height = force_slider_height
+        
+        # Appeler une première fois après que la fenêtre soit affichée
+        QTimer.singleShot(100, force_slider_height)
+        
+        # Connecter les signaux du slider
+        self.iris_slider.sliderPressed.connect(self.on_iris_slider_pressed)
+        self.iris_slider.sliderReleased.connect(self.on_iris_slider_released)
+        self.iris_slider.valueChanged.connect(self.on_iris_slider_value_changed)
         
         layout.addStretch()
         return panel
     
-    def increment_iris(self):
-        """Incrémente l'iris de 0.05 pour la caméra active."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
-            return
-        current_value = cam_data.iris_actual_value if cam_data.iris_actual_value is not None else cam_data.iris_sent_value
-        new_value = min(1.0, current_value + 0.05)
-        self.update_iris_value(new_value)
-    
-    def decrement_iris(self):
-        """Décrémente l'iris de 0.05 pour la caméra active."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
-            return
-        current_value = cam_data.iris_actual_value if cam_data.iris_actual_value is not None else cam_data.iris_sent_value
-        new_value = max(0.0, current_value - 0.05)
-        self.update_iris_value(new_value)
-    
     def update_iris_value(self, value: float):
-        """Met à jour la valeur de l'iris pour la caméra active."""
+        """Met à jour la valeur de l'iris pour la caméra active (utilisé par les mises à jour WebSocket)."""
         cam_data = self.get_active_camera_data()
         value = max(0.0, min(1.0, value))
         cam_data.iris_sent_value = value
         self.iris_value_sent.setText(f"{value:.2f}")
-        self.send_iris_value(value)
     
-    def send_iris_value(self, value: float):
-        """Envoie la valeur de l'iris avec throttling pour la caméra active."""
+    def on_iris_slider_pressed(self):
+        """Appelé quand on appuie sur le slider iris."""
+        cam_data = self.get_active_camera_data()
+        
+        # Marquer que l'utilisateur touche le slider
+        self.iris_slider_user_touching = True
+        
+        # Lire la position actuelle du slider au moment du clic
+        current_slider_value = self.iris_slider.value()
+        current_iris_value = current_slider_value / 1000.0
+        
+        # Mettre à jour l'affichage avec la valeur actuelle
+        cam_data.iris_sent_value = current_iris_value
+        self.iris_value_sent.setText(f"{current_iris_value:.2f}")
+        
+        # Envoyer immédiatement la valeur sur laquelle l'utilisateur a cliqué (si le verrou est ouvert)
+        if not self.iris_sending:
+            self._send_iris_value_now(current_iris_value)
+    
+    def on_iris_slider_released(self):
+        """Appelé quand on relâche le slider iris."""
+        cam_data = self.get_active_camera_data()
+        
+        # Marquer que l'utilisateur ne touche plus le slider
+        self.iris_slider_user_touching = False
+        
+        # Remettre immédiatement le slider à la valeur réelle de l'iris
+        if cam_data.iris_actual_value is not None:
+            slider_value = int(cam_data.iris_actual_value * 1000)
+            self.iris_slider.blockSignals(True)
+            self.iris_slider.setValue(slider_value)
+            self.iris_slider.blockSignals(False)
+    
+    def on_iris_slider_value_changed(self, value: int):
+        """Appelé quand la valeur du slider iris change."""
+        cam_data = self.get_active_camera_data()
+        
+        # Envoyer SEULEMENT si l'utilisateur touche physiquement le slider
+        if not self.iris_slider_user_touching:
+            return
+        
+        # L'utilisateur touche le slider, mettre à jour l'affichage
+        iris_value = value / 1000.0
+        cam_data.iris_sent_value = iris_value
+        self.iris_value_sent.setText(f"{iris_value:.2f}")
+        
+        # Envoyer seulement si le verrou est ouvert (pas de requête en cours)
+        if not self.iris_sending:
+            self._send_iris_value_now(iris_value)
+    
+    def _send_iris_value_now(self, value: float):
+        """Envoie la valeur de l'iris à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
-        now = int(time.time() * 1000)
-        time_since_last_send = now - cam_data.last_iris_send_time
-        
-        if time_since_last_send < self.OTHER_MIN_INTERVAL:
-            QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
-                            lambda: self.send_iris_value(value))
+        if not self.iris_slider_user_touching:
+            self.iris_sending = False
             return
         
-        cam_data.last_iris_send_time = now
+        self.iris_sending = True
         
         try:
+            # Envoyer la requête (synchrone, attend la réponse)
             success = cam_data.controller.set_iris(value, silent=True)
+            
             if not success:
                 logger.error(f"Erreur lors de l'envoi de l'iris")
+            
+            # Attendre 50ms après la réponse avant de permettre le prochain envoi
+            QTimer.singleShot(50, self._on_iris_send_complete)
+            
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de l'iris: {e}")
+            # En cas d'erreur, attendre quand même 50ms
+            QTimer.singleShot(50, self._on_iris_send_complete)
+    
+    def _on_iris_send_complete(self):
+        """Appelé après le délai de 50ms, lit la position actuelle du fader si l'utilisateur le touche encore."""
+        self.iris_sending = False
+        
+        # Si l'utilisateur touche toujours le slider, lire la position actuelle et l'envoyer
+        if self.iris_slider_user_touching:
+            cam_data = self.get_active_camera_data()
+            current_slider_value = self.iris_slider.value()
+            current_iris_value = current_slider_value / 1000.0
+            cam_data.iris_sent_value = current_iris_value
+            self.iris_value_sent.setText(f"{current_iris_value:.2f}")
+            self._send_iris_value_now(current_iris_value)
     
     def create_gain_panel(self):
         """Crée le panneau de contrôle du gain."""
@@ -1195,19 +1337,10 @@ class MainWindow(QMainWindow):
         self.send_gain_value(value)
     
     def send_gain_value(self, value: int):
-        """Envoie la valeur du gain avec throttling pour la caméra active."""
+        """Envoie la valeur du gain directement (sans throttling) pour la caméra active."""
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
-        now = int(time.time() * 1000)
-        time_since_last_send = now - cam_data.last_gain_send_time
-        
-        if time_since_last_send < self.OTHER_MIN_INTERVAL:
-            QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
-                            lambda: self.send_gain_value(value))
-            return
-        
-        cam_data.last_gain_send_time = now
         
         try:
             success = cam_data.controller.set_gain(value, silent=True)
@@ -1400,19 +1533,10 @@ class MainWindow(QMainWindow):
         self.send_shutter_value(value)
     
     def send_shutter_value(self, value: int):
-        """Envoie la valeur du shutter avec throttling pour la caméra active."""
+        """Envoie la valeur du shutter directement (sans throttling) pour la caméra active."""
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
-        now = int(time.time() * 1000)
-        time_since_last_send = now - cam_data.last_shutter_send_time
-        
-        if time_since_last_send < self.OTHER_MIN_INTERVAL:
-            QTimer.singleShot(self.OTHER_MIN_INTERVAL - time_since_last_send,
-                            lambda: self.send_shutter_value(value))
-            return
-        
-        cam_data.last_shutter_send_time = now
         
         try:
             success = cam_data.controller.set_shutter(shutter_speed=value, silent=True)
@@ -1769,29 +1893,37 @@ class MainWindow(QMainWindow):
     
     def toggle_zebra(self):
         """Toggle le zebra."""
+        cam_data = self.get_active_camera_data()
         new_state = self.zebra_toggle.isChecked()
-        self.zebra_enabled = new_state
+        cam_data.zebra_enabled = new_state
+        self.zebra_enabled = new_state  # Garder pour compatibilité UI
         self.zebra_toggle.setText(f"Zebra\n{'ON' if new_state else 'OFF'}")
         self.send_zebra(new_state)
     
     def toggle_focus_assist(self):
         """Toggle le focus assist."""
+        cam_data = self.get_active_camera_data()
         new_state = self.focusAssist_toggle.isChecked()
-        self.focusAssist_enabled = new_state
+        cam_data.focusAssist_enabled = new_state
+        self.focusAssist_enabled = new_state  # Garder pour compatibilité UI
         self.focusAssist_toggle.setText(f"Focus Assist\n{'ON' if new_state else 'OFF'}")
         self.send_focus_assist(new_state)
     
     def toggle_false_color(self):
         """Toggle le false color."""
+        cam_data = self.get_active_camera_data()
         new_state = self.falseColor_toggle.isChecked()
-        self.falseColor_enabled = new_state
+        cam_data.falseColor_enabled = new_state
+        self.falseColor_enabled = new_state  # Garder pour compatibilité UI
         self.falseColor_toggle.setText(f"False Color\n{'ON' if new_state else 'OFF'}")
         self.send_false_color(new_state)
     
     def toggle_cleanfeed(self):
         """Toggle le cleanfeed."""
+        cam_data = self.get_active_camera_data()
         new_state = self.cleanfeed_toggle.isChecked()
-        self.cleanfeed_enabled = new_state
+        cam_data.cleanfeed_enabled = new_state
+        self.cleanfeed_enabled = new_state  # Garder pour compatibilité UI
         self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if new_state else 'OFF'}")
         self.send_cleanfeed(new_state)
     
@@ -1804,14 +1936,19 @@ class MainWindow(QMainWindow):
             success = cam_data.controller.set_zebra(enabled, silent=True)
             if not success:
                 # Revert on error
+                cam_data.zebra_enabled = not enabled
                 self.zebra_enabled = not enabled
                 self.zebra_toggle.blockSignals(True)
                 self.zebra_toggle.setChecked(not enabled)
                 self.zebra_toggle.setText(f"Zebra\n{'ON' if not enabled else 'OFF'}")
                 self.zebra_toggle.blockSignals(False)
                 logger.error(f"Erreur lors de l'envoi du zebra")
+            else:
+                # Mettre à jour cam_data en cas de succès
+                cam_data.zebra_enabled = enabled
         except Exception as e:
             # Revert on error
+            cam_data.zebra_enabled = not enabled
             self.zebra_enabled = not enabled
             self.zebra_toggle.blockSignals(True)
             self.zebra_toggle.setChecked(not enabled)
@@ -1827,13 +1964,18 @@ class MainWindow(QMainWindow):
         try:
             success = cam_data.controller.set_focus_assist(enabled, silent=True)
             if not success:
+                cam_data.focusAssist_enabled = not enabled
                 self.focusAssist_enabled = not enabled
                 self.focusAssist_toggle.blockSignals(True)
                 self.focusAssist_toggle.setChecked(not enabled)
                 self.focusAssist_toggle.setText(f"Focus Assist\n{'ON' if not enabled else 'OFF'}")
                 self.focusAssist_toggle.blockSignals(False)
                 logger.error(f"Erreur lors de l'envoi du focus assist")
+            else:
+                # Mettre à jour cam_data en cas de succès
+                cam_data.focusAssist_enabled = enabled
         except Exception as e:
+            cam_data.focusAssist_enabled = not enabled
             self.focusAssist_enabled = not enabled
             self.focusAssist_toggle.blockSignals(True)
             self.focusAssist_toggle.setChecked(not enabled)
@@ -1849,13 +1991,18 @@ class MainWindow(QMainWindow):
         try:
             success = cam_data.controller.set_false_color(enabled, silent=True)
             if not success:
+                cam_data.falseColor_enabled = not enabled
                 self.falseColor_enabled = not enabled
                 self.falseColor_toggle.blockSignals(True)
                 self.falseColor_toggle.setChecked(not enabled)
                 self.falseColor_toggle.setText(f"False Color\n{'ON' if not enabled else 'OFF'}")
                 self.falseColor_toggle.blockSignals(False)
                 logger.error(f"Erreur lors de l'envoi du false color")
+            else:
+                # Mettre à jour cam_data en cas de succès
+                cam_data.falseColor_enabled = enabled
         except Exception as e:
+            cam_data.falseColor_enabled = not enabled
             self.falseColor_enabled = not enabled
             self.falseColor_toggle.blockSignals(True)
             self.falseColor_toggle.setChecked(not enabled)
@@ -1871,13 +2018,18 @@ class MainWindow(QMainWindow):
         try:
             success = cam_data.controller.set_cleanfeed(enabled, silent=True)
             if not success:
+                cam_data.cleanfeed_enabled = not enabled
                 self.cleanfeed_enabled = not enabled
                 self.cleanfeed_toggle.blockSignals(True)
                 self.cleanfeed_toggle.setChecked(not enabled)
                 self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if not enabled else 'OFF'}")
                 self.cleanfeed_toggle.blockSignals(False)
                 logger.error(f"Erreur lors de l'envoi du cleanfeed")
+            else:
+                # Mettre à jour cam_data en cas de succès
+                cam_data.cleanfeed_enabled = enabled
         except Exception as e:
+            cam_data.cleanfeed_enabled = not enabled
             self.cleanfeed_enabled = not enabled
             self.cleanfeed_toggle.blockSignals(True)
             self.cleanfeed_toggle.setChecked(not enabled)
@@ -2284,8 +2436,7 @@ class MainWindow(QMainWindow):
         self.focus_slider.setEnabled(enabled)
         
         # Iris
-        self.iris_plus_btn.setEnabled(enabled)
-        self.iris_minus_btn.setEnabled(enabled)
+        self.iris_slider.setEnabled(enabled)
         
         # Gain
         self.gain_plus_btn.setEnabled(enabled)
@@ -2373,20 +2524,32 @@ class MainWindow(QMainWindow):
                 self.signals.shutter_changed.emit(data)
         elif param_name == 'zebra':
             if 'enabled' in data:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.zebra_enabled = bool(data['enabled'])
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
-                    self.signals.zebra_changed.emit(bool(data['enabled']))
+                    self.signals.zebra_changed.emit(cam_data.zebra_enabled)
         elif param_name == 'focusAssist':
             if 'enabled' in data:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.focusAssist_enabled = bool(data['enabled'])
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
-                    self.signals.focusAssist_changed.emit(bool(data['enabled']))
+                    self.signals.focusAssist_changed.emit(cam_data.focusAssist_enabled)
         elif param_name == 'falseColor':
             if 'enabled' in data:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.falseColor_enabled = bool(data['enabled'])
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
-                    self.signals.falseColor_changed.emit(bool(data['enabled']))
+                    self.signals.falseColor_changed.emit(cam_data.falseColor_enabled)
         elif param_name == 'cleanfeed':
             if 'enabled' in data:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.cleanfeed_enabled = bool(data['enabled'])
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
-                    self.signals.cleanfeed_changed.emit(bool(data['enabled']))
+                    self.signals.cleanfeed_changed.emit(cam_data.cleanfeed_enabled)
         elif param_name == 'zoom':
             if 'normalised' in data:
                 update_kwargs['zoom'] = float(data['normalised'])
@@ -2466,24 +2629,36 @@ class MainWindow(QMainWindow):
             # Zebra
             zebra_value = cam_data.controller.get_zebra()
             if zebra_value is not None:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.zebra_enabled = zebra_value
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
                     self.on_zebra_changed(zebra_value)
             
             # Focus Assist
             focusAssist_value = cam_data.controller.get_focus_assist()
             if focusAssist_value is not None:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.focusAssist_enabled = focusAssist_value
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
                     self.on_focusAssist_changed(focusAssist_value)
             
             # False Color
             falseColor_value = cam_data.controller.get_false_color()
             if falseColor_value is not None:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.falseColor_enabled = falseColor_value
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
                     self.on_falseColor_changed(falseColor_value)
             
             # Cleanfeed
             cleanfeed_value = cam_data.controller.get_cleanfeed()
             if cleanfeed_value is not None:
+                # TOUJOURS mettre à jour les données de la caméra
+                cam_data.cleanfeed_enabled = cleanfeed_value
+                # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
                     self.on_cleanfeed_changed(cleanfeed_value)
             
@@ -2614,9 +2789,18 @@ class MainWindow(QMainWindow):
     
     def on_iris_changed(self, data: dict):
         """Slot appelé quand l'iris change."""
+        cam_data = self.get_active_camera_data()
         if 'normalised' in data:
-            self.iris_actual_value = data['normalised']
-            self.iris_value_actual.setText(f"{data['normalised']:.2f}")
+            value = float(data['normalised'])
+            cam_data.iris_actual_value = value
+            self.iris_value_actual.setText(f"{value:.2f}")
+            
+            # Mettre à jour le slider seulement si l'utilisateur ne le touche pas
+            if not self.iris_slider_user_touching:
+                slider_value = int(value * 1000)
+                self.iris_slider.blockSignals(True)
+                self.iris_slider.setValue(slider_value)
+                self.iris_slider.blockSignals(False)
         if 'apertureStop' in data:
             self.iris_aperture_stop.setText(f"{data['apertureStop']:.2f}")
     
@@ -2640,7 +2824,9 @@ class MainWindow(QMainWindow):
     
     def on_zebra_changed(self, enabled: bool):
         """Slot appelé quand le zebra change."""
-        self.zebra_enabled = enabled
+        cam_data = self.get_active_camera_data()
+        cam_data.zebra_enabled = enabled
+        self.zebra_enabled = enabled  # Garder pour compatibilité UI
         self.zebra_toggle.blockSignals(True)
         self.zebra_toggle.setChecked(enabled)
         self.zebra_toggle.setText(f"Zebra\n{'ON' if enabled else 'OFF'}")
@@ -2648,7 +2834,9 @@ class MainWindow(QMainWindow):
     
     def on_focusAssist_changed(self, enabled: bool):
         """Slot appelé quand le focus assist change."""
-        self.focusAssist_enabled = enabled
+        cam_data = self.get_active_camera_data()
+        cam_data.focusAssist_enabled = enabled
+        self.focusAssist_enabled = enabled  # Garder pour compatibilité UI
         self.focusAssist_toggle.blockSignals(True)
         self.focusAssist_toggle.setChecked(enabled)
         self.focusAssist_toggle.setText(f"Focus Assist\n{'ON' if enabled else 'OFF'}")
@@ -2656,7 +2844,9 @@ class MainWindow(QMainWindow):
     
     def on_falseColor_changed(self, enabled: bool):
         """Slot appelé quand le false color change."""
-        self.falseColor_enabled = enabled
+        cam_data = self.get_active_camera_data()
+        cam_data.falseColor_enabled = enabled
+        self.falseColor_enabled = enabled  # Garder pour compatibilité UI
         self.falseColor_toggle.blockSignals(True)
         self.falseColor_toggle.setChecked(enabled)
         self.falseColor_toggle.setText(f"False Color\n{'ON' if enabled else 'OFF'}")
@@ -2664,7 +2854,9 @@ class MainWindow(QMainWindow):
     
     def on_cleanfeed_changed(self, enabled: bool):
         """Slot appelé quand le cleanfeed change."""
-        self.cleanfeed_enabled = enabled
+        cam_data = self.get_active_camera_data()
+        cam_data.cleanfeed_enabled = enabled
+        self.cleanfeed_enabled = enabled  # Garder pour compatibilité UI
         self.cleanfeed_toggle.blockSignals(True)
         self.cleanfeed_toggle.setChecked(enabled)
         self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if enabled else 'OFF'}")
