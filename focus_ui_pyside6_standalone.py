@@ -512,14 +512,25 @@ class MainWindow(QMainWindow):
         self.gain_panel = self.create_gain_panel()
         self.shutter_panel = self.create_shutter_panel()
         self.zoom_panel = self.create_zoom_panel()
+        self.presets_panel = self.create_presets_panel()
         self.controls_panel = self.create_controls_panel()
         
         # Ajouter les panneaux au layout central
         central_layout.addWidget(self.focus_panel)
         central_layout.addWidget(self.iris_panel)
         central_layout.addWidget(self.gain_panel)
-        central_layout.addWidget(self.shutter_panel)
-        central_layout.addWidget(self.zoom_panel)
+        
+        # Conteneur vertical pour shutter et zoom (zoom en dessous de shutter)
+        shutter_zoom_container = QWidget()
+        shutter_zoom_layout = QVBoxLayout(shutter_zoom_container)
+        shutter_zoom_layout.setSpacing(20)
+        shutter_zoom_layout.setContentsMargins(0, 0, 0, 0)
+        shutter_zoom_layout.addWidget(self.shutter_panel)
+        shutter_zoom_layout.addWidget(self.zoom_panel)
+        shutter_zoom_layout.addStretch()  # Pour pousser les panneaux vers le haut
+        
+        central_layout.addWidget(shutter_zoom_container)
+        central_layout.addWidget(self.presets_panel)
         central_layout.addWidget(self.controls_panel)
         
         # Ajouter le widget central au layout principal
@@ -1841,11 +1852,27 @@ class MainWindow(QMainWindow):
         self.smooth_transition_toggle.clicked.connect(self.toggle_smooth_transition)
         layout.addWidget(self.smooth_transition_toggle)
         
-        # Section Presets
-        layout.addSpacing(10)
+        layout.addStretch()
+        return panel
+    
+    def create_presets_panel(self):
+        """Crée le panneau de presets."""
+        panel = QWidget()
+        panel.setFixedWidth(200)
+        panel.setStyleSheet("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """)
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(15)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
         presets_label = QLabel("Presets")
         presets_label.setAlignment(Qt.AlignCenter)
-        presets_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
+        presets_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #fff;")
         layout.addWidget(presets_label)
         
         # Conteneur pour les deux colonnes
