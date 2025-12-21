@@ -2250,6 +2250,10 @@ class MainWindow(QMainWindow):
             # TODO: Retirer cette ligne une fois que le WebSocket fournit correctement les valeurs initiales
             self.load_initial_values(camera_id)
             
+            # Mettre à jour l'UI après le chargement des valeurs initiales si c'est la caméra active
+            if camera_id == self.active_camera_id:
+                QTimer.singleShot(100, lambda: self._update_ui_from_camera_data(cam_data))
+            
             # Garder load_initial_values comme fallback après un délai (si WebSocket ne répond pas)
             QTimer.singleShot(2000, lambda: self._fallback_load_initial_values(camera_id))
             
@@ -2617,11 +2621,16 @@ class MainWindow(QMainWindow):
     def load_initial_values(self, camera_id: int):
         """Charge les valeurs initiales depuis la caméra spécifiée."""
         if camera_id < 1 or camera_id > 8:
+            logger.warning(f"load_initial_values: ID de caméra invalide: {camera_id}")
             return
         
         cam_data = self.cameras[camera_id]
-        if not cam_data.connected or not cam_data.controller:
+        if not cam_data.controller:
+            logger.warning(f"load_initial_values: Pas de controller pour la caméra {camera_id}")
             return
+        
+        # Ne pas vérifier cam_data.connected car on peut charger les valeurs même si pas encore connecté
+        logger.info(f"Chargement des valeurs initiales pour la caméra {camera_id}")
         
         try:
             # Focus
@@ -2731,8 +2740,11 @@ class MainWindow(QMainWindow):
             
             # Marquer que les valeurs initiales ont été chargées via GET
             cam_data.initial_values_received = True
+            logger.info(f"Valeurs initiales chargées pour la caméra {camera_id}: focus={cam_data.focus_actual_value}, iris={cam_data.iris_actual_value}, gain={cam_data.gain_actual_value}, shutter={cam_data.shutter_actual_value}")
         except Exception as e:
             logger.error(f"Erreur lors du chargement des valeurs initiales pour la caméra {camera_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def _fallback_load_initial_values(self, camera_id: int):
         """Charge les valeurs initiales via GET si le WebSocket ne les a pas fournies."""
