@@ -289,6 +289,102 @@ class ConnectionDialog(QDialog):
         self.update_status_display()
 
 
+class UIScaler:
+    """Gère le scaling adaptatif de l'UI basé sur la taille de la fenêtre."""
+    
+    # Taille de référence (base pour tous les calculs)
+    REFERENCE_WIDTH = 1512
+    REFERENCE_HEIGHT = 982
+    
+    def __init__(self, window: QMainWindow):
+        self.window = window
+        self._update_scale()
+        # Écouter les changements de taille
+        window.resizeEvent = self._on_resize
+    
+    def _on_resize(self, event):
+        """Appelé quand la fenêtre est redimensionnée."""
+        QMainWindow.resizeEvent(self.window, event)
+        self._update_scale()
+        # Notifier que le scale a changé pour mettre à jour l'UI
+        if hasattr(self.window, '_update_ui_scaling'):
+            QTimer.singleShot(50, self.window._update_ui_scaling)
+    
+    def _update_scale(self):
+        """Met à jour les facteurs d'échelle basés sur la taille actuelle de la fenêtre."""
+        size = self.window.size()
+        self.scale_x = size.width() / self.REFERENCE_WIDTH
+        self.scale_y = size.height() / self.REFERENCE_HEIGHT
+        # Utiliser le plus petit facteur pour maintenir les proportions
+        self.scale = min(self.scale_x, self.scale_y)
+        # Limiter le scale entre 0.5 et 2.0 pour éviter les tailles extrêmes
+        self.scale = max(0.5, min(2.0, self.scale))
+    
+    def scale_value(self, value: float) -> int:
+        """Convertit une valeur de référence en valeur scaled."""
+        return int(value * self.scale)
+    
+    def scale_font_size(self, size: float) -> str:
+        """Retourne une taille de police scaled en string pour CSS."""
+        return f"{int(size * self.scale)}px"
+    
+    def scale_style(self, style: str) -> str:
+        """Applique le scaling à un style CSS en remplaçant les valeurs numériques."""
+        import re
+        # Remplacer les valeurs en px dans font-size, width, height, padding, margin, etc.
+        def replace_px(match):
+            value = float(match.group(1))
+            return f"{int(value * self.scale)}px"
+        
+        # Patterns pour les propriétés CSS avec valeurs en px
+        pattern = r'(\d+(?:\.\d+)?)px'
+        return re.sub(pattern, replace_px, style)
+
+
+class UIScaler:
+    """Gère le scaling adaptatif de l'UI basé sur la taille de la fenêtre."""
+    
+    # Taille de référence (base pour tous les calculs)
+    REFERENCE_WIDTH = 1512
+    REFERENCE_HEIGHT = 982
+    
+    def __init__(self, window: QMainWindow):
+        self.window = window
+        self._update_scale()
+        # Sauvegarder la méthode resizeEvent originale
+        self._original_resize_event = window.resizeEvent
+    
+    def _update_scale(self):
+        """Met à jour les facteurs d'échelle basés sur la taille actuelle de la fenêtre."""
+        size = self.window.size()
+        self.scale_x = size.width() / self.REFERENCE_WIDTH
+        self.scale_y = size.height() / self.REFERENCE_HEIGHT
+        # Utiliser le plus petit facteur pour maintenir les proportions
+        self.scale = min(self.scale_x, self.scale_y)
+        # Limiter le scale entre 0.5 et 2.0 pour éviter les tailles extrêmes
+        self.scale = max(0.5, min(2.0, self.scale))
+    
+    def scale_value(self, value: float) -> int:
+        """Convertit une valeur de référence en valeur scaled."""
+        return int(value * self.scale)
+    
+    def scale_font_size(self, size: float) -> str:
+        """Retourne une taille de police scaled en string pour CSS."""
+        return f"{int(size * self.scale)}px"
+    
+    def scale_style(self, style: str) -> str:
+        """Applique le scaling à un style CSS en remplaçant les valeurs numériques."""
+        import re
+        # Remplacer les valeurs en px dans font-size, width, height, padding, margin, etc.
+        def replace_px(match):
+            value = float(match.group(1))
+            return f"{int(value * self.scale)}px"
+        
+        # Patterns pour les propriétés CSS avec valeurs en px
+        pattern = r'(\d+(?:\.\d+)?)px'
+        return re.sub(pattern, replace_px, style)
+
+
 class MainWindow(QMainWindow):
     """Fenêtre principale de l'application PySide6."""
     
@@ -303,6 +399,12 @@ class MainWindow(QMainWindow):
         self.companion_server = CompanionWsServer(self.state_store)
         self.companion_server.command_received.connect(self._handle_companion_command)
         self.companion_server.start(8765)
+        
+        # UIScaler pour le scaling adaptatif (sera initialisé après init_ui)
+        self.ui_scaler = None
+        
+        # UIScaler pour le scaling adaptatif (sera initialisé après init_ui)
+        self.ui_scaler = None
         
         # CommandHandler pour traiter les commandes Companion
         self.command_handler = CommandHandler()
@@ -492,7 +594,22 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """Initialise l'interface utilisateur."""
         self.setWindowTitle("Contrôle Focus Blackmagic (Standalone)")
-        self.setMinimumSize(1200, 700)
+        # Taille de référence pour le scaling (1512x982)
+        self.setMinimumSize(int(1512 * 0.5), int(982 * 0.5))  # Minimum 50% de la taille de référence
+        self.resize(1512, 982)  # Taille par défaut = taille de référence
+        
+        # Initialiser le scaler après avoir défini la taille
+        self.ui_scaler = UIScaler(self)
+        
+        # Connecter le redimensionnement pour mettre à jour le scaling
+        def on_resize(event):
+            if self.ui_scaler:
+                self.ui_scaler._update_scale()
+                # Mettre à jour tous les panneaux
+                self._update_ui_scaling()
+            QMainWindow.resizeEvent(self, event)
+        
+        self.resizeEvent = on_resize
         
         # Activer le focus pour recevoir les événements clavier
         self.setFocusPolicy(Qt.StrongFocus)
@@ -504,22 +621,27 @@ class MainWindow(QMainWindow):
         
         # Sélecteur de caméra - 8 boutons
         camera_selector_layout = QHBoxLayout()
-        camera_selector_layout.setContentsMargins(10, 5, 10, 5)
-        camera_selector_layout.setSpacing(5)
+        margin_h = self._scale_value(10)
+        margin_v = self._scale_value(5)
+        camera_selector_layout.setContentsMargins(margin_h, margin_v, margin_h, margin_v)
+        camera_selector_layout.setSpacing(self._scale_value(5))
         camera_label = QLabel("Caméra:")
-        camera_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        camera_label.setStyleSheet(f"font-size: {self._scale_font(12)}; color: #aaa;")
         camera_selector_layout.addWidget(camera_label)
         
         # Créer 8 boutons pour les caméras
         self.camera_buttons = []
         for i in range(1, 9):
             btn = QPushButton(str(i))
-            btn.setFixedSize(35, 30)
+            btn_width = self._scale_value(35)
+            btn_height = self._scale_value(30)
+            btn.setMinimumSize(btn_width, btn_height)
+            btn.setMaximumSize(btn_width, btn_height)
             btn.setCheckable(True)
             if i == self.active_camera_id:
                 btn.setChecked(True)
             btn.clicked.connect(lambda checked, cam_id=i: self.switch_active_camera(cam_id))
-            btn.setStyleSheet("""
+            btn.setStyleSheet(self._scale_style("""
                 QPushButton {
                     padding: 5px;
                     background-color: #333;
@@ -536,7 +658,7 @@ class MainWindow(QMainWindow):
                     background-color: #0066cc;
                     border-color: #0088ff;
                 }
-            """)
+            """))
             self.camera_buttons.append(btn)
             camera_selector_layout.addWidget(btn)
         
@@ -550,8 +672,9 @@ class MainWindow(QMainWindow):
         # Widget central avec layout horizontal
         central_widget = QWidget()
         central_layout = QHBoxLayout(central_widget)
-        central_layout.setSpacing(20)
-        central_layout.setContentsMargins(20, 20, 20, 20)
+        central_layout.setSpacing(self._scale_value(20))
+        margin = self._scale_value(20)
+        central_layout.setContentsMargins(margin, margin, margin, margin)
         
         # Appliquer le style sombre
         self.setStyleSheet("""
@@ -632,8 +755,10 @@ class MainWindow(QMainWindow):
         
         # Bouton engrenage pour ouvrir les paramètres de connexion
         settings_btn = QPushButton("⚙️")
-        settings_btn.setFixedSize(30, 30)
-        settings_btn.setStyleSheet("""
+        btn_size = self._scale_value(30)
+        settings_btn.setMinimumSize(btn_size, btn_size)
+        settings_btn.setMaximumSize(btn_size, btn_size)
+        settings_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 background-color: #333;
                 border: 1px solid #555;
@@ -644,7 +769,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background-color: #444;
             }
-        """)
+        """))
         settings_btn.clicked.connect(self.open_connection_dialog)
         self.statusBar().addPermanentWidget(settings_btn)
         
@@ -784,27 +909,385 @@ class MainWindow(QMainWindow):
             self.cleanfeed_toggle.blockSignals(False)
             self.cleanfeed_enabled = cam_data.cleanfeed_enabled
     
+    def _scale_value(self, value: float) -> int:
+        """Helper pour obtenir une valeur scaled."""
+        return self.ui_scaler.scale_value(value) if self.ui_scaler else int(value)
+    
+    def _scale_font(self, size: float) -> str:
+        """Helper pour obtenir une taille de police scaled."""
+        return self.ui_scaler.scale_font_size(size) if self.ui_scaler else f"{int(size)}px"
+    
+    def _scale_style(self, style: str) -> str:
+        """Helper pour appliquer le scaling à un style CSS."""
+        return self.ui_scaler.scale_style(style) if self.ui_scaler else style
+    
+    def _update_ui_scaling(self):
+        """Met à jour tous les éléments de l'UI avec le nouveau scaling."""
+        if not self.ui_scaler:
+            return
+        
+        # Mettre à jour les largeurs des panneaux
+        panel_width = self._scale_value(200)
+        panels = [
+            self.focus_panel, self.iris_panel, self.gain_panel, 
+            self.whitebalance_panel, self.shutter_panel, self.zoom_panel,
+            self.presets_panel, self.controls_panel
+        ]
+        for panel in panels:
+            if panel:
+                panel.setMinimumWidth(panel_width)
+                panel.setMaximumWidth(panel_width)
+                # Mettre à jour le style du panneau
+                panel.setStyleSheet(self._scale_style("""
+                    QWidget {
+                        background-color: #1a1a1a;
+                        border: 1px solid #444;
+                        border-radius: 4px;
+                    }
+                """))
+        
+        # Mettre à jour les boutons de caméra
+        if hasattr(self, 'camera_buttons'):
+            btn_width = self._scale_value(35)
+            btn_height = self._scale_value(30)
+            for btn in self.camera_buttons:
+                btn.setMinimumSize(btn_width, btn_height)
+                btn.setMaximumSize(btn_width, btn_height)
+                btn.setStyleSheet(self._scale_style("""
+                    QPushButton {
+                        padding: 5px;
+                        background-color: #333;
+                        border: 1px solid #555;
+                        border-radius: 4px;
+                        color: #fff;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        border-color: #777;
+                        background-color: #444;
+                    }
+                    QPushButton:checked {
+                        background-color: #0066cc;
+                        border-color: #0088ff;
+                    }
+                """))
+        
+        # Mettre à jour le bouton settings
+        if hasattr(self, 'statusBar'):
+            status_bar = self.statusBar()
+            for widget in status_bar.children():
+                if isinstance(widget, QPushButton) and widget.text() == "⚙️":
+                    btn_size = self._scale_value(30)
+                    widget.setMinimumSize(btn_size, btn_size)
+                    widget.setMaximumSize(btn_size, btn_size)
+                    widget.setStyleSheet(self._scale_style("""
+                        QPushButton {
+                            background-color: #333;
+                            border: 1px solid #555;
+                            border-radius: 4px;
+                            color: #fff;
+                            font-size: 16px;
+                        }
+                        QPushButton:hover {
+                            background-color: #444;
+                        }
+                    """))
+        
+        # Mettre à jour tous les labels avec leurs styles
+        self._update_labels_scaling()
+        
+        # Mettre à jour tous les boutons +/- et autres boutons
+        self._update_buttons_scaling()
+    
+    def _update_labels_scaling(self):
+        """Met à jour les styles de tous les labels."""
+        if not self.ui_scaler:
+            return
+        
+        # Trouver et mettre à jour tous les labels de titre dans les panneaux
+        panels = [
+            (self.focus_panel, "Focus Control"),
+            (self.iris_panel, "Iris Control"),
+            (self.gain_panel, "Gain Control"),
+            (self.whitebalance_panel, "White Balance"),
+            (self.shutter_panel, "⚡ Shutter Control"),
+            (self.zoom_panel, "🔍 Zoom Control"),
+            (self.controls_panel, "Contrôles"),
+        ]
+        
+        for panel, title_text in panels:
+            if panel:
+                for child in panel.findChildren(QLabel):
+                    if child.text() == title_text or title_text in child.text():
+                        if "font-weight: bold" in child.styleSheet():
+                            child.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
+                        else:
+                            child.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
+        
+        # Label Presets
+        if hasattr(self, 'presets_panel') and self.presets_panel:
+            for child in self.presets_panel.findChildren(QLabel):
+                if child.text() == "Presets":
+                    child.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
+                elif child.text() in ["Save", "Recall"]:
+                    child.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
+                elif child.text() == "Recall Scope":
+                    child.setStyleSheet(f"font-size: {self._scale_font(14)}; font-weight: bold; color: #fff; margin-top: {self._scale_value(10)}px;")
+        
+        # Labels de valeurs (envoyé, réel, etc.) - mettre à jour via leurs attributs
+        if hasattr(self, 'focus_label') and self.focus_label:
+            self.focus_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
+        
+        # Labels de valeurs numériques
+        value_labels = [
+            (getattr(self, 'focus_value_sent', None), 12, "#ff0"),
+            (getattr(self, 'focus_value_actual', None), 12, "#0ff"),
+            (getattr(self, 'iris_value_sent', None), 12, "#ff0"),
+            (getattr(self, 'iris_value_actual', None), 12, "#0ff"),
+            (getattr(self, 'gain_value_sent', None), 12, "#ff0"),
+            (getattr(self, 'gain_value_actual', None), 12, "#0ff"),
+            (getattr(self, 'whitebalance_value_sent', None), 12, "#ff0"),
+            (getattr(self, 'whitebalance_value_actual', None), 12, "#0ff"),
+            (getattr(self, 'shutter_value_sent', None), 12, "#ff0"),
+            (getattr(self, 'shutter_value_actual', None), 12, "#0ff"),
+        ]
+        
+        for label, size, color in value_labels:
+            if label:
+                label.setStyleSheet(f"font-size: {self._scale_font(size)}; font-weight: bold; color: {color}; font-family: 'Courier New';")
+        
+        # Labels "Envoyé" et "Réel (GET)" dans tous les panneaux
+        for panel in [self.focus_panel, self.iris_panel, self.gain_panel, 
+                     self.whitebalance_panel, self.shutter_panel]:
+            if panel:
+                for child in panel.findChildren(QLabel):
+                    if child.text() in ["Envoyé", "Réel (GET)"]:
+                        child.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
+    
+    def _update_buttons_scaling(self):
+        """Met à jour les tailles et styles de tous les boutons."""
+        if not self.ui_scaler:
+            return
+        
+        btn_size = self._scale_value(60)
+        btn_style = self._scale_style("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #333;
+                color: #fff;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+        """)
+        
+        # Boutons +/-
+        plus_minus_buttons = [
+            getattr(self, 'iris_plus_btn', None),
+            getattr(self, 'iris_minus_btn', None),
+            getattr(self, 'gain_plus_btn', None),
+            getattr(self, 'gain_minus_btn', None),
+            getattr(self, 'whitebalance_plus_btn', None),
+            getattr(self, 'whitebalance_minus_btn', None),
+            getattr(self, 'shutter_plus_btn', None),
+            getattr(self, 'shutter_minus_btn', None),
+        ]
+        
+        for btn in plus_minus_buttons:
+            if btn:
+                btn.setMinimumSize(btn_size, btn_size)
+                btn.setMaximumSize(btn_size, btn_size)
+                btn.setStyleSheet(btn_style)
+        
+        # Bouton Auto White Balance
+        if hasattr(self, 'whitebalance_auto_btn') and self.whitebalance_auto_btn:
+            auto_btn_width = self._scale_value(80)
+            auto_btn_height = self._scale_value(40)
+            self.whitebalance_auto_btn.setMinimumSize(auto_btn_width, auto_btn_height)
+            self.whitebalance_auto_btn.setMaximumSize(auto_btn_width, auto_btn_height)
+            self.whitebalance_auto_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    font-size: 14px;
+                    font-weight: bold;
+                    border: 2px solid #555;
+                    background-color: #0a5;
+                    color: #fff;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #0c7;
+                    border-color: #777;
+                }
+                QPushButton:pressed {
+                    background-color: #095;
+                }
+            """))
+        
+        # Bouton Autofocus
+        if hasattr(self, 'autofocus_btn') and self.autofocus_btn:
+            self.autofocus_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    border: 2px solid #555;
+                    border-radius: 8px;
+                    background-color: #333;
+                    color: #fff;
+                    margin-top: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #444;
+                    border-color: #777;
+                }
+                QPushButton:pressed {
+                    background-color: #555;
+                }
+                QPushButton:disabled {
+                    opacity: 0.5;
+                }
+            """))
+        
+        # Boutons toggle (Zebra, Focus Assist, etc.)
+        toggle_style = self._scale_style("""
+            QPushButton {
+                width: 100%;
+                padding: 8px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 2px solid #555;
+                border-radius: 8px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #0a5;
+                color: #fff;
+                border-color: #0f0;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        
+        toggle_buttons = [
+            getattr(self, 'zebra_toggle', None),
+            getattr(self, 'focusAssist_toggle', None),
+            getattr(self, 'falseColor_toggle', None),
+            getattr(self, 'cleanfeed_toggle', None),
+        ]
+        
+        for btn in toggle_buttons:
+            if btn:
+                btn.setStyleSheet(toggle_style)
+        
+        # Boutons presets
+        save_btn_style = self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #333;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """)
+        
+        recall_btn_style = self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #0a5;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """)
+        
+        if hasattr(self, 'preset_save_buttons'):
+            for btn in self.preset_save_buttons:
+                if btn:
+                    btn.setStyleSheet(save_btn_style)
+        
+        if hasattr(self, 'preset_recall_buttons'):
+            for btn in self.preset_recall_buttons:
+                if btn:
+                    btn.setStyleSheet(recall_btn_style)
+        
+        # Checkboxes Recall Scope
+        recall_scope_style = self._scale_style("""
+            QPushButton {
+                text-align: left;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #aaa;
+            }
+            QPushButton:checked {
+                background-color: #444;
+                color: #fff;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        
+        if hasattr(self, 'recall_scope_checkboxes'):
+            for checkbox in self.recall_scope_checkboxes.values():
+                if checkbox:
+                    checkbox.setStyleSheet(recall_scope_style)
+    
     def create_focus_panel(self):
         """Crée le panneau de contrôle du focus."""
         panel = QWidget()
-        panel.setFixedWidth(200)
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
         # Permettre au panneau de s'étirer en hauteur
         panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        panel.setStyleSheet("""
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         # Titre
         title = QLabel("Focus Control")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 16px; color: #fff; margin-bottom: 20px;")
+        font_size = self._scale_font(16)
+        margin_bottom = self._scale_value(20)
+        title.setStyleSheet(f"font-size: {font_size}; color: #fff; margin-bottom: {margin_bottom}px;")
         layout.addWidget(title, stretch=0)  # Pas de stretch pour le titre
         
         # Section d'affichage des valeurs
@@ -814,37 +1297,39 @@ class MainWindow(QMainWindow):
         
         self.focus_label = QLabel("Focus Normalisé")
         self.focus_label.setAlignment(Qt.AlignCenter)
-        self.focus_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        self.focus_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         focus_display_layout.addWidget(self.focus_label)
         
         # Container pour les valeurs (vertical : envoyé au-dessus de réel)
         value_container = QWidget()
-        value_container.setFixedWidth(90)  # Largeur fixe pour le conteneur
+        value_container_width = self._scale_value(90)
+        value_container.setMinimumWidth(value_container_width)
+        value_container.setMaximumWidth(value_container_width)
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(5)
-        value_layout.setContentsMargins(5, 0, 5, 0)
+        value_layout.setSpacing(self._scale_value(5))
+        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
         # Valeur envoyée
         sent_label = QLabel("Envoyé")
         sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(sent_label)
         self.focus_value_sent = QLabel("0.00")
         self.focus_value_sent.setAlignment(Qt.AlignCenter)
-        self.focus_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        self.focus_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         value_layout.addWidget(self.focus_value_sent)
         
         # Espacement
-        value_layout.addSpacing(5)
+        value_layout.addSpacing(self._scale_value(5))
         
         # Valeur réelle
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.focus_value_actual = QLabel("0.00")
         self.focus_value_actual.setAlignment(Qt.AlignCenter)
-        self.focus_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.focus_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.focus_value_actual)
         
         focus_display_layout.addWidget(value_container)
@@ -866,7 +1351,7 @@ class MainWindow(QMainWindow):
         self.focus_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # Pas de hauteur minimale fixe - le slider doit s'étirer pour occuper tout l'espace disponible
         # Le minimum par défaut de Qt est suffisant
-        self.focus_slider.setStyleSheet("""
+        self.focus_slider.setStyleSheet(self._scale_style("""
             QSlider::groove:vertical {
                 background: #333;
                 width: 24px;
@@ -884,28 +1369,28 @@ class MainWindow(QMainWindow):
             QSlider::handle:vertical:hover {
                 background: #777;
             }
-        """)
+        """))
         
         # Labels pour le slider (1.0, 0.5, 0.0)
         slider_labels_container = QWidget()
         slider_labels_layout = QVBoxLayout(slider_labels_container)
-        slider_labels_layout.setContentsMargins(10, 0, 0, 0)
+        slider_labels_layout.setContentsMargins(self._scale_value(10), 0, 0, 0)
         slider_labels_layout.setSpacing(0)
         
         label_1 = QLabel("1.0")
-        label_1.setStyleSheet("font-size: 9px; color: #aaa;")
+        label_1.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
         slider_labels_layout.addWidget(label_1)
         
         slider_labels_layout.addStretch()
         
         label_05 = QLabel("0.5")
-        label_05.setStyleSheet("font-size: 9px; color: #aaa;")
+        label_05.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
         slider_labels_layout.addWidget(label_05)
         
         slider_labels_layout.addStretch()
         
         label_0 = QLabel("0.0")
-        label_0.setStyleSheet("font-size: 9px; color: #aaa;")
+        label_0.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
         slider_labels_layout.addWidget(label_0)
         
         # Le slider doit prendre toute la hauteur disponible dans le container
@@ -919,7 +1404,7 @@ class MainWindow(QMainWindow):
         
         # Bouton Autofocus (juste en dessous du fader)
         self.autofocus_btn = QPushButton("🔍 Autofocus")
-        self.autofocus_btn.setStyleSheet("""
+        self.autofocus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 padding: 10px;
                 font-size: 11px;
@@ -940,7 +1425,7 @@ class MainWindow(QMainWindow):
             QPushButton:disabled {
                 opacity: 0.5;
             }
-        """)
+        """))
         self.autofocus_btn.clicked.connect(lambda: self.do_autofocus())
         layout.addWidget(self.autofocus_btn)
         
@@ -998,61 +1483,67 @@ class MainWindow(QMainWindow):
     def create_iris_panel(self):
         """Crée le panneau de contrôle de l'iris."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("Iris Control")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Section d'affichage
         iris_display = QWidget()
         iris_display_layout = QVBoxLayout(iris_display)
-        iris_display_layout.setSpacing(10)
+        iris_display_layout.setSpacing(self._scale_value(10))
         
         iris_label = QLabel("Iris Normalisé")
         iris_label.setAlignment(Qt.AlignCenter)
-        iris_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        iris_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         iris_display_layout.addWidget(iris_label)
         
         # Container pour les valeurs (vertical : envoyé au-dessus de réel)
         value_container = QWidget()
-        value_container.setFixedWidth(90)
+        value_container_width = self._scale_value(90)
+        value_container.setMinimumWidth(value_container_width)
+        value_container.setMaximumWidth(value_container_width)
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(5)
-        value_layout.setContentsMargins(5, 0, 5, 0)
+        value_layout.setSpacing(self._scale_value(5))
+        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
         # Valeur envoyée
         sent_label = QLabel("Envoyé")
         sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(sent_label)
         self.iris_value_sent = QLabel("0.00")
         self.iris_value_sent.setAlignment(Qt.AlignCenter)
-        self.iris_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        self.iris_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         value_layout.addWidget(self.iris_value_sent)
         
         # Espacement
-        value_layout.addSpacing(5)
+        value_layout.addSpacing(self._scale_value(5))
         
         # Valeur réelle
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.iris_value_actual = QLabel("0.00")
         self.iris_value_actual.setAlignment(Qt.AlignCenter)
-        self.iris_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.iris_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.iris_value_actual)
         
         iris_display_layout.addWidget(value_container)
@@ -1060,11 +1551,11 @@ class MainWindow(QMainWindow):
         # Aperture Stop
         aperture_label = QLabel("Aperture Stop:")
         aperture_label.setAlignment(Qt.AlignCenter)
-        aperture_label.setStyleSheet("font-size: 9px; color: #888;")
+        aperture_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         iris_display_layout.addWidget(aperture_label)
         self.iris_aperture_stop = QLabel("-")
         self.iris_aperture_stop.setAlignment(Qt.AlignCenter)
-        self.iris_aperture_stop.setStyleSheet("font-size: 9px; color: #0ff; font-weight: bold;")
+        self.iris_aperture_stop.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #0ff; font-weight: bold;")
         iris_display_layout.addWidget(self.iris_aperture_stop)
         
         iris_display_layout.addWidget(value_container)
@@ -1074,12 +1565,15 @@ class MainWindow(QMainWindow):
         # Boutons + et -
         buttons_container = QWidget()
         buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(15)
-        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        buttons_layout.setSpacing(self._scale_value(15))
+        margin_v = self._scale_value(30)
+        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
         
         self.iris_plus_btn = QPushButton("+")
-        self.iris_plus_btn.setFixedSize(60, 60)
-        self.iris_plus_btn.setStyleSheet("""
+        btn_size = self._scale_value(60)
+        self.iris_plus_btn.setMinimumSize(btn_size, btn_size)
+        self.iris_plus_btn.setMaximumSize(btn_size, btn_size)
+        self.iris_plus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1095,13 +1589,14 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.iris_plus_btn.clicked.connect(self.increment_iris)
         buttons_layout.addWidget(self.iris_plus_btn, alignment=Qt.AlignCenter)
         
         self.iris_minus_btn = QPushButton("-")
-        self.iris_minus_btn.setFixedSize(60, 60)
-        self.iris_minus_btn.setStyleSheet("""
+        self.iris_minus_btn.setMinimumSize(btn_size, btn_size)
+        self.iris_minus_btn.setMaximumSize(btn_size, btn_size)
+        self.iris_minus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1117,7 +1612,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.iris_minus_btn.clicked.connect(self.decrement_iris)
         buttons_layout.addWidget(self.iris_minus_btn, alignment=Qt.AlignCenter)
         
@@ -1225,61 +1720,67 @@ class MainWindow(QMainWindow):
     def create_gain_panel(self):
         """Crée le panneau de contrôle du gain."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("Gain Control")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Section d'affichage
         gain_display = QWidget()
         gain_display_layout = QVBoxLayout(gain_display)
-        gain_display_layout.setSpacing(10)
+        gain_display_layout.setSpacing(self._scale_value(10))
         
         gain_label = QLabel("Gain (dB)")
         gain_label.setAlignment(Qt.AlignCenter)
-        gain_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        gain_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         gain_display_layout.addWidget(gain_label)
         
         # Container pour les valeurs (vertical : envoyé au-dessus de réel)
         value_container = QWidget()
-        value_container.setFixedWidth(90)
+        value_container_width = self._scale_value(90)
+        value_container.setMinimumWidth(value_container_width)
+        value_container.setMaximumWidth(value_container_width)
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(5)
-        value_layout.setContentsMargins(5, 0, 5, 0)
+        value_layout.setSpacing(self._scale_value(5))
+        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
         # Valeur envoyée
         sent_label = QLabel("Envoyé")
         sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(sent_label)
         self.gain_value_sent = QLabel("0")
         self.gain_value_sent.setAlignment(Qt.AlignCenter)
-        self.gain_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        self.gain_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         value_layout.addWidget(self.gain_value_sent)
         
         # Espacement
-        value_layout.addSpacing(5)
+        value_layout.addSpacing(self._scale_value(5))
         
         # Valeur réelle
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.gain_value_actual = QLabel("0")
         self.gain_value_actual.setAlignment(Qt.AlignCenter)
-        self.gain_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.gain_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.gain_value_actual)
         
         gain_display_layout.addWidget(value_container)
@@ -1288,12 +1789,15 @@ class MainWindow(QMainWindow):
         # Boutons de contrôle
         buttons_container = QWidget()
         buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(15)
-        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        buttons_layout.setSpacing(self._scale_value(15))
+        margin_v = self._scale_value(30)
+        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
         
         self.gain_plus_btn = QPushButton("+")
-        self.gain_plus_btn.setFixedSize(60, 60)
-        self.gain_plus_btn.setStyleSheet("""
+        btn_size = self._scale_value(60)
+        self.gain_plus_btn.setMinimumSize(btn_size, btn_size)
+        self.gain_plus_btn.setMaximumSize(btn_size, btn_size)
+        self.gain_plus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1309,13 +1813,14 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.gain_plus_btn.clicked.connect(self.increment_gain)
         buttons_layout.addWidget(self.gain_plus_btn, alignment=Qt.AlignCenter)
         
         self.gain_minus_btn = QPushButton("-")
-        self.gain_minus_btn.setFixedSize(60, 60)
-        self.gain_minus_btn.setStyleSheet("""
+        self.gain_minus_btn.setMinimumSize(btn_size, btn_size)
+        self.gain_minus_btn.setMaximumSize(btn_size, btn_size)
+        self.gain_minus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1331,7 +1836,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.gain_minus_btn.clicked.connect(self.decrement_gain)
         buttons_layout.addWidget(self.gain_minus_btn, alignment=Qt.AlignCenter)
         
@@ -1343,61 +1848,67 @@ class MainWindow(QMainWindow):
     def create_whitebalance_panel(self):
         """Crée le panneau de contrôle du white balance."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("White Balance")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Section d'affichage
         wb_display = QWidget()
         wb_display_layout = QVBoxLayout(wb_display)
-        wb_display_layout.setSpacing(10)
+        wb_display_layout.setSpacing(self._scale_value(10))
         
         wb_label = QLabel("Température (K)")
         wb_label.setAlignment(Qt.AlignCenter)
-        wb_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        wb_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         wb_display_layout.addWidget(wb_label)
         
         # Container pour les valeurs (vertical : envoyé au-dessus de réel)
         value_container = QWidget()
-        value_container.setFixedWidth(90)
+        value_container_width = self._scale_value(90)
+        value_container.setMinimumWidth(value_container_width)
+        value_container.setMaximumWidth(value_container_width)
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(5)
-        value_layout.setContentsMargins(5, 0, 5, 0)
+        value_layout.setSpacing(self._scale_value(5))
+        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
         # Valeur envoyée
         sent_label = QLabel("Envoyé")
         sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(sent_label)
         self.whitebalance_value_sent = QLabel("0K")
         self.whitebalance_value_sent.setAlignment(Qt.AlignCenter)
-        self.whitebalance_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        self.whitebalance_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         value_layout.addWidget(self.whitebalance_value_sent)
         
         # Espacement
-        value_layout.addSpacing(5)
+        value_layout.addSpacing(self._scale_value(5))
         
         # Valeur réelle
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.whitebalance_value_actual = QLabel("0K")
         self.whitebalance_value_actual.setAlignment(Qt.AlignCenter)
-        self.whitebalance_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.whitebalance_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.whitebalance_value_actual)
         
         wb_display_layout.addWidget(value_container)
@@ -1406,12 +1917,15 @@ class MainWindow(QMainWindow):
         # Boutons de contrôle
         buttons_container = QWidget()
         buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(15)
-        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        buttons_layout.setSpacing(self._scale_value(15))
+        margin_v = self._scale_value(30)
+        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
         
         self.whitebalance_plus_btn = QPushButton("+")
-        self.whitebalance_plus_btn.setFixedSize(60, 60)
-        self.whitebalance_plus_btn.setStyleSheet("""
+        btn_size = self._scale_value(60)
+        self.whitebalance_plus_btn.setMinimumSize(btn_size, btn_size)
+        self.whitebalance_plus_btn.setMaximumSize(btn_size, btn_size)
+        self.whitebalance_plus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1427,13 +1941,14 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.whitebalance_plus_btn.clicked.connect(self.increment_whitebalance)
         buttons_layout.addWidget(self.whitebalance_plus_btn, alignment=Qt.AlignCenter)
         
         self.whitebalance_minus_btn = QPushButton("-")
-        self.whitebalance_minus_btn.setFixedSize(60, 60)
-        self.whitebalance_minus_btn.setStyleSheet("""
+        self.whitebalance_minus_btn.setMinimumSize(btn_size, btn_size)
+        self.whitebalance_minus_btn.setMaximumSize(btn_size, btn_size)
+        self.whitebalance_minus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1449,14 +1964,17 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.whitebalance_minus_btn.clicked.connect(self.decrement_whitebalance)
         buttons_layout.addWidget(self.whitebalance_minus_btn, alignment=Qt.AlignCenter)
         
         # Bouton Auto
         self.whitebalance_auto_btn = QPushButton("Auto")
-        self.whitebalance_auto_btn.setFixedSize(80, 40)
-        self.whitebalance_auto_btn.setStyleSheet("""
+        auto_btn_width = self._scale_value(80)
+        auto_btn_height = self._scale_value(40)
+        self.whitebalance_auto_btn.setMinimumSize(auto_btn_width, auto_btn_height)
+        self.whitebalance_auto_btn.setMaximumSize(auto_btn_width, auto_btn_height)
+        self.whitebalance_auto_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 14px;
                 font-weight: bold;
@@ -1472,7 +1990,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #095;
             }
-        """)
+        """))
         self.whitebalance_auto_btn.clicked.connect(self.do_auto_whitebalance)
         buttons_layout.addWidget(self.whitebalance_auto_btn, alignment=Qt.AlignCenter)
         
@@ -1776,61 +2294,67 @@ class MainWindow(QMainWindow):
     def create_shutter_panel(self):
         """Crée le panneau de contrôle du shutter."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("⚡ Shutter Control")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Section d'affichage
         shutter_display = QWidget()
         shutter_display_layout = QVBoxLayout(shutter_display)
-        shutter_display_layout.setSpacing(10)
+        shutter_display_layout.setSpacing(self._scale_value(10))
         
         shutter_label = QLabel("Shutter Speed (1/Xs)")
         shutter_label.setAlignment(Qt.AlignCenter)
-        shutter_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        shutter_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         shutter_display_layout.addWidget(shutter_label)
         
         # Container pour les valeurs (vertical : envoyé au-dessus de réel)
         value_container = QWidget()
-        value_container.setFixedWidth(90)
+        value_container_width = self._scale_value(90)
+        value_container.setMinimumWidth(value_container_width)
+        value_container.setMaximumWidth(value_container_width)
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(5)
-        value_layout.setContentsMargins(5, 0, 5, 0)
+        value_layout.setSpacing(self._scale_value(5))
+        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
         # Valeur envoyée
         sent_label = QLabel("Envoyé")
         sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(sent_label)
         self.shutter_value_sent = QLabel("-")
         self.shutter_value_sent.setAlignment(Qt.AlignCenter)
-        self.shutter_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        self.shutter_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         value_layout.addWidget(self.shutter_value_sent)
         
         # Espacement
-        value_layout.addSpacing(5)
+        value_layout.addSpacing(self._scale_value(5))
         
         # Valeur réelle
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.shutter_value_actual = QLabel("-")
         self.shutter_value_actual.setAlignment(Qt.AlignCenter)
-        self.shutter_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.shutter_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.shutter_value_actual)
         
         shutter_display_layout.addWidget(value_container)
@@ -1839,12 +2363,15 @@ class MainWindow(QMainWindow):
         # Boutons de contrôle
         buttons_container = QWidget()
         buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(15)
-        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        buttons_layout.setSpacing(self._scale_value(15))
+        margin_v = self._scale_value(30)
+        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
         
         self.shutter_plus_btn = QPushButton("+")
-        self.shutter_plus_btn.setFixedSize(60, 60)
-        self.shutter_plus_btn.setStyleSheet("""
+        btn_size = self._scale_value(60)
+        self.shutter_plus_btn.setMinimumSize(btn_size, btn_size)
+        self.shutter_plus_btn.setMaximumSize(btn_size, btn_size)
+        self.shutter_plus_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 font-size: 18px;
                 font-weight: bold;
@@ -1860,12 +2387,13 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #555;
             }
-        """)
+        """))
         self.shutter_plus_btn.clicked.connect(self.increment_shutter)
         buttons_layout.addWidget(self.shutter_plus_btn, alignment=Qt.AlignCenter)
         
         self.shutter_minus_btn = QPushButton("-")
-        self.shutter_minus_btn.setFixedSize(60, 60)
+        self.shutter_minus_btn.setMinimumSize(btn_size, btn_size)
+        self.shutter_minus_btn.setMaximumSize(btn_size, btn_size)
         self.shutter_minus_btn.setStyleSheet("""
             QPushButton {
                 font-size: 18px;
@@ -2008,67 +2536,74 @@ class MainWindow(QMainWindow):
     def create_zoom_panel(self):
         """Crée le panneau d'affichage du zoom."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("🔍 Zoom Control")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Section d'affichage
         zoom_display = QWidget()
         zoom_display_layout = QVBoxLayout(zoom_display)
-        zoom_display_layout.setSpacing(10)
+        zoom_display_layout.setSpacing(self._scale_value(10))
         
         zoom_label = QLabel("Focale (Zoom)")
         zoom_label.setAlignment(Qt.AlignCenter)
-        zoom_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        zoom_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
         zoom_display_layout.addWidget(zoom_label)
         
         # Row pour les valeurs
         value_row = QWidget()
         value_row_layout = QHBoxLayout(value_row)
-        value_row_layout.setSpacing(20)
+        value_row_layout.setSpacing(self._scale_value(20))
         
         # Focale
         focal_container = QWidget()
-        focal_container.setFixedWidth(90)
+        focal_container_width = self._scale_value(90)
+        focal_container.setMinimumWidth(focal_container_width)
+        focal_container.setMaximumWidth(focal_container_width)
         focal_layout = QVBoxLayout(focal_container)
-        focal_layout.setSpacing(3)
-        focal_layout.setContentsMargins(5, 0, 5, 0)
+        focal_layout.setSpacing(self._scale_value(3))
+        focal_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         focal_label = QLabel("Focale")
         focal_label.setAlignment(Qt.AlignCenter)
-        focal_label.setStyleSheet("font-size: 9px; color: #888;")
+        focal_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         focal_layout.addWidget(focal_label)
         self.zoom_focal_length = QLabel("-")
         self.zoom_focal_length.setAlignment(Qt.AlignCenter)
-        self.zoom_focal_length.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.zoom_focal_length.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         focal_layout.addWidget(self.zoom_focal_length)
         value_row_layout.addWidget(focal_container)
         
         # Normalisé
         norm_container = QWidget()
-        norm_container.setFixedWidth(90)
+        norm_container.setMinimumWidth(focal_container_width)
+        norm_container.setMaximumWidth(focal_container_width)
         norm_layout = QVBoxLayout(norm_container)
-        norm_layout.setSpacing(3)
-        norm_layout.setContentsMargins(5, 0, 5, 0)
+        norm_layout.setSpacing(self._scale_value(3))
+        norm_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         norm_label = QLabel("Normalisé")
         norm_label.setAlignment(Qt.AlignCenter)
-        norm_label.setStyleSheet("font-size: 9px; color: #888;")
+        norm_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         norm_layout.addWidget(norm_label)
         self.zoom_normalised = QLabel("-")
         self.zoom_normalised.setAlignment(Qt.AlignCenter)
-        self.zoom_normalised.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.zoom_normalised.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         norm_layout.addWidget(self.zoom_normalised)
         value_row_layout.addWidget(norm_container)
         
@@ -2077,7 +2612,7 @@ class MainWindow(QMainWindow):
         # Info supplémentaire
         zoom_info = QLabel("Focale en millimètres")
         zoom_info.setAlignment(Qt.AlignCenter)
-        zoom_info.setStyleSheet("font-size: 9px; color: #888;")
+        zoom_info.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
         zoom_display_layout.addWidget(zoom_info)
         
         layout.addWidget(zoom_display)
@@ -2088,21 +2623,25 @@ class MainWindow(QMainWindow):
     def create_controls_panel(self):
         """Crée le panneau de contrôles."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("Contrôles")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
         # Variables pour les états des toggles
@@ -2112,9 +2651,7 @@ class MainWindow(QMainWindow):
         self.cleanfeed_enabled = False
         
         # Boutons toggle
-        self.zebra_toggle = QPushButton("Zebra\nOFF")
-        self.zebra_toggle.setCheckable(True)
-        self.zebra_toggle.setStyleSheet("""
+        toggle_style = self._scale_style("""
             QPushButton {
                 width: 100%;
                 padding: 8px;
@@ -2134,81 +2671,28 @@ class MainWindow(QMainWindow):
                 opacity: 0.8;
             }
         """)
+        
+        self.zebra_toggle = QPushButton("Zebra\nOFF")
+        self.zebra_toggle.setCheckable(True)
+        self.zebra_toggle.setStyleSheet(toggle_style)
         self.zebra_toggle.clicked.connect(self.toggle_zebra)
         layout.addWidget(self.zebra_toggle)
         
         self.focusAssist_toggle = QPushButton("Focus Assist\nOFF")
         self.focusAssist_toggle.setCheckable(True)
-        self.focusAssist_toggle.setStyleSheet("""
-            QPushButton {
-                width: 100%;
-                padding: 8px;
-                font-size: 10px;
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 8px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #0a5;
-                color: #fff;
-                border-color: #0f0;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        self.focusAssist_toggle.setStyleSheet(toggle_style)
         self.focusAssist_toggle.clicked.connect(self.toggle_focus_assist)
         layout.addWidget(self.focusAssist_toggle)
         
         self.falseColor_toggle = QPushButton("False Color\nOFF")
         self.falseColor_toggle.setCheckable(True)
-        self.falseColor_toggle.setStyleSheet("""
-            QPushButton {
-                width: 100%;
-                padding: 8px;
-                font-size: 10px;
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 8px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #0a5;
-                color: #fff;
-                border-color: #0f0;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        self.falseColor_toggle.setStyleSheet(toggle_style)
         self.falseColor_toggle.clicked.connect(self.toggle_false_color)
         layout.addWidget(self.falseColor_toggle)
         
         self.cleanfeed_toggle = QPushButton("Cleanfeed\nOFF")
         self.cleanfeed_toggle.setCheckable(True)
-        self.cleanfeed_toggle.setStyleSheet("""
-            QPushButton {
-                width: 100%;
-                padding: 8px;
-                font-size: 10px;
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 8px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #0a5;
-                color: #fff;
-                border-color: #0f0;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        self.cleanfeed_toggle.setStyleSheet(toggle_style)
         self.cleanfeed_toggle.clicked.connect(self.toggle_cleanfeed)
         layout.addWidget(self.cleanfeed_toggle)
         
@@ -2243,7 +2727,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(20)
         crossfade_label = QLabel("Crossfade Duration (s)")
         crossfade_label.setAlignment(Qt.AlignCenter)
-        crossfade_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa; margin-top: 10px;")
+        crossfade_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa; margin-top: {self._scale_value(10)}px;")
         layout.addWidget(crossfade_label)
         
         self.crossfade_duration_spinbox = QDoubleSpinBox()
@@ -2252,7 +2736,7 @@ class MainWindow(QMainWindow):
         self.crossfade_duration_spinbox.setSingleStep(0.1)
         self.crossfade_duration_spinbox.setValue(2.0)
         self.crossfade_duration_spinbox.setDecimals(1)
-        self.crossfade_duration_spinbox.setStyleSheet("""
+        self.crossfade_duration_spinbox.setStyleSheet(self._scale_style("""
             QDoubleSpinBox {
                 padding: 6px;
                 font-size: 12px;
@@ -2268,7 +2752,7 @@ class MainWindow(QMainWindow):
             QDoubleSpinBox:focus {
                 border-color: #0a5;
             }
-        """)
+        """))
         self.crossfade_duration_spinbox.valueChanged.connect(self.on_crossfade_duration_changed)
         layout.addWidget(self.crossfade_duration_spinbox)
         
@@ -2278,87 +2762,93 @@ class MainWindow(QMainWindow):
     def create_presets_panel(self):
         """Crée le panneau de presets."""
         panel = QWidget()
-        panel.setFixedWidth(200)
-        panel.setStyleSheet("""
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
                 border: 1px solid #444;
                 border-radius: 4px;
             }
-        """)
+        """))
         layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
         
         presets_label = QLabel("Presets")
         presets_label.setAlignment(Qt.AlignCenter)
-        presets_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #fff;")
+        presets_label.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
         layout.addWidget(presets_label)
         
         # Conteneur pour les deux colonnes
         presets_container = QHBoxLayout()
-        presets_container.setSpacing(10)
+        presets_container.setSpacing(self._scale_value(10))
         
         # Colonne Save
         save_column = QVBoxLayout()
-        save_column.setSpacing(5)
+        save_column.setSpacing(self._scale_value(5))
         save_label = QLabel("Save")
         save_label.setAlignment(Qt.AlignCenter)
-        save_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa;")
+        save_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
         save_column.addWidget(save_label)
         
         self.preset_save_buttons = []
+        save_btn_style = self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #333;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """)
         for i in range(1, 11):
             save_btn = QPushButton(f"{i}")
-            save_btn.setStyleSheet("""
-                QPushButton {
-                    padding: 8px;
-                    font-size: 10px;
-                    font-weight: bold;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    background-color: #333;
-                    color: #fff;
-                }
-                QPushButton:hover {
-                    background-color: #444;
-                }
-                QPushButton:disabled {
-                    opacity: 0.5;
-                }
-            """)
+            save_btn.setStyleSheet(save_btn_style)
             save_btn.clicked.connect(lambda checked, n=i: self.save_preset(n))
             save_column.addWidget(save_btn)
             self.preset_save_buttons.append(save_btn)
         
         # Colonne Recall
         recall_column = QVBoxLayout()
-        recall_column.setSpacing(5)
+        recall_column.setSpacing(self._scale_value(5))
         recall_label = QLabel("Recall")
         recall_label.setAlignment(Qt.AlignCenter)
-        recall_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa;")
+        recall_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
         recall_column.addWidget(recall_label)
         
         self.preset_recall_buttons = []
+        recall_btn_style = self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #0a5;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """)
         for i in range(1, 11):
             recall_btn = QPushButton(f"{i}")
-            recall_btn.setStyleSheet("""
-                QPushButton {
-                    padding: 8px;
-                    font-size: 10px;
-                    font-weight: bold;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    background-color: #0a5;
-                    color: #fff;
-                }
-                QPushButton:hover {
-                    background-color: #0c7;
-                }
-                QPushButton:disabled {
-                    opacity: 0.5;
-                }
-            """)
+            recall_btn.setStyleSheet(recall_btn_style)
             recall_btn.clicked.connect(lambda checked, n=i: self.recall_preset(n))
             recall_column.addWidget(recall_btn)
             self.preset_recall_buttons.append(recall_btn)
@@ -2370,21 +2860,21 @@ class MainWindow(QMainWindow):
         layout.addLayout(presets_container)
         
         # Section Recall Scope
-        layout.addSpacing(20)
+        layout.addSpacing(self._scale_value(20))
         recall_scope_label = QLabel("Recall Scope")
         recall_scope_label.setAlignment(Qt.AlignCenter)
-        recall_scope_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff; margin-top: 10px;")
+        recall_scope_label.setStyleSheet(f"font-size: {self._scale_font(14)}; font-weight: bold; color: #fff; margin-top: {self._scale_value(10)}px;")
         layout.addWidget(recall_scope_label)
         
         # Conteneur pour les checkboxes
         recall_scope_container = QVBoxLayout()
-        recall_scope_container.setSpacing(8)
+        recall_scope_container.setSpacing(self._scale_value(8))
         
         # Dictionnaire pour stocker les références aux checkboxes
         self.recall_scope_checkboxes = {}
         
         # Style partagé pour tous les checkboxes de recall scope
-        recall_scope_checkbox_style = """
+        recall_scope_checkbox_style = self._scale_style("""
             QPushButton {
                 text-align: left;
                 padding: 6px;
@@ -2402,7 +2892,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 opacity: 0.8;
             }
-        """
+        """)
         
         # Checkbox Focus
         focus_checkbox = QPushButton("☐ Focus")
