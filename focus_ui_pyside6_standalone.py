@@ -48,6 +48,7 @@ class CameraData:
     iris_sent_value: float = 0.0
     iris_actual_value: float = 0.0
     iris_aperture_stop: Optional[float] = None  # Aperture stop (f/2.8, f/4, etc.) pour Companion
+    iris_aperture_number: Optional[int] = None  # Aperture number (entier) pour les ajustements relatifs
     gain_sent_value: int = 0
     gain_actual_value: int = 0
     shutter_sent_value: int = 0
@@ -319,9 +320,6 @@ class MainWindow(QMainWindow):
         self.focus_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         self.focus_keyboard_adjusting = False  # True quand on ajuste avec les flèches clavier
         
-        # Variables pour le slider iris
-        self.iris_slider_user_touching = False  # True seulement quand l'utilisateur touche physiquement le slider
-        self.iris_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         
         # Variables pour white balance
         self.whitebalance_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
@@ -733,12 +731,6 @@ class MainWindow(QMainWindow):
             self.iris_value_sent.setText(f"{cam_data.iris_sent_value:.2f}")
         if hasattr(self, 'iris_value_actual') and cam_data.iris_actual_value is not None:
             self.iris_value_actual.setText(f"{cam_data.iris_actual_value:.2f}")
-        if hasattr(self, 'iris_slider') and cam_data.iris_actual_value is not None:
-            # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
-            slider_value = int(cam_data.iris_actual_value * 1000)
-            self.iris_slider.blockSignals(True)
-            self.iris_slider.setValue(slider_value)
-            self.iris_slider.blockSignals(False)
         
         # Gain
         self.gain_sent_value = cam_data.gain_sent_value
@@ -1050,180 +1042,140 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(iris_display, stretch=0)  # Pas de stretch pour l'affichage
         
-        # Slider vertical
-        slider_container = QWidget()
-        slider_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        slider_layout = QHBoxLayout(slider_container)
-        slider_layout.setContentsMargins(0, 0, 0, 0)
-        slider_layout.setSpacing(0)
+        # Boutons + et -
+        buttons_container = QWidget()
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setSpacing(15)
+        buttons_layout.setContentsMargins(0, 30, 0, 30)
         
-        # Slider vertical (inversé : 0 en haut, 1.0 en bas)
-        self.iris_slider = QSlider(Qt.Vertical)
-        self.iris_slider.setMinimum(0)
-        self.iris_slider.setMaximum(1000)  # 0.001 de précision
-        self.iris_slider.setValue(0)
-        self.iris_slider.setInvertedAppearance(True)  # Inverser pour avoir 0 en haut, 1.0 en bas
-        self.iris_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.iris_slider.setStyleSheet("""
-            QSlider::groove:vertical {
-                background: #333;
-                width: 24px;
-                border: 1px solid #555;
-                border-radius: 12px;
+        self.iris_plus_btn = QPushButton("+")
+        self.iris_plus_btn.setFixedSize(60, 60)
+        self.iris_plus_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #333;
+                color: #fff;
+                border-radius: 8px;
             }
-            QSlider::handle:vertical {
-                background: #666;
-                border: 1px solid #888;
-                border-radius: 6px;
-                width: 36px;
-                height: 10px;
-                margin: 0 -6px;
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
             }
-            QSlider::handle:vertical:hover {
-                background: #777;
+            QPushButton:pressed {
+                background-color: #555;
             }
         """)
+        self.iris_plus_btn.clicked.connect(self.increment_iris)
+        buttons_layout.addWidget(self.iris_plus_btn, alignment=Qt.AlignCenter)
         
-        # Labels pour le slider (inversés : 0.0 en haut, 1.0 en bas)
-        slider_labels_container = QWidget()
-        slider_labels_layout = QVBoxLayout(slider_labels_container)
-        slider_labels_layout.setContentsMargins(10, 0, 0, 0)
-        slider_labels_layout.setSpacing(0)
+        self.iris_minus_btn = QPushButton("-")
+        self.iris_minus_btn.setFixedSize(60, 60)
+        self.iris_minus_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #333;
+                color: #fff;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+        """)
+        self.iris_minus_btn.clicked.connect(self.decrement_iris)
+        buttons_layout.addWidget(self.iris_minus_btn, alignment=Qt.AlignCenter)
         
-        label_0 = QLabel("0.0")
-        label_0.setStyleSheet("font-size: 9px; color: #aaa;")
-        slider_labels_layout.addWidget(label_0)
+        layout.addWidget(buttons_container)
         
-        slider_labels_layout.addStretch()
-        
-        label_05 = QLabel("0.5")
-        label_05.setStyleSheet("font-size: 9px; color: #aaa;")
-        slider_labels_layout.addWidget(label_05)
-        
-        slider_labels_layout.addStretch()
-        
-        label_1 = QLabel("1.0")
-        label_1.setStyleSheet("font-size: 9px; color: #aaa;")
-        slider_labels_layout.addWidget(label_1)
-        
-        slider_layout.addWidget(self.iris_slider, stretch=1)
-        slider_layout.addWidget(slider_labels_container)
-        
-        layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
-        
-        # Stocker slider_container pour pouvoir le forcer à une hauteur
-        panel.slider_container = slider_container
-        panel.iris_slider = self.iris_slider
-        
-        # Fonction pour forcer la hauteur du slider
-        def force_slider_height():
-            try:
-                # Calculer la hauteur disponible de manière plus précise
-                panel_height = panel.height()
-                if panel_height <= 0:
-                    return  # Pas encore initialisé
-                
-                # Obtenir les hauteurs réelles des éléments
-                title = layout.itemAt(0).widget() if layout.count() > 0 else None
-                iris_display = layout.itemAt(1).widget() if layout.count() > 1 else None
-                
-                title_height = title.height() if title else 40
-                display_height = iris_display.height() if iris_display else 80
-                
-                # Marges du layout (top + bottom)
-                layout_margins = layout.contentsMargins()
-                margins_height = layout_margins.top() + layout_margins.bottom()
-                
-                # Espacement entre les widgets
-                spacing = layout.spacing() * 2  # Espacement avant et après le slider
-                
-                # Calculer la hauteur disponible
-                available_height = panel_height - title_height - display_height - margins_height - spacing
-                
-                # S'assurer qu'on a au moins une hauteur minimale raisonnable
-                available_height = max(200, available_height)
-                
-                slider_container.setMinimumHeight(available_height)
-                slider_container.setMaximumHeight(available_height)
-            except Exception as e:
-                pass
-        
-        panel.force_slider_height = force_slider_height
-        
-        # Appeler une première fois après que la fenêtre soit affichée
-        QTimer.singleShot(100, force_slider_height)
-        
-        # Connecter les signaux du slider
-        self.iris_slider.sliderPressed.connect(self.on_iris_slider_pressed)
-        self.iris_slider.sliderReleased.connect(self.on_iris_slider_released)
-        self.iris_slider.valueChanged.connect(self.on_iris_slider_value_changed)
+        layout.addStretch()
         
         return panel
     
-    def update_iris_value(self, value: float):
-        """Met à jour la valeur de l'iris pour la caméra active (utilisé par les mises à jour WebSocket)."""
-        cam_data = self.get_active_camera_data()
-        value = max(0.0, min(1.0, value))
-        cam_data.iris_sent_value = value
-        self.iris_value_sent.setText(f"{value:.2f}")
-    
-    def on_iris_slider_pressed(self):
-        """Appelé quand on appuie sur le slider iris."""
-        cam_data = self.get_active_camera_data()
+    def increment_iris(self, camera_id: Optional[int] = None):
+        """Incrémente l'iris d'un stop d'aperture pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
         
-        # Marquer que l'utilisateur touche le slider
-        self.iris_slider_user_touching = True
-        
-        # Lire la position actuelle du slider au moment du clic
-        # Avec setInvertedAppearance(True), slider 0 est visuellement en haut, slider 1000 en bas
-        # Conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
-        current_slider_value = self.iris_slider.value()
-        current_iris_value = current_slider_value / 1000.0
-        
-        # Mettre à jour l'affichage avec la valeur actuelle
-        cam_data.iris_sent_value = current_iris_value
-        self.iris_value_sent.setText(f"{current_iris_value:.2f}")
-        
-        # Envoyer immédiatement la valeur sur laquelle l'utilisateur a cliqué (si le verrou est ouvert)
-        if not self.iris_sending:
-            self._send_iris_value_now(current_iris_value)
-    
-    def on_iris_slider_released(self):
-        """Appelé quand on relâche le slider iris."""
-        cam_data = self.get_active_camera_data()
-        
-        # Marquer que l'utilisateur ne touche plus le slider
-        self.iris_slider_user_touching = False
-        
-        # Remettre immédiatement le slider à la valeur réelle de l'iris
-        # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
-        if cam_data.iris_actual_value is not None:
-            slider_value = int(cam_data.iris_actual_value * 1000)
-            self.iris_slider.blockSignals(True)
-            self.iris_slider.setValue(slider_value)
-            self.iris_slider.blockSignals(False)
-    
-    def on_iris_slider_value_changed(self, value: int):
-        """Appelé quand la valeur du slider iris change."""
-        cam_data = self.get_active_camera_data()
-        
-        # Envoyer SEULEMENT si l'utilisateur touche physiquement le slider
-        if not self.iris_slider_user_touching:
+        if not cam_data.connected or not cam_data.controller:
             return
         
-        # L'utilisateur touche le slider, mettre à jour l'affichage
-        # Avec setInvertedAppearance(True), conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
-        iris_value = value / 1000.0
-        cam_data.iris_sent_value = iris_value
-        self.iris_value_sent.setText(f"{iris_value:.2f}")
+        # Utiliser adjustmentStep pour incrémenter d'un stop
+        try:
+            success = cam_data.controller.set_iris(adjustment_step=1, silent=True)
+            if success:
+                # La valeur sera mise à jour via WebSocket, mais on peut aussi faire un GET pour avoir la nouvelle valeur immédiatement
+                # Pour l'instant, on attend le WebSocket
+                pass
+            else:
+                logger.error(f"Erreur lors de l'incrémentation de l'iris")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'incrémentation de l'iris: {e}")
+    
+    def decrement_iris(self, camera_id: Optional[int] = None):
+        """Décrémente l'iris d'un stop d'aperture pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
         
-        # Envoyer seulement si le verrou est ouvert (pas de requête en cours)
-        if not self.iris_sending:
-            self._send_iris_value_now(iris_value)
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Utiliser adjustmentStep pour décrémenter d'un stop
+        try:
+            success = cam_data.controller.set_iris(adjustment_step=-1, silent=True)
+            if success:
+                # La valeur sera mise à jour via WebSocket, mais on peut aussi faire un GET pour avoir la nouvelle valeur immédiatement
+                # Pour l'instant, on attend le WebSocket
+                pass
+            else:
+                logger.error(f"Erreur lors de la décrémentation de l'iris")
+        except Exception as e:
+            logger.error(f"Erreur lors de la décrémentation de l'iris: {e}")
+    
+    def update_iris_value(self, value: float, camera_id: Optional[int] = None):
+        """Met à jour la valeur de l'iris pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        value = max(0.0, min(1.0, value))
+        cam_data.iris_sent_value = value
+        
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
+            self.iris_value_sent.setText(f"{value:.2f}")
+        
+        # Envoyer la valeur à la caméra
+        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
+        self.send_iris_value(value, camera_id=actual_camera_id)
     
     def send_iris_value(self, value: float, camera_id: Optional[int] = None):
         """Envoie la valeur de l'iris directement (utilisé par Companion)."""
-        if camera_id is not None:
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
             if camera_id < 1 or camera_id > 8:
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
@@ -1240,46 +1192,6 @@ class MainWindow(QMainWindow):
                 logger.error(f"Erreur lors de l'envoi de l'iris")
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de l'iris: {e}")
-    
-    def _send_iris_value_now(self, value: float):
-        """Envoie la valeur de l'iris à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
-            return
-        if not self.iris_slider_user_touching:
-            self.iris_sending = False
-            return
-        
-        self.iris_sending = True
-        
-        try:
-            # Envoyer la requête (synchrone, attend la réponse)
-            success = cam_data.controller.set_iris(value, silent=True)
-            
-            if not success:
-                logger.error(f"Erreur lors de l'envoi de l'iris")
-            
-            # Attendre 50ms après la réponse avant de permettre le prochain envoi
-            QTimer.singleShot(50, self._on_iris_send_complete)
-            
-        except Exception as e:
-            logger.error(f"Erreur lors de l'envoi de l'iris: {e}")
-            # En cas d'erreur, attendre quand même 50ms
-            QTimer.singleShot(50, self._on_iris_send_complete)
-    
-    def _on_iris_send_complete(self):
-        """Appelé après le délai de 50ms, lit la position actuelle du fader si l'utilisateur le touche encore."""
-        self.iris_sending = False
-        
-        # Si l'utilisateur touche toujours le slider, lire la position actuelle et l'envoyer
-        # Avec setInvertedAppearance(True), conversion directe : slider 0 (haut) = iris 0.0, slider 1000 (bas) = iris 1.0
-        if self.iris_slider_user_touching:
-            cam_data = self.get_active_camera_data()
-            current_slider_value = self.iris_slider.value()
-            current_iris_value = current_slider_value / 1000.0
-            cam_data.iris_sent_value = current_iris_value
-            self.iris_value_sent.setText(f"{current_iris_value:.2f}")
-            self._send_iris_value_now(current_iris_value)
     
     def create_gain_panel(self):
         """Crée le panneau de contrôle du gain."""
@@ -3097,7 +3009,8 @@ class MainWindow(QMainWindow):
         self.focus_slider.setEnabled(enabled)
         
         # Iris
-        self.iris_slider.setEnabled(enabled)
+        self.iris_plus_btn.setEnabled(enabled)
+        self.iris_minus_btn.setEnabled(enabled)
         
         # Gain
         self.gain_plus_btn.setEnabled(enabled)
@@ -3185,6 +3098,9 @@ class MainWindow(QMainWindow):
             elif cam_data.iris_aperture_stop is not None:
                 # Si pas d'aperture stop dans les données mais qu'on en a déjà une, la garder
                 update_kwargs['iris'] = cam_data.iris_aperture_stop
+            # Stocker l'aperture number pour les ajustements relatifs
+            if 'apertureNumber' in data:
+                cam_data.iris_aperture_number = int(data['apertureNumber'])
             # Toujours émettre le signal pour mettre à jour l'UI, même si 'normalised' n'est pas présent
             # (les données peuvent contenir 'apertureStop' ou d'autres champs)
             if camera_id == self.active_camera_id:
@@ -3355,6 +3271,9 @@ class MainWindow(QMainWindow):
                 # Stocker l'aperture stop pour Companion
                 if 'apertureStop' in iris_data:
                     cam_data.iris_aperture_stop = float(iris_data['apertureStop'])
+                # Stocker l'aperture number pour les ajustements relatifs
+                if 'apertureNumber' in iris_data:
+                    cam_data.iris_aperture_number = int(iris_data['apertureNumber'])
                 if camera_id == self.active_camera_id:
                     self.on_iris_changed(iris_data)
             
@@ -3587,14 +3506,6 @@ class MainWindow(QMainWindow):
             value = float(data['normalised'])
             cam_data.iris_actual_value = value
             self.iris_value_actual.setText(f"{value:.2f}")
-            
-            # Mettre à jour le slider seulement si l'utilisateur ne le touche pas
-            # Avec setInvertedAppearance(True), conversion directe : iris 0.0 = slider 0, iris 1.0 = slider 1000
-            if not self.iris_slider_user_touching:
-                slider_value = int(value * 1000)
-                self.iris_slider.blockSignals(True)
-                self.iris_slider.setValue(slider_value)
-                self.iris_slider.blockSignals(False)
         
         # Toujours mettre à jour l'aperture stop si présent
         if 'apertureStop' in data:
@@ -3602,6 +3513,10 @@ class MainWindow(QMainWindow):
             self.iris_aperture_stop.setText(f"{data['apertureStop']:.2f}")
             # Mettre à jour le StateStore avec l'aperture stop pour Companion
             self.state_store.update_cam(self.active_camera_id, iris=cam_data.iris_aperture_stop)
+        
+        # Toujours mettre à jour l'aperture number si présent
+        if 'apertureNumber' in data:
+            cam_data.iris_aperture_number = int(data['apertureNumber'])
     
     def on_gain_changed(self, value: int):
         """Slot appelé quand le gain change."""

@@ -109,8 +109,6 @@ class CommandHandler:
                     if original_active_cam != cam:
                         main_window.switch_active_camera(original_active_cam)
                 
-            elif param == "iris":
-                main_window.send_iris_value(float(value), camera_id=cam)
             elif param == "gain":
                 main_window.send_gain_value(int(value), camera_id=cam)
             elif param == "shutter":
@@ -163,19 +161,8 @@ class CommandHandler:
                     "param": "focus",
                     "value": new_value
                 })
-            elif param == "iris":
-                current_value = cam_data.iris_actual_value
-                new_value = current_value + float(delta)
-                # Clamper entre 0.0 et 1.0
-                new_value = max(0.0, min(1.0, new_value))
-                return self._handle_set_param(main_window, {
-                    "cmd": "set_param",
-                    "cam": cam,
-                    "param": "iris",
-                    "value": new_value
-                })
             else:
-                return False, f"Paramètre non supporté pour nudge: {param} (supportés: focus, iris). Utilisez 'adjust_param' pour gain, shutter et whiteBalance."
+                return False, f"Paramètre non supporté pour nudge: {param} (supportés: focus uniquement). Utilisez 'adjust_param' pour iris, gain, shutter et whiteBalance."
         except Exception as e:
             return False, f"Erreur lors du nudge: {str(e)}"
     
@@ -366,8 +353,13 @@ class CommandHandler:
                     main_window.increment_whitebalance(camera_id=cam)
                 else:
                     main_window.decrement_whitebalance(camera_id=cam)
+            elif param == "iris":
+                if direction == "up":
+                    main_window.increment_iris(camera_id=cam)
+                else:
+                    main_window.decrement_iris(camera_id=cam)
             else:
-                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: gain, shutter, whiteBalance)"
+                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance)"
             
             return True, None
         except Exception as e:

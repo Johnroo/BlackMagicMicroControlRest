@@ -724,24 +724,40 @@ class BlackmagicFocusController:
                 print(f"Response: {e.response.text}")
             return None
     
-    def set_iris(self, value: float, silent: bool = False) -> bool:
+    def set_iris(self, value: float = None, adjustment_step: int = None, aperture_stop: float = None, aperture_number: int = None, silent: bool = False) -> bool:
         """
         Définit la valeur de l'iris.
         
         Args:
             value: Valeur normalisée de l'iris (0.0 à 1.0)
+            adjustment_step: Valeur signée pour ajustement relatif (ex: 1 pour +1 stop, -1 pour -1 stop)
+            aperture_stop: Valeur d'aperture stop (ex: 2.8, 4.0)
+            aperture_number: Numéro d'aperture (entier)
             silent: Si True, n'affiche pas de message de confirmation
             
         Returns:
             True si la mise à jour a réussi, False sinon
         """
-        if not 0.0 <= value <= 1.0:
+        payload = {}
+        
+        if adjustment_step is not None:
+            payload["adjustmentStep"] = adjustment_step
+        elif aperture_stop is not None:
+            payload["apertureStop"] = aperture_stop
+        elif aperture_number is not None:
+            payload["apertureNumber"] = aperture_number
+        elif value is not None:
+            if not 0.0 <= value <= 1.0:
+                if not silent:
+                    print(f"Erreur: La valeur doit être entre 0.0 et 1.0, reçu: {value}")
+                return False
+            payload["normalised"] = value
+        else:
             if not silent:
-                print(f"Erreur: La valeur doit être entre 0.0 et 1.0, reçu: {value}")
+                print(f"Erreur: Au moins un paramètre doit être fourni (value, adjustment_step, aperture_stop, ou aperture_number)")
             return False
             
         try:
-            payload = {"normalised": value}
             
             if self.debug:
                 print(f"[DEBUG] PUT {self.iris_endpoint}")
@@ -761,7 +777,14 @@ class BlackmagicFocusController:
             
             response.raise_for_status()
             if not silent:
-                print(f"Iris mis à jour avec succès: {value}")
+                if adjustment_step is not None:
+                    print(f"Iris ajusté avec succès: adjustment_step={adjustment_step}")
+                elif aperture_stop is not None:
+                    print(f"Iris mis à jour avec succès: aperture_stop={aperture_stop}")
+                elif aperture_number is not None:
+                    print(f"Iris mis à jour avec succès: aperture_number={aperture_number}")
+                else:
+                    print(f"Iris mis à jour avec succès: {value}")
             return True
         except requests.exceptions.SSLError as e:
             if not silent:
