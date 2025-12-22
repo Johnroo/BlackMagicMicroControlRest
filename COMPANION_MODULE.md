@@ -41,6 +41,7 @@ L'application répondra immédiatement avec un snapshot complet de l'état :
         "iris": 0.55,
         "gain": 12,
         "shutter": 0.02,
+        "whiteBalance": 3200,
         "zoom": 0.0
       },
       "2": {
@@ -49,6 +50,7 @@ L'application répondra immédiatement avec un snapshot complet de l'état :
         "iris": null,
         "gain": null,
         "shutter": null,
+        "whiteBalance": null,
         "zoom": null
       },
       ...
@@ -137,7 +139,7 @@ ou en cas d'erreur :
 
 Définit la valeur d'un paramètre pour une caméra spécifique.
 
-**Paramètres supportés** : `focus`, `iris`, `gain`, `shutter`
+**Paramètres supportés** : `focus`, `iris`, `gain`, `shutter`, `whiteBalance`
 
 ```json
 {
@@ -179,11 +181,22 @@ Définit la valeur d'un paramètre pour une caméra spécifique.
 }
 ```
 
+```json
+{
+  "type": "cmd",
+  "cmd": "set_param",
+  "cam": 3,
+  "param": "whiteBalance",
+  "value": 3200
+}
+```
+
 **Valeurs** :
 - `focus` : 0.0 à 1.0 (float)
 - `iris` : 0.0 à 1.0 (float)
 - `gain` : Valeur entière en dB (doit correspondre à une valeur supportée par la caméra)
 - `shutter` : Valeur entière en fractions de seconde (doit correspondre à une valeur supportée par la caméra)
+- `whiteBalance` : Valeur entière en Kelvin (doit être dans la plage min/max de la caméra, généralement 2000K-10000K)
 
 **Réponse** :
 ```json
@@ -227,9 +240,20 @@ Ajuste un paramètre d'une valeur delta relative.
 }
 ```
 
+```json
+{
+  "type": "cmd",
+  "cmd": "nudge",
+  "cam": 3,
+  "param": "whiteBalance",
+  "delta": 100
+}
+```
+
 **Comportement** :
 - Pour `focus` et `iris` : Le delta est ajouté à la valeur actuelle, puis la valeur est clampée entre 0.0 et 1.0
 - Pour `gain` et `shutter` : Le delta est ajouté à la valeur actuelle, puis la valeur la plus proche parmi les valeurs supportées est sélectionnée
+- Pour `whiteBalance` : Le delta est ajouté à la valeur actuelle, puis la valeur est clampée entre min et max (généralement 2000K-10000K)
 
 **Réponse** :
 ```json
@@ -284,7 +308,7 @@ Sauvegarde les valeurs actuelles d'une caméra dans un preset.
 **Presets** : Numérotés de 1 à 10
 
 **Important** :
-- Cette commande sauvegarde les valeurs **actuelles** de la caméra (focus, iris, gain, shutter, zoom)
+- Cette commande sauvegarde les valeurs **actuelles** de la caméra (focus, iris, gain, shutter, whiteBalance, zoom)
 - Le contenu du preset sauvegardé n'est **pas envoyé** à Companion
 - Companion n'a pas besoin de connaître ce qui a été sauvegardé, seulement de pouvoir le rappeler plus tard avec `recall_preset`
 
@@ -345,6 +369,7 @@ interface CameraState {
   iris: number | null;        // 0.0 à 1.0
   gain: number | null;        // dB (entier)
   shutter: number | null;    // fractions de seconde (entier)
+  whiteBalance: number | null; // Kelvin (entier, généralement 2000K-10000K)
   zoom: number | null;       // 0.0 à 1.0
 }
 ```
@@ -535,6 +560,12 @@ setTimeout(() => {
   
   // Déclencher l'autofocus sur la caméra 2
   module.doAutofocus(2);
+  
+  // Définir le white balance de la caméra 1 à 3200K
+  module.setParam(1, 'whiteBalance', 3200);
+  
+  // Ajuster le white balance de la caméra 2 de +100K
+  module.nudge(2, 'whiteBalance', 100);
 }, 2000);
 ```
 
@@ -554,7 +585,7 @@ Toutes les commandes retournent un `ack` avec `ok: true` en cas de succès, ou `
 
 1. **Toutes les caméras restent actives** : Changer la caméra active (`set_active_cam`) ne désactive pas les autres caméras. Toutes les caméras connectées peuvent être contrôlées simultanément, même si elles ne sont pas affichées dans l'UI.
 
-2. **Valeurs supportées pour gain et shutter** : Les valeurs de `gain` et `shutter` doivent correspondre aux valeurs supportées par la caméra. Ces valeurs sont chargées automatiquement lors de la connexion. Si vous essayez de définir une valeur non supportée, l'application sélectionnera automatiquement la valeur la plus proche.
+2. **Valeurs supportées pour gain, shutter et whiteBalance** : Les valeurs de `gain` et `shutter` doivent correspondre aux valeurs supportées par la caméra. Ces valeurs sont chargées automatiquement lors de la connexion. Si vous essayez de définir une valeur non supportée, l'application sélectionnera automatiquement la valeur la plus proche. Pour `whiteBalance`, la valeur doit être dans la plage min/max de la caméra (généralement 2000K-10000K), qui est également chargée automatiquement lors de la connexion.
 
 3. **Throttling** : L'application gère automatiquement le throttling pour éviter d'envoyer trop de requêtes à la caméra. Pour le focus, il y a un délai de 50ms entre chaque envoi. Pour les autres paramètres, le throttling est de 500ms.
 
