@@ -364,6 +364,16 @@ class MainWindow(QMainWindow):
         cam_data = self.get_active_camera_data()
         if cam_data.url and cam_data.username and cam_data.password:
             self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
+        
+        # Détection du réveil de l'ordinateur pour reconnecter les WebSockets
+        app = QApplication.instance()
+        if app:
+            app.applicationStateChanged.connect(self._on_application_state_changed)
+        
+        # Timer périodique pour vérifier l'état des WebSockets (toutes les 10 secondes)
+        self.websocket_check_timer = QTimer()
+        self.websocket_check_timer.timeout.connect(self._check_websockets_health)
+        self.websocket_check_timer.start(10000)  # 10 secondes
     
     def load_cameras_config(self):
         """Charge la configuration des caméras depuis cameras_config.json."""
@@ -2842,6 +2852,63 @@ class MainWindow(QMainWindow):
         # Mettre à jour le StateStore si des valeurs ont changé
         if update_kwargs:
             self.state_store.update_cam(camera_id, **update_kwargs)
+    
+    def _on_application_state_changed(self, state: Qt.ApplicationState):
+        """
+        Gère les changements d'état de l'application (détection du réveil).
+        
+        Args:
+            state: Nouvel état de l'application (Qt.ApplicationState.ApplicationActive, Qt.ApplicationState.ApplicationSuspended, etc.)
+        """
+        if state == Qt.ApplicationState.ApplicationActive:
+            # L'application vient de repasser en mode actif (réveil)
+            logger.info("Application réveillée, vérification des connexions WebSocket...")
+            self._reconnect_all_websockets()
+    
+    def _reconnect_all_websockets(self):
+        """
+        Reconnecte tous les WebSockets pour les caméras connectées.
+        Appelée au réveil de l'ordinateur ou lors de la vérification périodique.
+        """
+        for camera_id in range(1, 9):
+            cam_data = self.cameras[camera_id]
+            if cam_data.connected and cam_data.url and cam_data.username and cam_data.password:
+                # Vérifier si le WebSocket est mort ou manquant
+                if cam_data.websocket_client:
+                    if not cam_data.websocket_client.is_connected():
+                        logger.info(f"WebSocket mort détecté pour la caméra {camera_id}, reconnexion...")
+                        # Arrêter l'ancien WebSocket
+                        cam_data.websocket_client.stop()
+                        cam_data.websocket_client = None
+                        # Reconnecter
+                        self.connect_websocket(camera_id)
+                    # else: WebSocket est connecté, rien à faire
+                else:
+                    # Pas de WebSocket mais caméra connectée, créer un nouveau
+                    logger.info(f"Pas de WebSocket pour la caméra {camera_id} (mais connectée), création...")
+                    self.connect_websocket(camera_id)
+    
+    def _check_websockets_health(self):
+        """
+        Vérifie périodiquement l'état de tous les WebSockets et reconnecte ceux qui sont morts.
+        Appelée toutes les 10 secondes par un QTimer.
+        """
+        for camera_id in range(1, 9):
+            cam_data = self.cameras[camera_id]
+            if cam_data.connected:
+                # Vérifier si le WebSocket existe et est connecté
+                if cam_data.websocket_client:
+                    if not cam_data.websocket_client.is_connected():
+                        logger.warning(f"WebSocket mort détecté pour la caméra {camera_id} lors de la vérification périodique, reconnexion...")
+                        # Arrêter l'ancien WebSocket
+                        cam_data.websocket_client.stop()
+                        cam_data.websocket_client = None
+                        # Reconnecter
+                        self.connect_websocket(camera_id)
+                else:
+                    # Pas de WebSocket mais caméra connectée, créer un nouveau
+                    logger.warning(f"Pas de WebSocket pour la caméra {camera_id} (mais connectée), création...")
+                    self.connect_websocket(camera_id)
     
     def load_initial_values(self, camera_id: int):
         """Charge les valeurs initiales depuis la caméra spécifiée."""

@@ -53,7 +53,7 @@ class BlackmagicWebSocketClient:
         self.on_connection_status_callback = on_connection_status_callback
         self.websocket: Optional[WebSocketClientProtocol] = None
         self.running = False
-        self.reconnect_delay = 5  # Secondes avant reconnexion
+        self.reconnect_delay = 2  # Secondes avant reconnexion (réduit de 5s à 2s)
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.logger = logging.getLogger(__name__)
@@ -83,6 +83,15 @@ class BlackmagicWebSocketClient:
             asyncio.run_coroutine_threadsafe(self._close_websocket(), self.loop)
         if self.thread:
             self.thread.join(timeout=2)
+    
+    def is_connected(self) -> bool:
+        """
+        Vérifie si le WebSocket est connecté.
+        
+        Returns:
+            True si le WebSocket existe et n'est pas None, False sinon
+        """
+        return self.websocket is not None
     
     def _run_event_loop(self):
         """Exécute la boucle d'événements asyncio dans un thread séparé."""
@@ -127,8 +136,8 @@ class BlackmagicWebSocketClient:
                             self.ws_url,
                             additional_headers=additional_headers,
                             ssl=None if 'ws://' in self.ws_url else ssl.create_default_context(),
-                            ping_interval=None,
-                            ping_timeout=None
+                            ping_interval=30,  # Ping toutes les 30 secondes pour détecter les connexions mortes
+                            ping_timeout=10  # Timeout de 10 secondes pour la réponse pong
                         ),
                         timeout=10.0
                     )
@@ -188,6 +197,15 @@ class BlackmagicWebSocketClient:
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Connexion fermée (code: {e.code})")
+                        except Exception:
+                            pass
+                    await asyncio.sleep(self.reconnect_delay)
+            except websockets.exceptions.ConnectionClosedError as e:
+                if self.running:
+                    self.logger.warning(f"Erreur de connexion WebSocket fermée: {e}, reconnexion dans {self.reconnect_delay}s...")
+                    if self.on_connection_status_callback:
+                        try:
+                            self.on_connection_status_callback(False, f"Erreur de connexion: {e}")
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
