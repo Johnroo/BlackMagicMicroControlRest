@@ -917,6 +917,33 @@ class MainWindow(QMainWindow):
         # Utiliser un stretch factor élevé pour garantir qu'il prend le maximum d'espace
         layout.addWidget(slider_container, stretch=1, alignment=Qt.AlignCenter)
         
+        # Bouton Autofocus (juste en dessous du fader)
+        self.autofocus_btn = QPushButton("🔍 Autofocus")
+        self.autofocus_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 2px solid #555;
+                border-radius: 8px;
+                background-color: #333;
+                color: #fff;
+                margin-top: 10px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """)
+        self.autofocus_btn.clicked.connect(lambda: self.do_autofocus())
+        layout.addWidget(self.autofocus_btn)
+        
         # Stocker slider_container pour pouvoir le forcer à une hauteur
         panel.slider_container = slider_container
         panel.focus_slider = self.focus_slider
@@ -932,19 +959,21 @@ class MainWindow(QMainWindow):
                 # Obtenir les hauteurs réelles des éléments
                 title = layout.itemAt(0).widget() if layout.count() > 0 else None
                 focus_display = layout.itemAt(1).widget() if layout.count() > 1 else None
+                autofocus_btn = self.autofocus_btn if hasattr(self, 'autofocus_btn') else None
                 
                 title_height = title.height() if title else 40
                 display_height = focus_display.height() if focus_display else 80
+                autofocus_height = autofocus_btn.height() if autofocus_btn else 50
                 
                 # Marges du layout (top + bottom)
                 layout_margins = layout.contentsMargins()
                 margins_height = layout_margins.top() + layout_margins.bottom()
                 
-                # Espacement entre les widgets
-                spacing = layout.spacing() * 2  # Espacement avant et après le slider
+                # Espacement entre les widgets (slider et autofocus, slider et display)
+                spacing = layout.spacing() * 3  # Espacement avant slider, après slider, après autofocus
                 
                 # Calculer la hauteur disponible
-                available_height = panel_height - title_height - display_height - margins_height - spacing
+                available_height = panel_height - title_height - display_height - autofocus_height - margins_height - spacing
                 
                 # S'assurer qu'on a au moins une hauteur minimale raisonnable
                 available_height = max(200, available_height)
@@ -2182,34 +2211,6 @@ class MainWindow(QMainWindow):
         """)
         self.cleanfeed_toggle.clicked.connect(self.toggle_cleanfeed)
         layout.addWidget(self.cleanfeed_toggle)
-        
-        # Bouton Autofocus
-        self.autofocus_btn = QPushButton("🔍 Autofocus")
-        self.autofocus_btn.setStyleSheet("""
-            QPushButton {
-                width: 100%;
-                padding: 10px;
-                font-size: 11px;
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 8px;
-                background-color: #333;
-                color: #fff;
-                margin-top: 10px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-            QPushButton:disabled {
-                opacity: 0.5;
-            }
-        """)
-        self.autofocus_btn.clicked.connect(lambda: self.do_autofocus())
-        layout.addWidget(self.autofocus_btn)
         
         # Bouton pour activer/désactiver la transition progressive
         self.smooth_transition_toggle = QPushButton("Transition\nProgressive\nOFF")

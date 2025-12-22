@@ -6,11 +6,11 @@
     "password": "koko",
     "presets": {
       "preset_1": {
-        "focus": 0.7570532560348511,
+        "focus": 0.760188102722168,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 60,
-        "whitebalance": 3900,
+        "gain": 6,
+        "shutter": 50,
+        "whitebalance": 4100,
         "zoom": 0.0
       },
       "preset_2": {
