@@ -259,6 +259,7 @@ class BlackmagicWebSocketClient:
                         "/lens/zoom",
                         "/video/gain",
                         "/video/shutter",
+                        "/video/whiteBalance",
                         "/monitoring/HDMI/zebra",
                         "/monitoring/HDMI/focusAssist",
                         "/monitoring/HDMI/falseColor"
@@ -317,6 +318,9 @@ class BlackmagicWebSocketClient:
                     elif '/video/shutter' in prop_path:
                         param_type = 'shutter'
                         param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                    elif '/video/whiteBalance' in prop_path:
+                        param_type = 'whiteBalance'
+                        param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalance': prop_value}
                     elif '/monitoring/HDMI/zebra' in prop_path or '/video/zebra' in prop_path:
                         param_type = 'zebra'
                         param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
@@ -379,6 +383,9 @@ class BlackmagicWebSocketClient:
                             elif '/video/shutter' in prop_path:
                                 param_type = 'shutter'
                                 param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                            elif '/video/whiteBalance' in prop_path:
+                                param_type = 'whiteBalance'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalance': prop_value}
                             elif '/monitoring/HDMI/zebra' in prop_path or '/video/zebra' in prop_path:
                                 param_type = 'zebra'
                                 param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
@@ -430,6 +437,9 @@ class BlackmagicFocusController:
         self.shutter_endpoint = f"{self.base_url}/control/api/v1/video/shutter"
         self.shutter_measurement_endpoint = f"{self.base_url}/control/api/v1/video/shutter/measurement"
         self.supported_shutters_endpoint = f"{self.base_url}/control/api/v1/video/supportedShutters"
+        self.whitebalance_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance"
+        self.whitebalance_description_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/description"
+        self.whitebalance_auto_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/doAuto"
         self.display_name = "HDMI"  # Display name fixe selon la documentation
         self.zebra_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/zebra"
         self.focus_assist_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/focusAssist"
@@ -1328,6 +1338,195 @@ class BlackmagicFocusController:
         except requests.exceptions.RequestException as e:
             if not silent:
                 print(f"Erreur lors de la mise à jour du Cleanfeed: {e}")
+            return False
+    
+    def get_whitebalance(self) -> Optional[int]:
+        """
+        Récupère la valeur actuelle du white balance.
+        
+        Returns:
+            La température de couleur en Kelvin (integer) ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.whitebalance_endpoint}")
+            
+            response = self.session.get(
+                self.whitebalance_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            return data.get('whiteBalance')
+        except requests.exceptions.SSLError as e:
+            print(f"Erreur SSL lors de la récupération du white balance: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"Erreur de connexion lors de la récupération du white balance: {e}")
+            print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la récupération du white balance: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Status code: {e.response.status_code}")
+                print(f"Response: {e.response.text}")
+            return None
+    
+    def get_whitebalance_description(self) -> Optional[dict]:
+        """
+        Récupère la plage de white balance supportée.
+        
+        Returns:
+            Dictionnaire avec whiteBalance.min et whiteBalance.max, ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.whitebalance_description_endpoint}")
+            
+            response = self.session.get(
+                self.whitebalance_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            whitebalance_info = data.get('whiteBalance', {})
+            return {
+                'min': whitebalance_info.get('min'),
+                'max': whitebalance_info.get('max')
+            }
+        except requests.exceptions.SSLError as e:
+            print(f"Erreur SSL lors de la récupération de la description du white balance: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"Erreur de connexion lors de la récupération de la description du white balance: {e}")
+            print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_description_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la récupération de la description du white balance: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Status code: {e.response.status_code}")
+                print(f"Response: {e.response.text}")
+            return None
+    
+    def set_whitebalance(self, value: int, silent: bool = False) -> bool:
+        """
+        Définit la valeur du white balance.
+        
+        Args:
+            value: Température de couleur en Kelvin (integer)
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si la mise à jour a réussi, False sinon
+        """
+        try:
+            payload = {"whiteBalance": value}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {self.whitebalance_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+            
+            response = self.session.put(
+                self.whitebalance_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+            
+            # Le code 204 (No Content) indique le succès selon la documentation
+            if response.status_code == 204:
+                if not silent:
+                    print(f"White balance mis à jour: {value}K")
+                return True
+            else:
+                response.raise_for_status()
+                if not silent:
+                    print(f"White balance mis à jour: {value}K")
+                return True
+        except requests.exceptions.SSLError as e:
+            if not silent:
+                print(f"Erreur SSL lors de la mise à jour du white balance: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            if not silent:
+                print(f"Erreur de connexion lors de la mise à jour du white balance: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            if not silent:
+                print(f"Erreur lors de la mise à jour du white balance: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    status_code = e.response.status_code
+                    print(f"Status code: {status_code}")
+                    if status_code == 400:
+                        print("Erreur: Température de white balance invalide (400)")
+                    print(f"Response: {e.response.text}")
+            return False
+    
+    def do_auto_whitebalance(self, silent: bool = False) -> bool:
+        """
+        Déclenche l'auto white balance.
+        
+        Args:
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si l'auto white balance a été déclenché avec succès, False sinon
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] PUT {self.whitebalance_auto_endpoint}")
+            
+            response = self.session.put(
+                self.whitebalance_auto_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            # Le code 204 (No Content) indique le succès selon la documentation
+            if response.status_code == 204:
+                if not silent:
+                    print("Auto white balance déclenché")
+                return True
+            else:
+                response.raise_for_status()
+                if not silent:
+                    print("Auto white balance déclenché")
+                return True
+        except requests.exceptions.SSLError as e:
+            if not silent:
+                print(f"Erreur SSL lors du déclenchement de l'auto white balance: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            if not silent:
+                print(f"Erreur de connexion lors du déclenchement de l'auto white balance: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_auto_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            if not silent:
+                print(f"Erreur lors du déclenchement de l'auto white balance: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
             return False
     
     def _polling_loop(self):

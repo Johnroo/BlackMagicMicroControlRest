@@ -51,6 +51,10 @@ class CameraData:
     gain_actual_value: int = 0
     shutter_sent_value: int = 0
     shutter_actual_value: int = 0
+    whitebalance_sent_value: int = 0
+    whitebalance_actual_value: int = 0
+    whitebalance_min: int = 0
+    whitebalance_max: int = 0
     zoom_sent_value: float = 0.0
     zoom_actual_value: float = 0.0
     
@@ -74,7 +78,8 @@ class CameraData:
         'focus': False,
         'iris': False,
         'gain': False,
-        'shutter': False
+        'shutter': False,
+        'whitebalance': False
     })
     
     # Crossfade duration - durée du crossfade entre presets en secondes
@@ -97,6 +102,7 @@ class CameraSignals(QObject):
     focusAssist_changed = Signal(bool)
     falseColor_changed = Signal(bool)
     cleanfeed_changed = Signal(bool)
+    whitebalance_changed = Signal(int)
     websocket_status = Signal(bool, str)
 
 
@@ -316,6 +322,9 @@ class MainWindow(QMainWindow):
         self.iris_slider_user_touching = False  # True seulement quand l'utilisateur touche physiquement le slider
         self.iris_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         
+        # Variables pour white balance
+        self.whitebalance_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
+        
         # Variables pour la répétition des touches flèches
         self.key_repeat_timer = None
         self.key_repeat_direction = None  # 'up' ou 'down'
@@ -416,11 +425,12 @@ class MainWindow(QMainWindow):
                         'focus': False,
                         'iris': False,
                         'gain': False,
-                        'shutter': False
+                        'shutter': False,
+                        'whitebalance': False
                     }
                     recall_scope = cam_config.get("recall_scope", default_recall_scope)
                     # S'assurer que tous les paramètres sont présents
-                    for param in ['focus', 'iris', 'gain', 'shutter']:
+                    for param in ['focus', 'iris', 'gain', 'shutter', 'whitebalance']:
                         if param not in recall_scope:
                             recall_scope[param] = False
                     
@@ -559,6 +569,7 @@ class MainWindow(QMainWindow):
         self.focus_panel = self.create_focus_panel()
         self.iris_panel = self.create_iris_panel()
         self.gain_panel = self.create_gain_panel()
+        self.whitebalance_panel = self.create_whitebalance_panel()
         self.shutter_panel = self.create_shutter_panel()
         self.zoom_panel = self.create_zoom_panel()
         self.presets_panel = self.create_presets_panel()
@@ -568,6 +579,7 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.focus_panel)
         central_layout.addWidget(self.iris_panel)
         central_layout.addWidget(self.gain_panel)
+        central_layout.addWidget(self.whitebalance_panel)
         
         # Conteneur vertical pour shutter et zoom (zoom en dessous de shutter)
         shutter_zoom_container = QWidget()
@@ -736,6 +748,14 @@ class MainWindow(QMainWindow):
         self.shutter_sent_value = cam_data.shutter_sent_value
         self.shutter_actual_value = cam_data.shutter_actual_value
         # TODO: Mettre à jour les widgets shutter
+        
+        # White Balance
+        self.whitebalance_sent_value = cam_data.whitebalance_sent_value
+        self.whitebalance_actual_value = cam_data.whitebalance_actual_value
+        if hasattr(self, 'whitebalance_value_sent'):
+            self.whitebalance_value_sent.setText(f"{cam_data.whitebalance_sent_value}K")
+        if hasattr(self, 'whitebalance_value_actual'):
+            self.whitebalance_value_actual.setText(f"{cam_data.whitebalance_actual_value}K")
         
         # Zoom
         self.zoom_sent_value = cam_data.zoom_sent_value
@@ -1371,6 +1391,147 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
     
+    def create_whitebalance_panel(self):
+        """Crée le panneau de contrôle du white balance."""
+        panel = QWidget()
+        panel.setFixedWidth(200)
+        panel.setStyleSheet("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """)
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(15)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        title = QLabel("White Balance")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 20px; color: #fff;")
+        layout.addWidget(title)
+        
+        # Section d'affichage
+        wb_display = QWidget()
+        wb_display_layout = QVBoxLayout(wb_display)
+        wb_display_layout.setSpacing(10)
+        
+        wb_label = QLabel("Température (K)")
+        wb_label.setAlignment(Qt.AlignCenter)
+        wb_label.setStyleSheet("font-size: 10px; color: #aaa; text-transform: uppercase;")
+        wb_display_layout.addWidget(wb_label)
+        
+        # Container pour les valeurs (vertical : envoyé au-dessus de réel)
+        value_container = QWidget()
+        value_container.setFixedWidth(90)
+        value_layout = QVBoxLayout(value_container)
+        value_layout.setSpacing(5)
+        value_layout.setContentsMargins(5, 0, 5, 0)
+        
+        # Valeur envoyée
+        sent_label = QLabel("Envoyé")
+        sent_label.setAlignment(Qt.AlignCenter)
+        sent_label.setStyleSheet("font-size: 9px; color: #888;")
+        value_layout.addWidget(sent_label)
+        self.whitebalance_value_sent = QLabel("0K")
+        self.whitebalance_value_sent.setAlignment(Qt.AlignCenter)
+        self.whitebalance_value_sent.setStyleSheet("font-size: 12px; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        value_layout.addWidget(self.whitebalance_value_sent)
+        
+        # Espacement
+        value_layout.addSpacing(5)
+        
+        # Valeur réelle
+        actual_label = QLabel("Réel (GET)")
+        actual_label.setAlignment(Qt.AlignCenter)
+        actual_label.setStyleSheet("font-size: 9px; color: #888;")
+        value_layout.addWidget(actual_label)
+        self.whitebalance_value_actual = QLabel("0K")
+        self.whitebalance_value_actual.setAlignment(Qt.AlignCenter)
+        self.whitebalance_value_actual.setStyleSheet("font-size: 12px; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        value_layout.addWidget(self.whitebalance_value_actual)
+        
+        wb_display_layout.addWidget(value_container)
+        layout.addWidget(wb_display)
+        
+        # Boutons de contrôle
+        buttons_container = QWidget()
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setSpacing(15)
+        buttons_layout.setContentsMargins(0, 30, 0, 30)
+        
+        self.whitebalance_plus_btn = QPushButton("+")
+        self.whitebalance_plus_btn.setFixedSize(60, 60)
+        self.whitebalance_plus_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #333;
+                color: #fff;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+        """)
+        self.whitebalance_plus_btn.clicked.connect(self.increment_whitebalance)
+        buttons_layout.addWidget(self.whitebalance_plus_btn, alignment=Qt.AlignCenter)
+        
+        self.whitebalance_minus_btn = QPushButton("-")
+        self.whitebalance_minus_btn.setFixedSize(60, 60)
+        self.whitebalance_minus_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #333;
+                color: #fff;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+        """)
+        self.whitebalance_minus_btn.clicked.connect(self.decrement_whitebalance)
+        buttons_layout.addWidget(self.whitebalance_minus_btn, alignment=Qt.AlignCenter)
+        
+        # Bouton Auto
+        self.whitebalance_auto_btn = QPushButton("Auto")
+        self.whitebalance_auto_btn.setFixedSize(80, 40)
+        self.whitebalance_auto_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 14px;
+                font-weight: bold;
+                border: 2px solid #555;
+                background-color: #0a5;
+                color: #fff;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #095;
+            }
+        """)
+        self.whitebalance_auto_btn.clicked.connect(self.do_auto_whitebalance)
+        buttons_layout.addWidget(self.whitebalance_auto_btn, alignment=Qt.AlignCenter)
+        
+        layout.addWidget(buttons_container)
+        
+        layout.addStretch()
+        return panel
+    
     def load_supported_gains(self, camera_id: int):
         """Charge la liste des gains supportés pour la caméra spécifiée."""
         if camera_id < 1 or camera_id > 8:
@@ -1448,6 +1609,115 @@ class MainWindow(QMainWindow):
                 logger.error(f"Erreur lors de l'envoi du gain")
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi du gain: {e}")
+    
+    def load_whitebalance_description(self, camera_id: int):
+        """Charge la plage min/max du white balance pour la caméra spécifiée."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        if not cam_data.controller:
+            return
+        try:
+            desc = cam_data.controller.get_whitebalance_description()
+            if desc:
+                cam_data.whitebalance_min = desc.get('min', 0)
+                cam_data.whitebalance_max = desc.get('max', 0)
+                logger.info(f"Caméra {camera_id} - White balance range chargé: {cam_data.whitebalance_min}K - {cam_data.whitebalance_max}K")
+        except Exception as e:
+            logger.error(f"Caméra {camera_id} - Erreur lors du chargement de la description du white balance: {e}")
+    
+    def increment_whitebalance(self):
+        """Incrémente le white balance de 100K pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
+        if current_value == 0:
+            current_value = 3200  # Valeur par défaut si pas encore chargée
+        
+        increment = 100  # Incrément de 100K
+        new_value = current_value + increment
+        
+        # Vérifier les limites
+        if cam_data.whitebalance_max > 0 and new_value > cam_data.whitebalance_max:
+            new_value = cam_data.whitebalance_max
+        
+        self.update_whitebalance_value(new_value)
+    
+    def decrement_whitebalance(self):
+        """Décrémente le white balance de 100K pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
+        if current_value == 0:
+            current_value = 3200  # Valeur par défaut si pas encore chargée
+        
+        decrement = 100  # Décrément de 100K
+        new_value = current_value - decrement
+        
+        # Vérifier les limites
+        if cam_data.whitebalance_min > 0 and new_value < cam_data.whitebalance_min:
+            new_value = cam_data.whitebalance_min
+        
+        self.update_whitebalance_value(new_value)
+    
+    def update_whitebalance_value(self, value: int):
+        """Met à jour la valeur du white balance pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        cam_data.whitebalance_sent_value = value
+        self.whitebalance_value_sent.setText(f"{value}K")
+        self._send_whitebalance_value_now(value)
+    
+    def _send_whitebalance_value_now(self, value: int):
+        """Envoie la valeur du white balance avec gestion du lock."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Vérifier si un envoi est déjà en cours
+        if hasattr(self, 'whitebalance_sending') and self.whitebalance_sending:
+            return
+        
+        self.whitebalance_sending = True
+        
+        try:
+            success = cam_data.controller.set_whitebalance(value, silent=True)
+            if not success:
+                logger.error(f"Erreur lors de l'envoi du white balance")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi du white balance: {e}")
+        finally:
+            # Attendre 50ms après l'envoi avant de permettre le suivant
+            QTimer.singleShot(50, self._on_whitebalance_send_complete)
+    
+    def _on_whitebalance_send_complete(self):
+        """Callback après l'envoi du white balance."""
+        self.whitebalance_sending = False
+    
+    def do_auto_whitebalance(self):
+        """Déclenche l'auto white balance pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        try:
+            success = cam_data.controller.do_auto_whitebalance(silent=True)
+            if not success:
+                logger.error(f"Erreur lors du déclenchement de l'auto white balance")
+        except Exception as e:
+            logger.error(f"Erreur lors du déclenchement de l'auto white balance: {e}")
+    
+    def on_whitebalance_changed(self, value: int):
+        """Callback appelé quand le white balance change via WebSocket."""
+        cam_data = self.get_active_camera_data()
+        cam_data.whitebalance_actual_value = value
+        
+        # Mettre à jour l'UI
+        self.whitebalance_value_actual.setText(f"{value}K")
     
     def create_shutter_panel(self):
         """Crée le panneau de contrôle du shutter."""
@@ -2155,6 +2425,30 @@ class MainWindow(QMainWindow):
         recall_scope_container.addWidget(shutter_checkbox)
         self.recall_scope_checkboxes['shutter'] = shutter_checkbox
         
+        # Checkbox White Balance
+        whitebalance_checkbox = QPushButton("☐ White Balance")
+        whitebalance_checkbox.setCheckable(True)
+        whitebalance_checkbox.setChecked(False)
+        whitebalance_checkbox.setStyleSheet("""
+            QPushButton {
+                font-size: 10px;
+                color: #aaa;
+                background-color: transparent;
+                border: none;
+                padding: 5px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                color: #fff;
+            }
+            QPushButton:checked {
+                color: #0ff;
+            }
+        """)
+        whitebalance_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('whitebalance', checked))
+        recall_scope_container.addWidget(whitebalance_checkbox)
+        self.recall_scope_checkboxes['whitebalance'] = whitebalance_checkbox
+        
         layout.addLayout(recall_scope_container)
         
         layout.addStretch()
@@ -2409,6 +2703,7 @@ class MainWindow(QMainWindow):
         self.signals.shutter_changed.connect(self.on_shutter_changed)
         self.signals.zoom_changed.connect(self.on_zoom_changed)
         self.signals.zebra_changed.connect(self.on_zebra_changed)
+        self.signals.whitebalance_changed.connect(self.on_whitebalance_changed)
         self.signals.focusAssist_changed.connect(self.on_focusAssist_changed)
         self.signals.falseColor_changed.connect(self.on_falseColor_changed)
         self.signals.cleanfeed_changed.connect(self.on_cleanfeed_changed)
@@ -2480,6 +2775,7 @@ class MainWindow(QMainWindow):
             # Charger les gains et shutters supportés (toujours nécessaires)
             self.load_supported_gains(camera_id)
             self.load_supported_shutters(camera_id)
+            self.load_whitebalance_description(camera_id)
             
             # TEMPORAIRE: Charger aussi les valeurs initiales via GET pour s'assurer qu'on a les bonnes valeurs
             # TODO: Retirer cette ligne une fois que le WebSocket fournit correctement les valeurs initiales
@@ -2729,6 +3025,11 @@ class MainWindow(QMainWindow):
         self.shutter_plus_btn.setEnabled(enabled)
         self.shutter_minus_btn.setEnabled(enabled)
         
+        # White Balance
+        self.whitebalance_plus_btn.setEnabled(enabled)
+        self.whitebalance_minus_btn.setEnabled(enabled)
+        self.whitebalance_auto_btn.setEnabled(enabled)
+        
         # Toggles
         self.zebra_toggle.setEnabled(enabled)
         self.focusAssist_toggle.setEnabled(enabled)
@@ -2815,6 +3116,13 @@ class MainWindow(QMainWindow):
                 update_kwargs['shutter'] = value
             if camera_id == self.active_camera_id:
                 self.signals.shutter_changed.emit(data)
+        elif param_name == 'whiteBalance':
+            if 'whiteBalance' in data:
+                value = int(data['whiteBalance'])
+                cam_data.whitebalance_actual_value = value
+                update_kwargs['whiteBalance'] = value
+                if camera_id == self.active_camera_id:
+                    self.signals.whitebalance_changed.emit(value)
         elif param_name == 'zebra':
             if 'enabled' in data:
                 # TOUJOURS mettre à jour les données de la caméra
@@ -2975,6 +3283,14 @@ class MainWindow(QMainWindow):
                 if camera_id == self.active_camera_id:
                     self.on_shutter_changed(shutter_data)
             
+            # White Balance
+            whitebalance_value = cam_data.controller.get_whitebalance()
+            if whitebalance_value is not None:
+                cam_data.whitebalance_actual_value = whitebalance_value
+                cam_data.whitebalance_sent_value = whitebalance_value
+                if camera_id == self.active_camera_id:
+                    self.on_whitebalance_changed(whitebalance_value)
+            
             # Zoom
             zoom_data = cam_data.controller.get_zoom()
             if zoom_data:
@@ -3027,12 +3343,14 @@ class MainWindow(QMainWindow):
                 update_kwargs['gain'] = cam_data.gain_actual_value
             if cam_data.shutter_actual_value is not None:
                 update_kwargs['shutter'] = cam_data.shutter_actual_value
+            if cam_data.whitebalance_actual_value is not None:
+                update_kwargs['whiteBalance'] = cam_data.whitebalance_actual_value
             if update_kwargs:
                 self.state_store.update_cam(camera_id, **update_kwargs)
             
             # Marquer que les valeurs initiales ont été chargées via GET
             cam_data.initial_values_received = True
-            logger.info(f"Valeurs initiales chargées pour la caméra {camera_id}: focus={cam_data.focus_actual_value}, iris={cam_data.iris_actual_value}, gain={cam_data.gain_actual_value}, shutter={cam_data.shutter_actual_value}")
+            logger.info(f"Valeurs initiales chargées pour la caméra {camera_id}: focus={cam_data.focus_actual_value}, iris={cam_data.iris_actual_value}, gain={cam_data.gain_actual_value}, shutter={cam_data.shutter_actual_value}, whitebalance={cam_data.whitebalance_actual_value}")
         except Exception as e:
             logger.error(f"Erreur lors du chargement des valeurs initiales pour la caméra {camera_id}: {e}")
             import traceback
@@ -3291,6 +3609,7 @@ class MainWindow(QMainWindow):
                 "iris": cam_data.iris_actual_value,
                 "gain": cam_data.gain_actual_value,
                 "shutter": cam_data.shutter_actual_value,
+                "whitebalance": cam_data.whitebalance_actual_value,
                 "zoom": 0.0  # Valeur par défaut si non disponible
             }
             
@@ -3391,6 +3710,11 @@ class MainWindow(QMainWindow):
         if 'shutter' in preset_data:
             shutter_value = int(preset_data['shutter'])
             self.update_shutter_value(shutter_value)
+        
+        # White Balance - toujours instantané
+        if 'whitebalance' in preset_data:
+            whitebalance_value = int(preset_data['whitebalance'])
+            self.update_whitebalance_value(whitebalance_value)
         
         # Zoom - toujours instantané
         if 'zoom' in preset_data:
