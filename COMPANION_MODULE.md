@@ -38,7 +38,7 @@ L'application répondra immédiatement avec un snapshot complet de l'état :
       "1": {
         "connected": true,
         "focus": 0.12,
-        "iris": 0.55,
+        "iris": 2.8,
         "gain": 12,
         "shutter": 0.02,
         "whiteBalance": 3200,
@@ -193,7 +193,7 @@ Définit la valeur d'un paramètre pour une caméra spécifique.
 
 **Valeurs** :
 - `focus` : 0.0 à 1.0 (float)
-- `iris` : 0.0 à 1.0 (float)
+- `iris` : 0.0 à 1.0 (float) - **Note** : Dans les snapshots et patchs, `iris` est envoyé en aperture stop (f/2.8, f/4, etc.) au lieu de la valeur normalisée. Pour `set_param`, utilisez toujours la valeur normalisée (0.0-1.0).
 - `gain` : Valeur entière en dB (doit correspondre à une valeur supportée par la caméra)
 - `shutter` : Valeur entière en fractions de seconde (doit correspondre à une valeur supportée par la caméra)
 - `whiteBalance` : Valeur entière en Kelvin (doit être dans la plage min/max de la caméra, généralement 2000K-10000K)
@@ -251,7 +251,8 @@ Ajuste un paramètre d'une valeur delta relative.
 ```
 
 **Comportement** :
-- Pour `focus` et `iris` : Le delta est ajouté à la valeur actuelle, puis la valeur est clampée entre 0.0 et 1.0
+- Pour `focus` : Le delta est ajouté à la valeur actuelle (normalisée), puis la valeur est clampée entre 0.0 et 1.0
+- Pour `iris` : Le delta est ajouté à la valeur actuelle (normalisée 0.0-1.0), puis la valeur est clampée entre 0.0 et 1.0. **Note** : Même si Companion reçoit l'aperture stop dans les snapshots/patchs, le delta pour `nudge` doit être en valeur normalisée (ex: 0.01 pour un petit ajustement).
 - Pour `gain` et `shutter` : Le delta est ajouté à la valeur actuelle, puis la valeur la plus proche parmi les valeurs supportées est sélectionnée
 - Pour `whiteBalance` : Le delta est ajouté à la valeur actuelle, puis la valeur est clampée entre min et max (généralement 2000K-10000K)
 
@@ -358,6 +359,44 @@ ou en cas d'erreur :
 }
 ```
 
+### 7. `do_autowhitebalance`
+
+Déclenche l'auto white balance sur une caméra spécifique.
+
+```json
+{
+  "type": "cmd",
+  "cmd": "do_autowhitebalance",
+  "cam": 3
+}
+```
+
+**Paramètres** :
+- `cam` : Numéro de la caméra (1-8)
+
+**Comportement** :
+- Déclenche l'auto white balance sur la caméra spécifiée
+- L'auto white balance peut prendre quelques secondes à se terminer
+- La nouvelle valeur de white balance sera automatiquement reçue via les patchs WebSocket normaux après l'auto white balance
+- L'ack est renvoyé immédiatement après l'envoi de la commande à la caméra (ne pas attendre la fin de l'auto white balance)
+
+**Réponse** :
+```json
+{
+  "type": "ack",
+  "ok": true
+}
+```
+
+ou en cas d'erreur :
+```json
+{
+  "type": "ack",
+  "ok": false,
+  "error": "Caméra 3 non connectée"
+}
+```
+
 ## Structure de données
 
 ### État d'une caméra
@@ -366,7 +405,7 @@ ou en cas d'erreur :
 interface CameraState {
   connected: boolean;
   focus: number | null;      // 0.0 à 1.0
-  iris: number | null;        // 0.0 à 1.0
+  iris: number | null;        // Aperture stop (f/2.8, f/4, etc.) - pas la valeur normalisée
   gain: number | null;        // dB (entier)
   shutter: number | null;    // fractions de seconde (entier)
   whiteBalance: number | null; // Kelvin (entier, généralement 2000K-10000K)
@@ -537,6 +576,13 @@ class CompanionModule {
     });
   }
 
+  doAutowhitebalance(cam) {
+    this.sendCommand({
+      cmd: 'do_autowhitebalance',
+      cam: cam
+    });
+  }
+
   onStateUpdate() {
     // Callback appelé quand l'état est mis à jour
     // À implémenter selon les besoins du module Companion
@@ -560,6 +606,9 @@ setTimeout(() => {
   
   // Déclencher l'autofocus sur la caméra 2
   module.doAutofocus(2);
+  
+  // Déclencher l'auto white balance sur la caméra 1
+  module.doAutowhitebalance(1);
   
   // Définir le white balance de la caméra 1 à 3200K
   module.setParam(1, 'whiteBalance', 3200);

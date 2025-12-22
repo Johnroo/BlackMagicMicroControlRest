@@ -47,6 +47,7 @@ class CameraData:
     focus_actual_value: float = 0.0
     iris_sent_value: float = 0.0
     iris_actual_value: float = 0.0
+    iris_aperture_stop: Optional[float] = None  # Aperture stop (f/2.8, f/4, etc.) pour Companion
     gain_sent_value: int = 0
     gain_actual_value: int = 0
     shutter_sent_value: int = 0
@@ -1741,10 +1742,20 @@ class MainWindow(QMainWindow):
         """Callback après l'envoi du white balance."""
         self.whitebalance_sending = False
     
-    def do_auto_whitebalance(self):
-        """Déclenche l'auto white balance pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def do_auto_whitebalance(self, camera_id: Optional[int] = None):
+        """Déclenche l'auto white balance pour la caméra spécifiée ou la caméra active."""
+        # Utiliser la caméra spécifiée ou la caméra active
+        if camera_id is None or camera_id is False:
+            camera_id = self.active_camera_id
+        
+        # Vérifier que camera_id est un entier valide
+        if not isinstance(camera_id, int) or camera_id < 1 or camera_id > 8:
+            logger.warning(f"ID de caméra invalide pour auto white balance: {camera_id}")
+            return
+        
+        cam_data = self.cameras[camera_id]
         if not cam_data.connected or not cam_data.controller:
+            logger.warning(f"Caméra {camera_id} non connectée pour auto white balance")
             return
         
         try:
@@ -3079,7 +3090,13 @@ class MainWindow(QMainWindow):
             logger.debug(f"WebSocket iris reçu pour caméra {camera_id}: {data}")
             if 'normalised' in data:
                 cam_data.iris_actual_value = float(data['normalised'])
-                update_kwargs['iris'] = cam_data.iris_actual_value
+            # Stocker l'aperture stop pour Companion (au lieu de la valeur normalisée)
+            if 'apertureStop' in data:
+                cam_data.iris_aperture_stop = float(data['apertureStop'])
+                update_kwargs['iris'] = cam_data.iris_aperture_stop
+            elif cam_data.iris_aperture_stop is not None:
+                # Si pas d'aperture stop dans les données mais qu'on en a déjà une, la garder
+                update_kwargs['iris'] = cam_data.iris_aperture_stop
             # Toujours émettre le signal pour mettre à jour l'UI, même si 'normalised' n'est pas présent
             # (les données peuvent contenir 'apertureStop' ou d'autres champs)
             if camera_id == self.active_camera_id:
@@ -3242,10 +3259,14 @@ class MainWindow(QMainWindow):
             
             # Iris
             iris_data = cam_data.controller.get_iris()
-            if iris_data and 'normalised' in iris_data:
-                value = float(iris_data['normalised'])
-                cam_data.iris_actual_value = value
-                cam_data.iris_sent_value = value
+            if iris_data:
+                if 'normalised' in iris_data:
+                    value = float(iris_data['normalised'])
+                    cam_data.iris_actual_value = value
+                    cam_data.iris_sent_value = value
+                # Stocker l'aperture stop pour Companion
+                if 'apertureStop' in iris_data:
+                    cam_data.iris_aperture_stop = float(iris_data['apertureStop'])
                 if camera_id == self.active_camera_id:
                     self.on_iris_changed(iris_data)
             
@@ -3320,7 +3341,11 @@ class MainWindow(QMainWindow):
             update_kwargs = {}
             if cam_data.focus_actual_value is not None:
                 update_kwargs['focus'] = cam_data.focus_actual_value
-            if cam_data.iris_actual_value is not None:
+            # Envoyer l'aperture stop au lieu de la valeur normalisée pour Companion
+            if cam_data.iris_aperture_stop is not None:
+                update_kwargs['iris'] = cam_data.iris_aperture_stop
+            elif cam_data.iris_actual_value is not None:
+                # Fallback si pas d'aperture stop disponible (ne devrait pas arriver)
                 update_kwargs['iris'] = cam_data.iris_actual_value
             if cam_data.gain_actual_value is not None:
                 update_kwargs['gain'] = cam_data.gain_actual_value
@@ -3485,7 +3510,10 @@ class MainWindow(QMainWindow):
         
         # Toujours mettre à jour l'aperture stop si présent
         if 'apertureStop' in data:
+            cam_data.iris_aperture_stop = float(data['apertureStop'])
             self.iris_aperture_stop.setText(f"{data['apertureStop']:.2f}")
+            # Mettre à jour le StateStore avec l'aperture stop pour Companion
+            self.state_store.update_cam(self.active_camera_id, iris=cam_data.iris_aperture_stop)
     
     def on_gain_changed(self, value: int):
         """Slot appelé quand le gain change."""

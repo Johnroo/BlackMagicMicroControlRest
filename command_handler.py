@@ -40,6 +40,8 @@ class CommandHandler:
                 return self._handle_store_preset(main_window, cmd)
             elif cmd_type == "do_autofocus":
                 return self._handle_do_autofocus(main_window, cmd)
+            elif cmd_type == "do_autowhitebalance":
+                return self._handle_do_autowhitebalance(main_window, cmd)
             else:
                 return False, f"Commande inconnue: {cmd_type}"
         except Exception as e:
@@ -337,4 +339,29 @@ class CommandHandler:
             return True, None
         except Exception as e:
             return False, f"Erreur lors de l'autofocus: {str(e)}"
+    
+    def _handle_do_autowhitebalance(self, main_window, cmd: dict) -> Tuple[bool, Optional[str]]:
+        """Gère la commande do_autowhitebalance."""
+        cam = cmd.get("cam")
+        
+        if cam is None:
+            return False, "Champ 'cam' manquant"
+        
+        if not isinstance(cam, int) or cam < 1 or cam > 8:
+            return False, f"Numéro de caméra invalide: {cam}"
+        
+        # Vérifier que la caméra est connectée
+        if cam not in main_window.cameras:
+            return False, f"Caméra {cam} non configurée"
+        
+        cam_data = main_window.cameras[cam]
+        if not cam_data.connected or not cam_data.controller:
+            return False, f"Caméra {cam} non connectée"
+        
+        try:
+            # Appeler do_auto_whitebalance avec le camera_id spécifié
+            main_window.do_auto_whitebalance(camera_id=cam)
+            return True, None
+        except Exception as e:
+            return False, f"Erreur lors de l'auto white balance: {str(e)}"
 
