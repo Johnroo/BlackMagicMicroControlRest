@@ -86,13 +86,12 @@ class CommandHandler:
             return False, f"Caméra {cam} non connectée"
         
         try:
-            # Changer temporairement la caméra active si nécessaire pour que les méthodes fonctionnent
-            original_active_cam = main_window.active_camera_id
-            if main_window.active_camera_id != cam:
-                main_window.switch_active_camera(cam)
-            
             if param == "focus":
-                # Pour focus, il faut contourner la vérification focus_slider_user_touching
+                # Pour focus, il faut changer temporairement la caméra active et contourner la vérification focus_slider_user_touching
+                original_active_cam = main_window.active_camera_id
+                if main_window.active_camera_id != cam:
+                    main_window.switch_active_camera(cam)
+                
                 original_touching = main_window.focus_slider_user_touching
                 main_window.focus_slider_user_touching = True
                 
@@ -107,30 +106,19 @@ class CommandHandler:
                         main_window.switch_active_camera(original_active_cam)
                 
             elif param == "iris":
-                main_window.send_iris_value(float(value))
+                main_window.send_iris_value(float(value), camera_id=cam)
             elif param == "gain":
-                main_window.send_gain_value(int(value))
+                main_window.send_gain_value(int(value), camera_id=cam)
             elif param == "shutter":
-                main_window.send_shutter_value(int(value))
+                main_window.send_shutter_value(int(value), camera_id=cam)
+            elif param == "whiteBalance":
+                main_window.send_whitebalance_value(int(value), camera_id=cam)
             else:
-                # Restaurer la caméra active si nécessaire
-                if original_active_cam != cam:
-                    main_window.switch_active_camera(original_active_cam)
                 return False, f"Paramètre inconnu: {param}"
-            
-            # Restaurer la caméra active si nécessaire
-            if original_active_cam != cam:
-                main_window.switch_active_camera(original_active_cam)
             
             return True, None
             
         except Exception as e:
-            # Restaurer la caméra active en cas d'erreur
-            if original_active_cam != cam:
-                try:
-                    main_window.switch_active_camera(original_active_cam)
-                except:
-                    pass
             return False, f"Erreur lors de la mise à jour du paramètre {param}: {str(e)}"
     
     def _handle_nudge(self, main_window, cmd: dict) -> Tuple[bool, Optional[str]]:
@@ -209,6 +197,22 @@ class CommandHandler:
                     "cam": cam,
                     "param": "shutter",
                     "value": closest
+                })
+            elif param == "whiteBalance":
+                # Pour whiteBalance, on doit utiliser les limites min/max
+                if cam_data.whitebalance_min == 0 and cam_data.whitebalance_max == 0:
+                    return False, "Plage white balance non chargée pour cette caméra"
+                current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
+                if current_value == 0:
+                    current_value = 3200  # Valeur par défaut
+                new_value = current_value + int(delta)
+                # Clamper entre min et max
+                new_value = max(cam_data.whitebalance_min, min(cam_data.whitebalance_max, new_value))
+                return self._handle_set_param(main_window, {
+                    "cmd": "set_param",
+                    "cam": cam,
+                    "param": "whiteBalance",
+                    "value": new_value
                 })
             else:
                 return False, f"Paramètre inconnu pour nudge: {param}"

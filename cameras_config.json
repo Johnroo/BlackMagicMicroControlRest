@@ -45,7 +45,8 @@
       "focus": false,
       "iris": true,
       "gain": true,
-      "shutter": true
+      "shutter": true,
+      "whitebalance": true
     },
     "crossfade_duration": 4.000000000000002
   },
@@ -58,7 +59,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -71,7 +73,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -84,7 +87,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -97,7 +101,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -110,7 +115,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -123,7 +129,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   },
@@ -136,7 +143,8 @@
       "focus": false,
       "iris": false,
       "gain": false,
-      "shutter": false
+      "shutter": false,
+      "whitebalance": false
     },
     "crossfade_duration": 2.0
   }

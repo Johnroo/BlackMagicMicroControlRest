@@ -1220,9 +1220,16 @@ class MainWindow(QMainWindow):
         if not self.iris_sending:
             self._send_iris_value_now(iris_value)
     
-    def send_iris_value(self, value: float):
+    def send_iris_value(self, value: float, camera_id: Optional[int] = None):
         """Envoie la valeur de l'iris directement (utilisé par Companion)."""
-        cam_data = self.get_active_camera_data()
+        if camera_id is not None:
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         
@@ -1597,9 +1604,16 @@ class MainWindow(QMainWindow):
         self.gain_value_sent.setText(f"{value} dB")
         self.send_gain_value(value)
     
-    def send_gain_value(self, value: int):
+    def send_gain_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du gain directement (sans throttling) pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+        if camera_id is not None:
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         
@@ -1671,6 +1685,35 @@ class MainWindow(QMainWindow):
         cam_data.whitebalance_sent_value = value
         self.whitebalance_value_sent.setText(f"{value}K")
         self._send_whitebalance_value_now(value)
+    
+    def send_whitebalance_value(self, value: int, camera_id: Optional[int] = None):
+        """Envoie la valeur du white balance directement (utilisé par Companion)."""
+        if camera_id is not None:
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Vérifier si un envoi est déjà en cours
+        if hasattr(self, 'whitebalance_sending') and self.whitebalance_sending:
+            return
+        
+        self.whitebalance_sending = True
+        
+        try:
+            success = cam_data.controller.set_whitebalance(value, silent=True)
+            if not success:
+                logger.error(f"Erreur lors de l'envoi du white balance")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi du white balance: {e}")
+        finally:
+            # Attendre 50ms après l'envoi avant de permettre le suivant
+            QTimer.singleShot(50, self._on_whitebalance_send_complete)
     
     def _send_whitebalance_value_now(self, value: int):
         """Envoie la valeur du white balance avec gestion du lock."""
@@ -1902,9 +1945,16 @@ class MainWindow(QMainWindow):
         self.shutter_value_sent.setText(f"1/{value}s")
         self.send_shutter_value(value)
     
-    def send_shutter_value(self, value: int):
+    def send_shutter_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du shutter directement (sans throttling) pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+        if camera_id is not None:
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         
@@ -2321,10 +2371,8 @@ class MainWindow(QMainWindow):
         # Dictionnaire pour stocker les références aux checkboxes
         self.recall_scope_checkboxes = {}
         
-        # Checkbox Focus
-        focus_checkbox = QPushButton("☐ Focus")
-        focus_checkbox.setCheckable(True)
-        focus_checkbox.setStyleSheet("""
+        # Style partagé pour tous les checkboxes de recall scope
+        recall_scope_checkbox_style = """
             QPushButton {
                 text-align: left;
                 padding: 6px;
@@ -2342,7 +2390,12 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 opacity: 0.8;
             }
-        """)
+        """
+        
+        # Checkbox Focus
+        focus_checkbox = QPushButton("☐ Focus")
+        focus_checkbox.setCheckable(True)
+        focus_checkbox.setStyleSheet(recall_scope_checkbox_style)
         focus_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('focus', checked))
         recall_scope_container.addWidget(focus_checkbox)
         self.recall_scope_checkboxes['focus'] = focus_checkbox
@@ -2350,25 +2403,7 @@ class MainWindow(QMainWindow):
         # Checkbox Iris
         iris_checkbox = QPushButton("☐ Iris")
         iris_checkbox.setCheckable(True)
-        iris_checkbox.setStyleSheet("""
-            QPushButton {
-                text-align: left;
-                padding: 6px;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid #555;
-                border-radius: 4px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #444;
-                color: #fff;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        iris_checkbox.setStyleSheet(recall_scope_checkbox_style)
         iris_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('iris', checked))
         recall_scope_container.addWidget(iris_checkbox)
         self.recall_scope_checkboxes['iris'] = iris_checkbox
@@ -2376,25 +2411,7 @@ class MainWindow(QMainWindow):
         # Checkbox Gain
         gain_checkbox = QPushButton("☐ Gain")
         gain_checkbox.setCheckable(True)
-        gain_checkbox.setStyleSheet("""
-            QPushButton {
-                text-align: left;
-                padding: 6px;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid #555;
-                border-radius: 4px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #444;
-                color: #fff;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        gain_checkbox.setStyleSheet(recall_scope_checkbox_style)
         gain_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('gain', checked))
         recall_scope_container.addWidget(gain_checkbox)
         self.recall_scope_checkboxes['gain'] = gain_checkbox
@@ -2402,25 +2419,7 @@ class MainWindow(QMainWindow):
         # Checkbox Shutter
         shutter_checkbox = QPushButton("☐ Shutter")
         shutter_checkbox.setCheckable(True)
-        shutter_checkbox.setStyleSheet("""
-            QPushButton {
-                text-align: left;
-                padding: 6px;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid #555;
-                border-radius: 4px;
-                background-color: #2a2a2a;
-                color: #aaa;
-            }
-            QPushButton:checked {
-                background-color: #444;
-                color: #fff;
-            }
-            QPushButton:hover {
-                opacity: 0.8;
-            }
-        """)
+        shutter_checkbox.setStyleSheet(recall_scope_checkbox_style)
         shutter_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('shutter', checked))
         recall_scope_container.addWidget(shutter_checkbox)
         self.recall_scope_checkboxes['shutter'] = shutter_checkbox
@@ -2428,23 +2427,7 @@ class MainWindow(QMainWindow):
         # Checkbox White Balance
         whitebalance_checkbox = QPushButton("☐ White Balance")
         whitebalance_checkbox.setCheckable(True)
-        whitebalance_checkbox.setChecked(False)
-        whitebalance_checkbox.setStyleSheet("""
-            QPushButton {
-                font-size: 10px;
-                color: #aaa;
-                background-color: transparent;
-                border: none;
-                padding: 5px;
-                text-align: left;
-            }
-            QPushButton:hover {
-                color: #fff;
-            }
-            QPushButton:checked {
-                color: #0ff;
-            }
-        """)
+        whitebalance_checkbox.setStyleSheet(recall_scope_checkbox_style)
         whitebalance_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('whitebalance', checked))
         recall_scope_container.addWidget(whitebalance_checkbox)
         self.recall_scope_checkboxes['whitebalance'] = whitebalance_checkbox
@@ -3832,6 +3815,17 @@ class MainWindow(QMainWindow):
             self.preset_transition_timer = None
             logger.info(f"Transition progressive du focus terminée")
     
+    def _get_param_display_name(self, param: str) -> str:
+        """Retourne le nom d'affichage d'un paramètre pour les checkboxes."""
+        display_names = {
+            'focus': 'Focus',
+            'iris': 'Iris',
+            'gain': 'Gain',
+            'shutter': 'Shutter',
+            'whitebalance': 'White Balance'
+        }
+        return display_names.get(param, param.capitalize())
+    
     def on_recall_scope_changed(self, param: str, excluded: bool):
         """Appelé quand une checkbox de recall scope change."""
         cam_data = self.get_active_camera_data()
@@ -3840,7 +3834,8 @@ class MainWindow(QMainWindow):
         # Mettre à jour le texte de la checkbox
         checkbox = self.recall_scope_checkboxes.get(param)
         if checkbox:
-            checkbox.setText(f"{'☑' if excluded else '☐'} {param.capitalize()}")
+            display_name = self._get_param_display_name(param)
+            checkbox.setText(f"{'☑' if excluded else '☐'} {display_name}")
         
         # Sauvegarder la configuration
         self.save_cameras_config()
@@ -3859,7 +3854,8 @@ class MainWindow(QMainWindow):
                 excluded = cam_data.recall_scope.get(param, False)
                 checkbox.blockSignals(True)
                 checkbox.setChecked(excluded)
-                checkbox.setText(f"{'☑' if excluded else '☐'} {param.capitalize()}")
+                display_name = self._get_param_display_name(param)
+                checkbox.setText(f"{'☑' if excluded else '☐'} {display_name}")
                 checkbox.blockSignals(False)
     
     def on_crossfade_duration_changed(self, value: float):

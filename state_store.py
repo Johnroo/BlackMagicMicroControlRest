@@ -39,6 +39,7 @@ class StateStore(QObject):
                 "iris": None,
                 "gain": None,
                 "shutter": None,
+                "whiteBalance": None,
                 "zoom": None
             }
             self._state["presets"][str(i)] = {}
@@ -64,7 +65,7 @@ class StateStore(QObject):
         
         Args:
             cam: Numéro de la caméra (1-8)
-            **kwargs: Valeurs à mettre à jour (connected, focus, iris, gain, shutter, zoom)
+            **kwargs: Valeurs à mettre à jour (connected, focus, iris, gain, shutter, whiteBalance, zoom)
         """
         cam_key = str(cam)
         if cam_key not in self._state["cams"]:
@@ -81,7 +82,7 @@ class StateStore(QObject):
         # Mettre à jour les valeurs dans l'état
         cam_state = self._state["cams"][cam_key]
         for key, value in kwargs.items():
-            if key in ["connected", "focus", "iris", "gain", "shutter", "zoom"]:
+            if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "zoom"]:
                 # Vérifier si la valeur a changé
                 if cam_state.get(key) != value:
                     cam_state[key] = value
