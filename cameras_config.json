@@ -46,7 +46,8 @@
       "iris": true,
       "gain": true,
       "shutter": true
-    }
+    },
+    "crossfade_duration": 4.000000000000002
   },
   "camera_2": {
     "url": "",
@@ -58,7 +59,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_3": {
     "url": "",
@@ -70,7 +72,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_4": {
     "url": "",
@@ -82,7 +85,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_5": {
     "url": "",
@@ -94,7 +98,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_6": {
     "url": "",
@@ -106,7 +111,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_7": {
     "url": "",
@@ -118,7 +124,8 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   },
   "camera_8": {
     "url": "",
@@ -130,6 +137,7 @@
       "iris": false,
       "gain": false,
       "shutter": false
-    }
+    },
+    "crossfade_duration": 2.0
   }
 }

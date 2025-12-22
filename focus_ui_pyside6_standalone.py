@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
-    QDialogButtonBox, QSizePolicy
+    QDialogButtonBox, QSizePolicy, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent
 from PySide6.QtGui import QResizeEvent, QKeyEvent
@@ -76,6 +76,9 @@ class CameraData:
         'gain': False,
         'shutter': False
     })
+    
+    # Crossfade duration - durée du crossfade entre presets en secondes
+    crossfade_duration: float = 2.0  # Durée du crossfade en secondes (défaut: 2.0)
     
     # Throttling pour les autres paramètres
     last_iris_send_time: int = 0
@@ -325,7 +328,6 @@ class MainWindow(QMainWindow):
         self.smooth_preset_transition = False
         self.preset_transition_timer = None
         self.preset_transition_start_time = None
-        self.preset_transition_duration = 2000  # 2 secondes
         self.preset_transition_start_values = {}
         self.preset_transition_target_values = {}
         
@@ -346,6 +348,9 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour l'UI du recall scope
         self.update_recall_scope_ui()
+        
+        # Mettre à jour l'UI du crossfade duration
+        self.update_crossfade_duration_ui()
         
         # Initialiser le StateStore avec les presets existants
         for camera_id, cam_data in self.cameras.items():
@@ -409,12 +414,16 @@ class MainWindow(QMainWindow):
                         if param not in recall_scope:
                             recall_scope[param] = False
                     
+                    # Charger crossfade_duration avec valeur par défaut si absent
+                    crossfade_duration = cam_config.get("crossfade_duration", 2.0)
+                    
                     self.cameras[i] = CameraData(
                         url=cam_config.get("url", "").rstrip('/'),
                         username=cam_config.get("username", ""),
                         password=cam_config.get("password", ""),
                         presets=cam_config.get("presets", {}),
-                        recall_scope=recall_scope
+                        recall_scope=recall_scope,
+                        crossfade_duration=float(crossfade_duration)
                     )
                 else:
                     # Créer une caméra vide
@@ -446,7 +455,8 @@ class MainWindow(QMainWindow):
                     "username": cam_data.username,
                     "password": cam_data.password,
                     "presets": cam_data.presets,
-                    "recall_scope": cam_data.recall_scope
+                    "recall_scope": cam_data.recall_scope,
+                    "crossfade_duration": cam_data.crossfade_duration
                 }
             
             with open(config_file, 'w') as f:
@@ -655,6 +665,9 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour l'UI du recall scope
         self.update_recall_scope_ui()
+        
+        # Mettre à jour l'UI du crossfade duration
+        self.update_crossfade_duration_ui()
         
         # Mettre à jour le status label
         if cam_data.connected:
@@ -1883,6 +1896,39 @@ class MainWindow(QMainWindow):
         """)
         self.smooth_transition_toggle.clicked.connect(self.toggle_smooth_transition)
         layout.addWidget(self.smooth_transition_toggle)
+        
+        # Section Crossfade Duration
+        layout.addSpacing(20)
+        crossfade_label = QLabel("Crossfade Duration (s)")
+        crossfade_label.setAlignment(Qt.AlignCenter)
+        crossfade_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #aaa; margin-top: 10px;")
+        layout.addWidget(crossfade_label)
+        
+        self.crossfade_duration_spinbox = QDoubleSpinBox()
+        self.crossfade_duration_spinbox.setMinimum(0.0)
+        self.crossfade_duration_spinbox.setMaximum(30.0)
+        self.crossfade_duration_spinbox.setSingleStep(0.1)
+        self.crossfade_duration_spinbox.setValue(2.0)
+        self.crossfade_duration_spinbox.setDecimals(1)
+        self.crossfade_duration_spinbox.setStyleSheet("""
+            QDoubleSpinBox {
+                padding: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #fff;
+            }
+            QDoubleSpinBox:hover {
+                border-color: #777;
+            }
+            QDoubleSpinBox:focus {
+                border-color: #0a5;
+            }
+        """)
+        self.crossfade_duration_spinbox.valueChanged.connect(self.on_crossfade_duration_changed)
+        layout.addWidget(self.crossfade_duration_spinbox)
         
         layout.addStretch()
         return panel
@@ -3354,9 +3400,12 @@ class MainWindow(QMainWindow):
         if not self.preset_transition_timer:
             return
         
+        cam_data = self.get_active_camera_data()
+        crossfade_duration_ms = cam_data.crossfade_duration * 1000  # Convertir en millisecondes
+        
         current_time = time.time() * 1000
         elapsed = current_time - self.preset_transition_start_time
-        progress = min(elapsed / self.preset_transition_duration, 1.0)  # 0.0 à 1.0
+        progress = min(elapsed / crossfade_duration_ms, 1.0)  # 0.0 à 1.0
         
         # Fonction d'interpolation linéaire
         def lerp(start, end, t):
@@ -3421,6 +3470,26 @@ class MainWindow(QMainWindow):
                 checkbox.setChecked(excluded)
                 checkbox.setText(f"{'☑' if excluded else '☐'} {param.capitalize()}")
                 checkbox.blockSignals(False)
+    
+    def on_crossfade_duration_changed(self, value: float):
+        """Appelé quand la valeur du crossfade duration change."""
+        cam_data = self.get_active_camera_data()
+        cam_data.crossfade_duration = value
+        
+        # Sauvegarder la configuration
+        self.save_cameras_config()
+        
+        logger.info(f"Crossfade duration pour caméra {self.active_camera_id}: {value}s")
+    
+    def update_crossfade_duration_ui(self):
+        """Met à jour l'UI du spinbox de crossfade duration selon la valeur de la caméra active."""
+        if not hasattr(self, 'crossfade_duration_spinbox') or not self.crossfade_duration_spinbox:
+            return
+        
+        cam_data = self.get_active_camera_data()
+        self.crossfade_duration_spinbox.blockSignals(True)
+        self.crossfade_duration_spinbox.setValue(cam_data.crossfade_duration)
+        self.crossfade_duration_spinbox.blockSignals(False)
     
     def update_preset_highlight(self):
         """Met à jour l'encadré coloré autour du preset actif."""
