@@ -251,10 +251,9 @@ Ajuste un paramètre d'une valeur delta relative.
 ```
 
 **Comportement** :
-- Pour `focus` : Le delta est ajouté à la valeur actuelle (normalisée), puis la valeur est clampée entre 0.0 et 1.0
-- Pour `iris` : Le delta est ajouté à la valeur actuelle (normalisée 0.0-1.0), puis la valeur est clampée entre 0.0 et 1.0. **Note** : Même si Companion reçoit l'aperture stop dans les snapshots/patchs, le delta pour `nudge` doit être en valeur normalisée (ex: 0.01 pour un petit ajustement).
-- Pour `gain` et `shutter` : Le delta est ajouté à la valeur actuelle, puis la valeur la plus proche parmi les valeurs supportées est sélectionnée
-- Pour `whiteBalance` : Le delta est ajouté à la valeur actuelle, puis la valeur est clampée entre min et max (généralement 2000K-10000K)
+- **Pour `focus` et `iris` uniquement** : Le delta est ajouté à la valeur actuelle (normalisée), puis la valeur est clampée entre 0.0 et 1.0
+- **Note** : `nudge` ne fonctionne que pour `focus` et `iris` (valeurs continues). Pour `gain`, `shutter` et `whiteBalance` (valeurs discrètes), utilisez la commande `adjust_param` avec `direction: "up"` ou `"down"`.
+- Pour `iris` : Même si Companion reçoit l'aperture stop dans les snapshots/patchs, le delta pour `nudge` doit être en valeur normalisée (ex: 0.01 pour un petit ajustement).
 
 **Réponse** :
 ```json
@@ -394,6 +393,85 @@ ou en cas d'erreur :
   "type": "ack",
   "ok": false,
   "error": "Caméra 3 non connectée"
+}
+```
+
+### 8. `adjust_param`
+
+Ajuste un paramètre discret (gain, shutter, whiteBalance) d'un pas vers le haut ou le bas, exactement comme les boutons +/- dans l'UI.
+
+```json
+{
+  "type": "cmd",
+  "cmd": "adjust_param",
+  "cam": 3,
+  "param": "gain",
+  "direction": "up"
+}
+```
+
+```json
+{
+  "type": "cmd",
+  "cmd": "adjust_param",
+  "cam": 3,
+  "param": "gain",
+  "direction": "down"
+}
+```
+
+```json
+{
+  "type": "cmd",
+  "cmd": "adjust_param",
+  "cam": 3,
+  "param": "shutter",
+  "direction": "up"
+}
+```
+
+```json
+{
+  "type": "cmd",
+  "cmd": "adjust_param",
+  "cam": 3,
+  "param": "whiteBalance",
+  "direction": "down"
+}
+```
+
+**Paramètres supportés** : `gain`, `shutter`, `whiteBalance`
+
+**Direction** : `"up"` ou `"down"`
+
+**Comportement** :
+- **Pour `gain`** : Passe à la valeur suivante/précédente dans la liste des gains supportés (ex: -12, -6, 0, 6, 12, 18 dB)
+- **Pour `shutter`** : Passe à la vitesse suivante/précédente dans la liste des vitesses supportées (ex: 50, 60, 120, 240)
+- **Pour `whiteBalance`** : Incrémente/décrémente de 100K (avec respect des limites min/max, généralement 2000K-10000K)
+
+**Réponse** :
+```json
+{
+  "type": "ack",
+  "ok": true
+}
+```
+
+ou en cas d'erreur :
+```json
+{
+  "type": "ack",
+  "ok": false,
+  "error": "Caméra 3 non connectée"
+}
+```
+
+ou si le paramètre n'est pas supporté :
+```json
+{
+  "type": "ack",
+  "ok": false,
+  "error": "Paramètre non supporté pour adjust_param: focus (supportés: gain, shutter, whiteBalance)"
 }
 ```
 
@@ -583,6 +661,15 @@ class CompanionModule {
     });
   }
 
+  adjustParam(cam, param, direction) {
+    this.sendCommand({
+      cmd: 'adjust_param',
+      cam: cam,
+      param: param,
+      direction: direction
+    });
+  }
+
   onStateUpdate() {
     // Callback appelé quand l'état est mis à jour
     // À implémenter selon les besoins du module Companion
@@ -613,8 +700,14 @@ setTimeout(() => {
   // Définir le white balance de la caméra 1 à 3200K
   module.setParam(1, 'whiteBalance', 3200);
   
-  // Ajuster le white balance de la caméra 2 de +100K
-  module.nudge(2, 'whiteBalance', 100);
+  // Ajuster le gain de la caméra 2 vers le haut (valeur suivante)
+  module.adjustParam(2, 'gain', 'up');
+  
+  // Ajuster le shutter de la caméra 3 vers le bas (vitesse précédente)
+  module.adjustParam(3, 'shutter', 'down');
+  
+  // Ajuster le white balance de la caméra 1 vers le haut (+100K)
+  module.adjustParam(1, 'whiteBalance', 'up');
 }, 2000);
 ```
 

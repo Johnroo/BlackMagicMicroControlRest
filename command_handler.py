@@ -42,6 +42,8 @@ class CommandHandler:
                 return self._handle_do_autofocus(main_window, cmd)
             elif cmd_type == "do_autowhitebalance":
                 return self._handle_do_autowhitebalance(main_window, cmd)
+            elif cmd_type == "adjust_param":
+                return self._handle_adjust_param(main_window, cmd)
             else:
                 return False, f"Commande inconnue: {cmd_type}"
         except Exception as e:
@@ -172,52 +174,8 @@ class CommandHandler:
                     "param": "iris",
                     "value": new_value
                 })
-            elif param == "gain":
-                # Pour gain, on doit utiliser les valeurs supportées
-                if not cam_data.supported_gains:
-                    return False, "Gains supportés non chargés pour cette caméra"
-                current_value = cam_data.gain_actual_value
-                new_value = current_value + int(delta)
-                # Trouver la valeur supportée la plus proche
-                closest = min(cam_data.supported_gains, key=lambda x: abs(x - new_value))
-                return self._handle_set_param(main_window, {
-                    "cmd": "set_param",
-                    "cam": cam,
-                    "param": "gain",
-                    "value": closest
-                })
-            elif param == "shutter":
-                # Pour shutter, on doit utiliser les valeurs supportées
-                if not cam_data.supported_shutter_speeds:
-                    return False, "Shutter speeds supportés non chargés pour cette caméra"
-                current_value = cam_data.shutter_actual_value
-                new_value = current_value + int(delta)
-                # Trouver la valeur supportée la plus proche
-                closest = min(cam_data.supported_shutter_speeds, key=lambda x: abs(x - new_value))
-                return self._handle_set_param(main_window, {
-                    "cmd": "set_param",
-                    "cam": cam,
-                    "param": "shutter",
-                    "value": closest
-                })
-            elif param == "whiteBalance":
-                # Pour whiteBalance, on doit utiliser les limites min/max
-                if cam_data.whitebalance_min == 0 and cam_data.whitebalance_max == 0:
-                    return False, "Plage white balance non chargée pour cette caméra"
-                current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
-                if current_value == 0:
-                    current_value = 3200  # Valeur par défaut
-                new_value = current_value + int(delta)
-                # Clamper entre min et max
-                new_value = max(cam_data.whitebalance_min, min(cam_data.whitebalance_max, new_value))
-                return self._handle_set_param(main_window, {
-                    "cmd": "set_param",
-                    "cam": cam,
-                    "param": "whiteBalance",
-                    "value": new_value
-                })
             else:
-                return False, f"Paramètre inconnu pour nudge: {param}"
+                return False, f"Paramètre non supporté pour nudge: {param} (supportés: focus, iris). Utilisez 'adjust_param' pour gain, shutter et whiteBalance."
         except Exception as e:
             return False, f"Erreur lors du nudge: {str(e)}"
     
@@ -364,4 +322,54 @@ class CommandHandler:
             return True, None
         except Exception as e:
             return False, f"Erreur lors de l'auto white balance: {str(e)}"
+    
+    def _handle_adjust_param(self, main_window, cmd: dict) -> Tuple[bool, Optional[str]]:
+        """Gère la commande adjust_param pour les paramètres discrets (gain, shutter, whiteBalance)."""
+        cam = cmd.get("cam")
+        param = cmd.get("param")
+        direction = cmd.get("direction")
+        
+        if cam is None:
+            return False, "Champ 'cam' manquant"
+        if param is None:
+            return False, "Champ 'param' manquant"
+        if direction is None:
+            return False, "Champ 'direction' manquant"
+        
+        if not isinstance(cam, int) or cam < 1 or cam > 8:
+            return False, f"Numéro de caméra invalide: {cam}"
+        
+        if direction not in ["up", "down"]:
+            return False, f"Direction invalide: {direction} (doit être 'up' ou 'down')"
+        
+        # Vérifier que la caméra est connectée
+        if cam not in main_window.cameras:
+            return False, f"Caméra {cam} non configurée"
+        
+        cam_data = main_window.cameras[cam]
+        if not cam_data.connected or not cam_data.controller:
+            return False, f"Caméra {cam} non connectée"
+        
+        try:
+            if param == "gain":
+                if direction == "up":
+                    main_window.increment_gain(camera_id=cam)
+                else:
+                    main_window.decrement_gain(camera_id=cam)
+            elif param == "shutter":
+                if direction == "up":
+                    main_window.increment_shutter(camera_id=cam)
+                else:
+                    main_window.decrement_shutter(camera_id=cam)
+            elif param == "whiteBalance":
+                if direction == "up":
+                    main_window.increment_whitebalance(camera_id=cam)
+                else:
+                    main_window.decrement_whitebalance(camera_id=cam)
+            else:
+                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: gain, shutter, whiteBalance)"
+            
+            return True, None
+        except Exception as e:
+            return False, f"Erreur lors de l'ajustement du paramètre {param}: {str(e)}"
 

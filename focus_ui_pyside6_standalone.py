@@ -1556,9 +1556,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement des gains supportés: {e}")
     
-    def increment_gain(self):
-        """Incrémente le gain vers la valeur suivante supportée pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def increment_gain(self, camera_id: Optional[int] = None):
+        """Incrémente le gain vers la valeur suivante supportée pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         if not cam_data.supported_gains:
@@ -1568,18 +1576,26 @@ class MainWindow(QMainWindow):
             current_index = cam_data.supported_gains.index(current_value)
             if current_index < len(cam_data.supported_gains) - 1:
                 new_value = cam_data.supported_gains[current_index + 1]
-                self.update_gain_value(new_value)
+                self.update_gain_value(new_value, camera_id=camera_id)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
             nearest = min(cam_data.supported_gains, key=lambda x: abs(x - current_value))
             nearest_index = cam_data.supported_gains.index(nearest)
             if nearest_index < len(cam_data.supported_gains) - 1:
                 new_value = cam_data.supported_gains[nearest_index + 1]
-                self.update_gain_value(new_value)
+                self.update_gain_value(new_value, camera_id=camera_id)
     
-    def decrement_gain(self):
-        """Décrémente le gain vers la valeur précédente supportée pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def decrement_gain(self, camera_id: Optional[int] = None):
+        """Décrémente le gain vers la valeur précédente supportée pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         if not cam_data.supported_gains:
@@ -1589,25 +1605,39 @@ class MainWindow(QMainWindow):
             current_index = cam_data.supported_gains.index(current_value)
             if current_index > 0:
                 new_value = cam_data.supported_gains[current_index - 1]
-                self.update_gain_value(new_value)
+                self.update_gain_value(new_value, camera_id=camera_id)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
             nearest = min(cam_data.supported_gains, key=lambda x: abs(x - current_value))
             nearest_index = cam_data.supported_gains.index(nearest)
             if nearest_index > 0:
                 new_value = cam_data.supported_gains[nearest_index - 1]
-                self.update_gain_value(new_value)
+                self.update_gain_value(new_value, camera_id=camera_id)
     
-    def update_gain_value(self, value: int):
-        """Met à jour la valeur du gain pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def update_gain_value(self, value: int, camera_id: Optional[int] = None):
+        """Met à jour la valeur du gain pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         cam_data.gain_sent_value = value
-        self.gain_value_sent.setText(f"{value} dB")
-        self.send_gain_value(value)
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        should_update_ui = (camera_id is None or camera_id is False) or camera_id == self.active_camera_id
+        if should_update_ui:
+            self.gain_value_sent.setText(f"{value} dB")
+        # Passer None au lieu de False pour send_gain_value
+        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
+        self.send_gain_value(value, camera_id=actual_camera_id)
     
     def send_gain_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du gain directement (sans throttling) pour la caméra active."""
-        if camera_id is not None:
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
             if camera_id < 1 or camera_id > 8:
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
@@ -1642,9 +1672,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement de la description du white balance: {e}")
     
-    def increment_whitebalance(self):
-        """Incrémente le white balance de 100K pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def increment_whitebalance(self, camera_id: Optional[int] = None):
+        """Incrémente le white balance de 100K pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         
@@ -1659,11 +1697,19 @@ class MainWindow(QMainWindow):
         if cam_data.whitebalance_max > 0 and new_value > cam_data.whitebalance_max:
             new_value = cam_data.whitebalance_max
         
-        self.update_whitebalance_value(new_value)
+        self.update_whitebalance_value(new_value, camera_id=camera_id)
     
-    def decrement_whitebalance(self):
-        """Décrémente le white balance de 100K pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def decrement_whitebalance(self, camera_id: Optional[int] = None):
+        """Décrémente le white balance de 100K pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         
@@ -1678,18 +1724,31 @@ class MainWindow(QMainWindow):
         if cam_data.whitebalance_min > 0 and new_value < cam_data.whitebalance_min:
             new_value = cam_data.whitebalance_min
         
-        self.update_whitebalance_value(new_value)
+        self.update_whitebalance_value(new_value, camera_id=camera_id)
     
-    def update_whitebalance_value(self, value: int):
-        """Met à jour la valeur du white balance pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def update_whitebalance_value(self, value: int, camera_id: Optional[int] = None):
+        """Met à jour la valeur du white balance pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         cam_data.whitebalance_sent_value = value
-        self.whitebalance_value_sent.setText(f"{value}K")
-        self._send_whitebalance_value_now(value)
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
+            self.whitebalance_value_sent.setText(f"{value}K")
+        # Passer None au lieu de False pour send_whitebalance_value
+        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
+        self.send_whitebalance_value(value, camera_id=actual_camera_id)
     
     def send_whitebalance_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du white balance directement (utilisé par Companion)."""
-        if camera_id is not None:
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
             if camera_id < 1 or camera_id > 8:
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
@@ -1907,9 +1966,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement des vitesses de shutter supportées: {e}")
     
-    def increment_shutter(self):
-        """Incrémente le shutter vers la vitesse suivante supportée pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def increment_shutter(self, camera_id: Optional[int] = None):
+        """Incrémente le shutter vers la vitesse suivante supportée pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         if not cam_data.supported_shutter_speeds:
@@ -1919,18 +1986,26 @@ class MainWindow(QMainWindow):
             current_index = cam_data.supported_shutter_speeds.index(current_value)
             if current_index < len(cam_data.supported_shutter_speeds) - 1:
                 new_value = cam_data.supported_shutter_speeds[current_index + 1]
-                self.update_shutter_value(new_value)
+                self.update_shutter_value(new_value, camera_id=camera_id)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
             nearest = min(cam_data.supported_shutter_speeds, key=lambda x: abs(x - current_value))
             nearest_index = cam_data.supported_shutter_speeds.index(nearest)
             if nearest_index < len(cam_data.supported_shutter_speeds) - 1:
                 new_value = cam_data.supported_shutter_speeds[nearest_index + 1]
-                self.update_shutter_value(new_value)
+                self.update_shutter_value(new_value, camera_id=camera_id)
     
-    def decrement_shutter(self):
-        """Décrémente le shutter vers la vitesse précédente supportée pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def decrement_shutter(self, camera_id: Optional[int] = None):
+        """Décrémente le shutter vers la vitesse précédente supportée pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         if not cam_data.connected or not cam_data.controller:
             return
         if not cam_data.supported_shutter_speeds:
@@ -1940,25 +2015,38 @@ class MainWindow(QMainWindow):
             current_index = cam_data.supported_shutter_speeds.index(current_value)
             if current_index > 0:
                 new_value = cam_data.supported_shutter_speeds[current_index - 1]
-                self.update_shutter_value(new_value)
+                self.update_shutter_value(new_value, camera_id=camera_id)
         except ValueError:
             # Valeur actuelle pas dans la liste, prendre la plus proche
             nearest = min(cam_data.supported_shutter_speeds, key=lambda x: abs(x - current_value))
             nearest_index = cam_data.supported_shutter_speeds.index(nearest)
             if nearest_index > 0:
                 new_value = cam_data.supported_shutter_speeds[nearest_index - 1]
-                self.update_shutter_value(new_value)
+                self.update_shutter_value(new_value, camera_id=camera_id)
     
-    def update_shutter_value(self, value: int):
-        """Met à jour la valeur du shutter pour la caméra active."""
-        cam_data = self.get_active_camera_data()
+    def update_shutter_value(self, value: int, camera_id: Optional[int] = None):
+        """Met à jour la valeur du shutter pour la caméra spécifiée ou active."""
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
         cam_data.shutter_sent_value = value
-        self.shutter_value_sent.setText(f"1/{value}s")
-        self.send_shutter_value(value)
+        # Mettre à jour l'UI seulement si c'est la caméra active
+        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
+            self.shutter_value_sent.setText(f"1/{value}s")
+        # Passer None au lieu de False pour send_shutter_value
+        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
+        self.send_shutter_value(value, camera_id=actual_camera_id)
     
     def send_shutter_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du shutter directement (sans throttling) pour la caméra active."""
-        if camera_id is not None:
+        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
             if camera_id < 1 or camera_id > 8:
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
