@@ -233,11 +233,12 @@ class ConnectionDialog(QDialog):
             # Déconnecter
             self.connected = False
             if self.parent():
-                self.parent().disconnect_from_camera()
+                self.parent().disconnect_from_camera(self.camera_id)
         else:
             # Connecter
             if self.parent():
                 self.parent().connect_to_camera(
+                    self.camera_id,
                     self.url_input.text().strip(),
                     self.username_input.text().strip(),
                     self.password_input.text().strip()
