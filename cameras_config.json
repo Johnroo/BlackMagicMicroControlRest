@@ -6,39 +6,51 @@
     "password": "koko",
     "presets": {
       "preset_1": {
-        "focus": 0.760188102722168,
+        "focus": 0.6290282011032104,
         "iris": 0.0,
-        "gain": 6,
+        "gain": 16,
         "shutter": 50,
-        "whitebalance": 4100,
+        "whitebalance": 3800,
         "zoom": 0.0
       },
       "preset_2": {
-        "focus": 0.36905384063720703,
+        "focus": 0.09210860729217529,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 0,
+        "gain": 16,
+        "shutter": 50,
+        "whitebalance": 3800,
         "zoom": 0.0
       },
       "preset_4": {
-        "focus": 0.0010454654693603516,
+        "focus": 0.6964472532272339,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 0,
+        "gain": 36,
+        "shutter": 50,
+        "whitebalance": 2500,
         "zoom": 0.0
       },
       "preset_3": {
-        "focus": 1.0,
+        "focus": 0.8360780477523804,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 0,
+        "gain": 16,
+        "shutter": 50,
+        "whitebalance": 3800,
         "zoom": 0.0
       },
       "preset_5": {
-        "focus": 0.5744903087615967,
+        "focus": 0.6964472532272339,
         "iris": 0.0,
-        "gain": 18,
+        "gain": 36,
         "shutter": 50,
+        "whitebalance": 2500,
+        "zoom": 0.0
+      },
+      "preset_10": {
+        "focus": 0.6024033427238464,
+        "iris": 0.0,
+        "gain": 30,
+        "shutter": 50,
+        "whitebalance": 4100,
         "zoom": 0.0
       }
     },
@@ -49,21 +61,38 @@
       "shutter": true,
       "whitebalance": true
     },
-    "crossfade_duration": 0.5
+    "crossfade_duration": 4.000000000000002
   },
   "camera_2": {
-    "url": "",
+    "url": "http://Micro-Studio-Camera-4K-G2-2.local",
     "username": "",
     "password": "",
-    "presets": {},
+    "presets": {
+      "preset_1": {
+        "focus": 0.2091946005821228,
+        "iris": 0.32343751192092896,
+        "gain": 2,
+        "shutter": 50,
+        "whitebalance": 5600,
+        "zoom": 0.0
+      },
+      "preset_2": {
+        "focus": 0.9440484642982483,
+        "iris": 0.32343751192092896,
+        "gain": 2,
+        "shutter": 50,
+        "whitebalance": 5600,
+        "zoom": 0.0
+      }
+    },
     "recall_scope": {
       "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true
     },
-    "crossfade_duration": 2.0
+    "crossfade_duration": 0.49999999999999933
   },
   "camera_3": {
     "url": "",
