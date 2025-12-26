@@ -4,46 +4,67 @@
     "url": "http://Micro-Studio-Camera-4K-G2.local",
     "username": "roo",
     "password": "koko",
+    "slider_ip": "192.168.1.37",
     "presets": {
       "preset_1": {
-        "focus": 0.6290282011032104,
+        "focus": 0.7223330140113831,
         "iris": 0.0,
-        "gain": 16,
+        "gain": 8,
         "shutter": 50,
-        "whitebalance": 3800,
-        "zoom": 0.0
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.6810065000000001,
+        "tilt": 0.1010294,
+        "zoom_motor": 0.0,
+        "slide": 0.00700807
       },
       "preset_2": {
-        "focus": 0.09210860729217529,
+        "focus": 0.7971124649047852,
         "iris": 0.0,
-        "gain": 16,
+        "gain": 8,
         "shutter": 50,
-        "whitebalance": 3800,
-        "zoom": 0.0
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.2680047,
+        "tilt": 0.44205880000000003,
+        "zoom_motor": 1.0,
+        "slide": 0.2389922
       },
       "preset_4": {
-        "focus": 0.6964472532272339,
+        "focus": 0.8753483891487122,
         "iris": 0.0,
-        "gain": 36,
+        "gain": 8,
         "shutter": 50,
-        "whitebalance": 2500,
-        "zoom": 0.0
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.05799882,
+        "tilt": 0.6379412,
+        "zoom_motor": 1.0,
+        "slide": 0.00700807
       },
       "preset_3": {
-        "focus": 0.8360780477523804,
+        "focus": 0.5643956065177917,
         "iris": 0.0,
-        "gain": 16,
+        "gain": 8,
         "shutter": 50,
-        "whitebalance": 3800,
-        "zoom": 0.0
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.5869982,
+        "tilt": 0.7389705999999999,
+        "zoom_motor": 0.1810345,
+        "slide": 0.2970053
       },
       "preset_5": {
-        "focus": 0.6964472532272339,
+        "focus": 0.8432727456092834,
         "iris": 0.0,
-        "gain": 36,
+        "gain": 8,
         "shutter": 50,
-        "whitebalance": 2500,
-        "zoom": 0.0
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.08000665,
+        "tilt": 0.4129412,
+        "zoom_motor": 0.4348276,
+        "slide": 0.00700807
       },
       "preset_10": {
         "focus": 0.6024033427238464,
@@ -52,6 +73,54 @@
         "shutter": 50,
         "whitebalance": 4100,
         "zoom": 0.0
+      },
+      "preset_6": {
+        "focus": 0.7042783498764038,
+        "iris": 0.0,
+        "gain": 8,
+        "shutter": 50,
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.00699159,
+        "tilt": 0.5289706000000001,
+        "zoom_motor": 0.09413793,
+        "slide": 1.0
+      },
+      "preset_7": {
+        "focus": 0.6661601066589355,
+        "iris": 0.0,
+        "gain": 8,
+        "shutter": 50,
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.3410013,
+        "tilt": 0.6810294,
+        "zoom_motor": 1.0,
+        "slide": 0.00700807
+      },
+      "preset_8": {
+        "focus": 0.7530394792556763,
+        "iris": 0.0,
+        "gain": 8,
+        "shutter": 50,
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.9779922000000001,
+        "tilt": 0.6160294,
+        "zoom_motor": 1.0,
+        "slide": 1.0
+      },
+      "preset_9": {
+        "focus": 0.5491638779640198,
+        "iris": 0.0,
+        "gain": 8,
+        "shutter": 50,
+        "whitebalance": 4750,
+        "zoom": 0.0,
+        "pan": 0.6230077,
+        "tilt": 0.8039706,
+        "zoom_motor": 0.58,
+        "slide": 0.36999180000000004
       }
     },
     "recall_scope": {
@@ -59,14 +128,16 @@
       "iris": true,
       "gain": true,
       "shutter": true,
-      "whitebalance": true
+      "whitebalance": true,
+      "slider": false
     },
-    "crossfade_duration": 4.000000000000002
+    "crossfade_duration": 4.3999999999999995
   },
   "camera_2": {
     "url": "http://Micro-Studio-Camera-4K-G2-2.local",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {
       "preset_1": {
         "focus": 0.2091946005821228,
@@ -90,7 +161,8 @@
       "iris": true,
       "gain": true,
       "shutter": true,
-      "whitebalance": true
+      "whitebalance": true,
+      "slider": false
     },
     "crossfade_duration": 0.49999999999999933
   },
@@ -98,13 +170,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   },
@@ -112,13 +186,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   },
@@ -126,13 +202,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   },
@@ -140,13 +218,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   },
@@ -154,13 +234,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   },
@@ -168,13 +250,15 @@
     "url": "",
     "username": "",
     "password": "",
+    "slider_ip": "",
     "presets": {},
     "recall_scope": {
       "focus": false,
       "iris": false,
       "gain": false,
       "shutter": false,
-      "whitebalance": false
+      "whitebalance": false,
+      "slider": false
     },
     "crossfade_duration": 2.0
   }

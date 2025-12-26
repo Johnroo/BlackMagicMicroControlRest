@@ -24,6 +24,8 @@ from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSoc
 from state_store import StateStore
 from ws_server import CompanionWsServer
 from command_handler import CommandHandler
+from slider_controller import SliderController
+from slider_websocket_client import SliderWebSocketClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,10 +38,12 @@ class CameraData:
     url: str = ""
     username: str = ""
     password: str = ""
+    slider_ip: str = ""
     
     # Connexions
     controller: Optional[Any] = None  # BlackmagicFocusController
     websocket_client: Optional[Any] = None  # BlackmagicWebSocketClient
+    slider_websocket_client: Optional[Any] = None  # SliderWebSocketClient
     connected: bool = False
     
     # Valeurs
@@ -81,7 +85,8 @@ class CameraData:
         'iris': False,
         'gain': False,
         'shutter': False,
-        'whitebalance': False
+        'whitebalance': False,
+        'slider': False
     })
     
     # Crossfade duration - durée du crossfade entre presets en secondes
@@ -91,6 +96,18 @@ class CameraData:
     last_iris_send_time: int = 0
     last_gain_send_time: int = 0
     last_shutter_send_time: int = 0
+    
+    # Valeurs actuelles du slider (normalized 0.0-1.0)
+    slider_pan_value: float = 0.0
+    slider_tilt_value: float = 0.0
+    slider_zoom_value: float = 0.0
+    slider_slide_value: float = 0.0
+    
+    # Steps actuels du slider
+    slider_pan_steps: int = 0
+    slider_tilt_steps: int = 0
+    slider_zoom_steps: int = 0
+    slider_slide_steps: int = 0
 
 
 class CameraSignals(QObject):
@@ -111,7 +128,7 @@ class CameraSignals(QObject):
 class ConnectionDialog(QDialog):
     """Dialog pour la connexion à la caméra."""
     
-    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", connected: bool = False):
+    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", slider_ip: str = "", connected: bool = False):
         super().__init__(parent)
         self.setWindowTitle(f"Paramètres de connexion - Caméra {camera_id}")
         self.setMinimumWidth(400)
@@ -185,6 +202,24 @@ class ConnectionDialog(QDialog):
             }
         """)
         layout.addWidget(self.password_input)
+        
+        # Champ Slider IP
+        slider_label = QLabel("IP ou hostname du slider:")
+        slider_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(slider_label)
+        self.slider_ip_input = QLineEdit()
+        self.slider_ip_input.setText(slider_ip)
+        self.slider_ip_input.setPlaceholderText("192.168.1.100 ou slider1.local")
+        self.slider_ip_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+        """)
+        layout.addWidget(self.slider_ip_input)
         
         # Voyant de statut
         status_layout = QHBoxLayout()
@@ -445,8 +480,34 @@ class MainWindow(QMainWindow):
         # Recall scope checkboxes (initialisé dans create_presets_panel)
         self.recall_scope_checkboxes = {}
         
+        # Slider controllers pour chaque caméra (initialisés après chargement de la config)
+        self.slider_controllers: Dict[int, Optional[SliderController]] = {}
+        
+        # Variables pour les sliders (pan, tilt, slide, zoom motor)
+        self.slider_user_touching = {
+            'pan': False,
+            'tilt': False,
+            'slide': False,
+            'zoom': False
+        }
+        # Tracker si une commande a été envoyée pendant l'interaction (pour gérer les clics courts)
+        self.slider_command_sent = {
+            'pan': False,
+            'tilt': False,
+            'slide': False,
+            'zoom': False
+        }
+        
         # Charger la configuration des caméras
         self.load_cameras_config()
+        
+        # Initialiser les SliderController pour chaque caméra
+        for camera_id in range(1, 9):
+            cam_data = self.cameras.get(camera_id)
+            if cam_data and cam_data.slider_ip:
+                self.slider_controllers[camera_id] = SliderController(cam_data.slider_ip)
+            else:
+                self.slider_controllers[camera_id] = None
         
         # Initialiser l'UI
         self.init_ui()
@@ -528,11 +589,12 @@ class MainWindow(QMainWindow):
                         'iris': False,
                         'gain': False,
                         'shutter': False,
-                        'whitebalance': False
+                        'whitebalance': False,
+                        'slider': False
                     }
                     recall_scope = cam_config.get("recall_scope", default_recall_scope)
-                    # S'assurer que tous les paramètres sont présents
-                    for param in ['focus', 'iris', 'gain', 'shutter', 'whitebalance']:
+                    # S'assurer que tous les paramètres sont présents (migration automatique)
+                    for param in ['focus', 'iris', 'gain', 'shutter', 'whitebalance', 'slider']:
                         if param not in recall_scope:
                             recall_scope[param] = False
                     
@@ -543,6 +605,7 @@ class MainWindow(QMainWindow):
                         url=cam_config.get("url", "").rstrip('/'),
                         username=cam_config.get("username", ""),
                         password=cam_config.get("password", ""),
+                        slider_ip=cam_config.get("slider_ip", ""),
                         presets=cam_config.get("presets", {}),
                         recall_scope=recall_scope,
                         crossfade_duration=float(crossfade_duration)
@@ -576,6 +639,7 @@ class MainWindow(QMainWindow):
                     "url": cam_data.url,
                     "username": cam_data.username,
                     "password": cam_data.password,
+                    "slider_ip": cam_data.slider_ip,
                     "presets": cam_data.presets,
                     "recall_scope": cam_data.recall_scope,
                     "crossfade_duration": cam_data.crossfade_duration
@@ -698,6 +762,12 @@ class MainWindow(QMainWindow):
         self.presets_panel = self.create_presets_panel()
         self.controls_panel = self.create_controls_panel()
         
+        # Créer les panneaux de contrôle du slider
+        self.pan_panel = self.create_pan_panel()
+        self.tilt_panel = self.create_tilt_panel()
+        self.slide_panel = self.create_slide_panel()
+        self.zoom_motor_panel = self.create_zoom_motor_panel()
+        
         # Ajouter les panneaux au layout central
         central_layout.addWidget(self.focus_panel)
         central_layout.addWidget(self.iris_panel)
@@ -714,6 +784,21 @@ class MainWindow(QMainWindow):
         shutter_zoom_layout.addStretch()  # Pour pousser les panneaux vers le haut
         
         central_layout.addWidget(shutter_zoom_container)
+        
+        # Conteneur vertical pour les panneaux de contrôle du slider (pan, tilt, slide, zoom motor)
+        slider_container = QWidget()
+        slider_container_layout = QVBoxLayout(slider_container)
+        slider_container_layout.setSpacing(10)  # Réduire l'espacement pour donner plus d'espace aux faders
+        slider_container_layout.setContentsMargins(0, 0, 0, 0)
+        # Ajouter chaque panneau avec un stretch factor pour qu'ils prennent plus d'espace vertical
+        slider_container_layout.addWidget(self.pan_panel, stretch=1)
+        slider_container_layout.addWidget(self.tilt_panel, stretch=1)
+        slider_container_layout.addWidget(self.slide_panel, stretch=1)
+        slider_container_layout.addWidget(self.zoom_motor_panel, stretch=1)
+        # Pas de stretch à la fin pour que les panneaux prennent tout l'espace disponible
+        
+        # Ajouter le conteneur slider à gauche des presets
+        central_layout.addWidget(slider_container)
         central_layout.addWidget(self.presets_panel)
         central_layout.addWidget(self.controls_panel)
         
@@ -2760,6 +2845,340 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
     
+    def create_slider_axis_panel(self, axis_name: str, display_name: str):
+        """Crée un panneau de contrôle pour un axe du slider (pan, tilt, slide, zoom motor)."""
+        panel = QWidget()
+        panel_width = self._scale_value(200)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        # Avec slider horizontal, on n'a plus besoin d'Expanding verticalement
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        spacing = self._scale_value(10)  # Réduire l'espacement pour donner plus d'espace au slider
+        margin = self._scale_value(20)  # Réduire les marges pour donner plus d'espace au slider
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        
+        # Titre
+        title = QLabel(display_name)
+        title.setAlignment(Qt.AlignCenter)
+        font_size = self._scale_font(14)
+        title.setStyleSheet(f"font-size: {font_size}; color: #fff;")
+        layout.addWidget(title, stretch=0)
+        
+        # Affichage des valeurs (% et steps) au-dessus du slider
+        values_display = QWidget()
+        values_layout = QHBoxLayout(values_display)
+        values_layout.setContentsMargins(0, 0, 0, 0)
+        values_layout.setSpacing(10)
+        
+        # Label pour le pourcentage
+        percent_label = QLabel("0.0%")
+        percent_label.setAlignment(Qt.AlignLeft)
+        percent_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        values_layout.addWidget(percent_label)
+        
+        values_layout.addStretch()
+        
+        # Label pour les steps
+        steps_label = QLabel("0 steps")
+        steps_label.setAlignment(Qt.AlignRight)
+        steps_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        values_layout.addWidget(steps_label)
+        
+        # Initialiser les labels avec des valeurs par défaut
+        percent_label.setText("0.0%")
+        steps_label.setText("0 steps")
+        
+        layout.addWidget(values_display, stretch=0)
+        
+        # Slider horizontal
+        slider_container = QWidget()
+        slider_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        slider_layout = QVBoxLayout(slider_container)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(5)
+        
+        # Labels pour le slider (0.0 à gauche, 0.5 au centre, 1.0 à droite)
+        labels_row = QWidget()
+        labels_layout = QHBoxLayout(labels_row)
+        labels_layout.setContentsMargins(0, 0, 0, 0)
+        labels_layout.setSpacing(0)
+        
+        label_0 = QLabel("0.0")
+        label_0.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
+        labels_layout.addWidget(label_0)
+        labels_layout.addStretch()
+        label_05 = QLabel("0.5")
+        label_05.setAlignment(Qt.AlignCenter)
+        label_05.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
+        labels_layout.addWidget(label_05)
+        labels_layout.addStretch()
+        label_1 = QLabel("1.0")
+        label_1.setAlignment(Qt.AlignRight)
+        label_1.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #aaa;")
+        labels_layout.addWidget(label_1)
+        
+        slider_layout.addWidget(labels_row)
+        
+        # Slider horizontal
+        slider = QSlider(Qt.Horizontal)
+        slider.setMinimum(0)
+        slider.setMaximum(1000)  # 0.001 de précision
+        slider.setValue(500)  # Position centrale par défaut (0.5)
+        slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        slider.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+        """))
+        
+        slider_layout.addWidget(slider)
+        
+        layout.addWidget(slider_container, stretch=0)
+        
+        # Stocker les références dans le panel
+        panel.slider = slider
+        panel.axis_name = axis_name
+        panel.percent_label = percent_label
+        panel.steps_label = steps_label
+        
+        return panel
+    
+    def on_slider_position_update(self, data: Dict[str, Any], camera_id: Optional[int] = None):
+        """
+        Callback appelé quand les positions du slider sont mises à jour via WebSocket.
+        
+        Args:
+            data: Dictionnaire avec les positions (format WebSocket)
+                {
+                    "pan": {"steps": 12345, "normalized": 0.5},
+                    "tilt": {"steps": 6789, "normalized": 0.75},
+                    "zoom": {"steps": 1000, "normalized": 0.3},
+                    "slide": {"steps": 5000, "normalized": 0.6},
+                    "timestamp": 1234567890
+                }
+            camera_id: ID de la caméra (optionnel, utilise active_camera_id si None)
+        """
+        # Utiliser camera_id si fourni, sinon utiliser la caméra active
+        if camera_id is None:
+            camera_id = self.active_camera_id
+        
+        if camera_id < 1 or camera_id > 8:
+            return
+        
+        cam_data = self.cameras[camera_id]
+        
+        # Vérifier que c'est la caméra active avant de mettre à jour l'UI
+        if camera_id != self.active_camera_id or not cam_data.connected:
+            # Mettre à jour les données même si ce n'est pas la caméra active
+            # mais ne pas mettre à jour l'UI
+            try:
+                pan_data = data.get('pan', {})
+                tilt_data = data.get('tilt', {})
+                zoom_data = data.get('zoom', {})
+                slide_data = data.get('slide', {})
+                
+                cam_data.slider_pan_value = float(pan_data.get('normalized', 0.0))
+                cam_data.slider_tilt_value = float(tilt_data.get('normalized', 0.0))
+                cam_data.slider_zoom_value = float(zoom_data.get('normalized', 0.0))
+                cam_data.slider_slide_value = float(slide_data.get('normalized', 0.0))
+                
+                cam_data.slider_pan_steps = int(pan_data.get('steps', 0))
+                cam_data.slider_tilt_steps = int(tilt_data.get('steps', 0))
+                cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
+                cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
+            except Exception:
+                pass
+            return
+        
+        try:
+            # Extraire les valeurs normalized et steps
+            pan_data = data.get('pan', {})
+            tilt_data = data.get('tilt', {})
+            zoom_data = data.get('zoom', {})
+            slide_data = data.get('slide', {})
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    import json
+                    pan_norm = float(pan_data.get('normalized', 0.0))
+                    tilt_norm = float(tilt_data.get('normalized', 0.0))
+                    zoom_norm = float(zoom_data.get('normalized', 0.0))
+                    slide_norm = float(slide_data.get('normalized', 0.0))
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D",
+                        "location": "focus_ui_pyside6_standalone.py:3009",
+                        "message": "websocket_position_update",
+                        "data": {
+                            "pan": pan_norm, "tilt": tilt_norm, "zoom": zoom_norm, "slide": slide_norm,
+                            "pan_user_touching": self.slider_user_touching.get('pan', False),
+                            "tilt_user_touching": self.slider_user_touching.get('tilt', False),
+                            "zoom_user_touching": self.slider_user_touching.get('zoom', False),
+                            "slide_user_touching": self.slider_user_touching.get('slide', False),
+                            "timestamp": time.time()
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+            
+            # Mettre à jour CameraData avec les valeurs normalized
+            cam_data.slider_pan_value = float(pan_data.get('normalized', 0.0))
+            cam_data.slider_tilt_value = float(tilt_data.get('normalized', 0.0))
+            cam_data.slider_zoom_value = float(zoom_data.get('normalized', 0.0))
+            cam_data.slider_slide_value = float(slide_data.get('normalized', 0.0))
+            
+            # Mettre à jour CameraData avec les steps
+            cam_data.slider_pan_steps = int(pan_data.get('steps', 0))
+            cam_data.slider_tilt_steps = int(tilt_data.get('steps', 0))
+            cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
+            cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
+            
+            # Mettre à jour les sliders UI et les labels (sans déclencher les événements)
+            # MAIS seulement si l'utilisateur ne touche pas le slider
+            if hasattr(self, 'pan_panel') and hasattr(self.pan_panel, 'slider'):
+                if not self.slider_user_touching.get('pan', False):
+                    pan_value = int(cam_data.slider_pan_value * 1000)
+                    self.pan_panel.slider.blockSignals(True)
+                    self.pan_panel.slider.setValue(pan_value)
+                    self.pan_panel.slider.blockSignals(False)
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "D",
+                            "location": "focus_ui_pyside6_standalone.py:3031",
+                            "message": "websocket_ui_update_pan",
+                            "data": {
+                                "pan_value": int(cam_data.slider_pan_value * 1000),
+                                "user_touching": self.slider_user_touching.get('pan', False),
+                                "updated": not self.slider_user_touching.get('pan', False),
+                                "timestamp": time.time()
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
+                # Mettre à jour les labels
+                if hasattr(self.pan_panel, 'percent_label'):
+                    self.pan_panel.percent_label.setText(f"{cam_data.slider_pan_value * 100:.1f}%")
+                if hasattr(self.pan_panel, 'steps_label'):
+                    self.pan_panel.steps_label.setText(f"{cam_data.slider_pan_steps} steps")
+            
+            if hasattr(self, 'tilt_panel') and hasattr(self.tilt_panel, 'slider'):
+                if not self.slider_user_touching.get('tilt', False):
+                    tilt_value = int(cam_data.slider_tilt_value * 1000)
+                    self.tilt_panel.slider.blockSignals(True)
+                    self.tilt_panel.slider.setValue(tilt_value)
+                    self.tilt_panel.slider.blockSignals(False)
+                # Mettre à jour les labels
+                if hasattr(self.tilt_panel, 'percent_label'):
+                    self.tilt_panel.percent_label.setText(f"{cam_data.slider_tilt_value * 100:.1f}%")
+                if hasattr(self.tilt_panel, 'steps_label'):
+                    self.tilt_panel.steps_label.setText(f"{cam_data.slider_tilt_steps} steps")
+            
+            if hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'slider'):
+                if not self.slider_user_touching.get('zoom', False):
+                    zoom_value = int(cam_data.slider_zoom_value * 1000)
+                    self.zoom_motor_panel.slider.blockSignals(True)
+                    self.zoom_motor_panel.slider.setValue(zoom_value)
+                    self.zoom_motor_panel.slider.blockSignals(False)
+                # Mettre à jour les labels
+                if hasattr(self.zoom_motor_panel, 'percent_label'):
+                    self.zoom_motor_panel.percent_label.setText(f"{cam_data.slider_zoom_value * 100:.1f}%")
+                if hasattr(self.zoom_motor_panel, 'steps_label'):
+                    self.zoom_motor_panel.steps_label.setText(f"{cam_data.slider_zoom_steps} steps")
+            
+            if hasattr(self, 'slide_panel') and hasattr(self.slide_panel, 'slider'):
+                if not self.slider_user_touching.get('slide', False):
+                    slide_value = int(cam_data.slider_slide_value * 1000)
+                    self.slide_panel.slider.blockSignals(True)
+                    self.slide_panel.slider.setValue(slide_value)
+                    self.slide_panel.slider.blockSignals(False)
+                # Mettre à jour les labels
+                if hasattr(self.slide_panel, 'percent_label'):
+                    self.slide_panel.percent_label.setText(f"{cam_data.slider_slide_value * 100:.1f}%")
+                if hasattr(self.slide_panel, 'steps_label'):
+                    self.slide_panel.steps_label.setText(f"{cam_data.slider_slide_steps} steps")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la mise à jour des positions du slider via WebSocket: {e}")
+    
+    def sync_slider_positions_from_api(self):
+        """Synchronise les positions des faders UI avec les positions réelles du slider via l'API HTTP (fallback)."""
+        # Cette méthode est maintenant utilisée uniquement comme fallback si le WebSocket n'est pas disponible
+        cam_data = self.get_active_camera_data()
+        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        
+        if not slider_controller or not slider_controller.is_configured():
+            return  # Slider non configuré
+        
+        try:
+            # Lire les positions actuelles du slider
+            slider_status = slider_controller.get_status(silent=True)
+            if not slider_status:
+                logger.debug("Impossible de lire les positions du slider")
+                return
+            
+            # Simuler le format WebSocket pour utiliser la même méthode de mise à jour
+            data = {
+                'pan': {'steps': cam_data.slider_pan_steps, 'normalized': slider_status.get('pan', 0.0)},
+                'tilt': {'steps': cam_data.slider_tilt_steps, 'normalized': slider_status.get('tilt', 0.0)},
+                'zoom': {'steps': cam_data.slider_zoom_steps, 'normalized': slider_status.get('zoom', 0.0)},
+                'slide': {'steps': cam_data.slider_slide_steps, 'normalized': slider_status.get('slide', 0.0)}
+            }
+            # Note: get_status() ne retourne pas les steps, donc on utilise les steps déjà stockés dans CameraData
+            # Le WebSocket est la source principale pour les steps
+            
+            self.on_slider_position_update(data, camera_id=self.active_camera_id)
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la synchronisation des positions du slider: {e}")
+    
+    def create_pan_panel(self):
+        """Crée le panneau de contrôle Pan."""
+        return self.create_slider_axis_panel("pan", "Pan Control")
+    
+    def create_tilt_panel(self):
+        """Crée le panneau de contrôle Tilt."""
+        return self.create_slider_axis_panel("tilt", "Tilt Control")
+    
+    def create_slide_panel(self):
+        """Crée le panneau de contrôle Slide."""
+        return self.create_slider_axis_panel("slide", "Slide Control")
+    
+    def create_zoom_motor_panel(self):
+        """Crée le panneau de contrôle Zoom Motor."""
+        return self.create_slider_axis_panel("zoom", "Zoom Motor Control")
+    
     def create_presets_panel(self):
         """Crée le panneau de presets."""
         panel = QWidget()
@@ -2934,6 +3353,14 @@ class MainWindow(QMainWindow):
         whitebalance_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('whitebalance', checked))
         recall_scope_container.addWidget(whitebalance_checkbox)
         self.recall_scope_checkboxes['whitebalance'] = whitebalance_checkbox
+        
+        # Checkbox Slider
+        slider_checkbox = QPushButton("☐ Slider")
+        slider_checkbox.setCheckable(True)
+        slider_checkbox.setStyleSheet(recall_scope_checkbox_style)
+        slider_checkbox.clicked.connect(lambda checked: self.on_recall_scope_changed('slider', checked))
+        recall_scope_container.addWidget(slider_checkbox)
+        self.recall_scope_checkboxes['slider'] = slider_checkbox
         
         layout.addLayout(recall_scope_container)
         
@@ -3194,6 +3621,23 @@ class MainWindow(QMainWindow):
         self.signals.falseColor_changed.connect(self.on_falseColor_changed)
         self.signals.cleanfeed_changed.connect(self.on_cleanfeed_changed)
         # Note: websocket_status n'est plus utilisé car on utilise maintenant _handle_websocket_change avec camera_id
+        
+        # Connecter les signaux des sliders (pan, tilt, slide, zoom motor)
+        self.pan_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('pan'))
+        self.pan_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('pan'))
+        self.pan_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('pan', v))
+        
+        self.tilt_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('tilt'))
+        self.tilt_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('tilt'))
+        self.tilt_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('tilt', v))
+        
+        self.slide_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('slide'))
+        self.slide_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('slide'))
+        self.slide_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('slide', v))
+        
+        self.zoom_motor_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('zoom'))
+        self.zoom_motor_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('zoom'))
+        self.zoom_motor_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('zoom', v))
     
     def on_parameter_change(self, param_name: str, param_data: dict):
         """Callback appelé quand un paramètre change via WebSocket (déprécié)."""
@@ -3216,6 +3660,7 @@ class MainWindow(QMainWindow):
             camera_url=cam_data.url,
             username=cam_data.username,
             password=cam_data.password,
+            slider_ip=cam_data.slider_ip,
             connected=cam_data.connected
         )
         if dialog.exec():
@@ -3223,6 +3668,18 @@ class MainWindow(QMainWindow):
             cam_data.url = dialog.url_input.text().rstrip('/')
             cam_data.username = dialog.username_input.text()
             cam_data.password = dialog.password_input.text()
+            cam_data.slider_ip = dialog.slider_ip_input.text().strip()
+            
+            # Arrêter l'ancien WebSocket slider si existant
+            if cam_data.slider_websocket_client:
+                cam_data.slider_websocket_client.stop()
+                cam_data.slider_websocket_client = None
+            
+            # Mettre à jour le SliderController
+            if cam_data.slider_ip:
+                self.slider_controllers[self.active_camera_id] = SliderController(cam_data.slider_ip)
+            else:
+                self.slider_controllers[self.active_camera_id] = None
             
             # Sauvegarder dans le fichier
             self.save_cameras_config()
@@ -3230,6 +3687,23 @@ class MainWindow(QMainWindow):
             # Optionnel: se connecter si demandé
             if dialog.connected and dialog.connect_btn.text() == "Connecter":
                 self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
+            elif cam_data.connected and cam_data.slider_ip:
+                # Si déjà connecté, démarrer le nouveau WebSocket slider
+                try:
+                    # Créer un callback qui passe le camera_id
+                    def position_update_callback(data):
+                        self.on_slider_position_update(data, camera_id=self.active_camera_id)
+                    
+                    slider_ws_client = SliderWebSocketClient(
+                        slider_ip=cam_data.slider_ip,
+                        on_position_update_callback=position_update_callback,
+                        on_connection_status_callback=None
+                    )
+                    slider_ws_client.start()
+                    cam_data.slider_websocket_client = slider_ws_client
+                    logger.info(f"WebSocket slider démarré pour caméra {self.active_camera_id}")
+                except Exception as e:
+                    logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
     
     def connect_to_camera(self, camera_id: int, camera_url: str, username: str, password: str):
         """Se connecte à la caméra avec les paramètres fournis."""
@@ -3280,12 +3754,32 @@ class MainWindow(QMainWindow):
             # Mettre à jour le StateStore avec l'état de connexion
             self.state_store.update_cam(camera_id, connected=True)
             
+            # Démarrer le WebSocket du slider si configuré
+            if cam_data.slider_ip:
+                try:
+                    # Créer un callback qui passe le camera_id
+                    def position_update_callback(data):
+                        self.on_slider_position_update(data, camera_id=camera_id)
+                    
+                    slider_ws_client = SliderWebSocketClient(
+                        slider_ip=cam_data.slider_ip,
+                        on_position_update_callback=position_update_callback,
+                        on_connection_status_callback=None  # Optionnel : peut être ajouté plus tard
+                    )
+                    slider_ws_client.start()
+                    cam_data.slider_websocket_client = slider_ws_client
+                    logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
+                except Exception as e:
+                    logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
+            
             # Mettre à jour l'UI seulement si c'est la caméra active
             if camera_id == self.active_camera_id:
                 self.status_label.setText(f"✓ Caméra {camera_id} - Connectée à {cam_data.url}")
                 self.status_label.setStyleSheet("color: #0f0;")
                 # Activer tous les contrôles
                 self.set_controls_enabled(True)
+                # Synchronisation initiale via HTTP (fallback si WebSocket pas encore connecté)
+                QTimer.singleShot(500, self.sync_slider_positions_from_api)
             
             logger.info(f"Caméra {camera_id} connectée à {cam_data.url}")
         except Exception as e:
@@ -3309,10 +3803,15 @@ class MainWindow(QMainWindow):
         cam_data = self.cameras[camera_id]
         
         try:
-            # Arrêter le WebSocket
+            # Arrêter le WebSocket de la caméra
             if cam_data.websocket_client:
                 cam_data.websocket_client.stop()
                 cam_data.websocket_client = None
+            
+            # Arrêter le WebSocket du slider
+            if cam_data.slider_websocket_client:
+                cam_data.slider_websocket_client.stop()
+                cam_data.slider_websocket_client = None
             
             # Détruire le contrôleur
             cam_data.controller = None
@@ -3972,6 +4471,213 @@ class MainWindow(QMainWindow):
             # En cas d'erreur, attendre quand même 50ms
             QTimer.singleShot(50, self._on_focus_send_complete)
     
+    def on_slider_pressed(self, axis_name: str):
+        """Appelé quand on appuie sur un slider (pan, tilt, slide, zoom)."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A",
+                    "location": "focus_ui_pyside6_standalone.py:4415",
+                    "message": "slider_pressed",
+                    "data": {"axis_name": axis_name, "timestamp": time.time()},
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
+        self.slider_user_touching[axis_name] = True
+        self.slider_command_sent[axis_name] = False  # Réinitialiser le flag pour cette interaction
+    
+    def on_slider_released(self, axis_name: str):
+        """Appelé quand on relâche un slider (pan, tilt, slide, zoom)."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A",
+                    "location": "focus_ui_pyside6_standalone.py:4419",
+                    "message": "slider_released",
+                    "data": {"axis_name": axis_name, "command_sent": self.slider_command_sent.get(axis_name, False), "timestamp": time.time()},
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
+        
+        # Si aucune commande n'a été envoyée pendant l'interaction (clic court/jump),
+        # envoyer la valeur actuelle du slider
+        if not self.slider_command_sent.get(axis_name, False):
+            # Récupérer la valeur actuelle du slider
+            if axis_name == 'pan' and hasattr(self, 'pan_panel') and hasattr(self.pan_panel, 'slider'):
+                current_value = self.pan_panel.slider.value()
+            elif axis_name == 'tilt' and hasattr(self, 'tilt_panel') and hasattr(self.tilt_panel, 'slider'):
+                current_value = self.tilt_panel.slider.value()
+            elif axis_name == 'zoom' and hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'slider'):
+                current_value = self.zoom_motor_panel.slider.value()
+            elif axis_name == 'slide' and hasattr(self, 'slide_panel') and hasattr(self.slide_panel, 'slider'):
+                current_value = self.slide_panel.slider.value()
+            else:
+                current_value = None
+            
+            if current_value is not None:
+                normalized_value = current_value / 1000.0
+                # Mettre à jour la valeur dans CameraData
+                cam_data = self.get_active_camera_data()
+                if axis_name == 'pan':
+                    cam_data.slider_pan_value = normalized_value
+                elif axis_name == 'tilt':
+                    cam_data.slider_tilt_value = normalized_value
+                elif axis_name == 'zoom':
+                    cam_data.slider_zoom_value = normalized_value
+                elif axis_name == 'slide':
+                    cam_data.slider_slide_value = normalized_value
+                
+                # Envoyer la commande
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "E",
+                            "location": "focus_ui_pyside6_standalone.py:4503",
+                            "message": "slider_released_send_jump",
+                            "data": {"axis_name": axis_name, "value": normalized_value, "timestamp": time.time()},
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
+                self._send_slider_command(axis_name, normalized_value)
+        
+        self.slider_user_touching[axis_name] = False
+        self.slider_command_sent[axis_name] = False  # Réinitialiser pour la prochaine interaction
+    
+    def on_slider_value_changed(self, axis_name: str, value: int):
+        """Appelé quand la valeur d'un slider change (pan, tilt, slide, zoom)."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "B",
+                    "location": "focus_ui_pyside6_standalone.py:4423",
+                    "message": "slider_value_changed",
+                    "data": {"axis_name": axis_name, "value": value, "user_touching": self.slider_user_touching.get(axis_name, False), "timestamp": time.time()},
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
+        # Envoyer SEULEMENT si l'utilisateur touche physiquement le slider
+        if not self.slider_user_touching[axis_name]:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "focus_ui_pyside6_standalone.py:4426",
+                        "message": "slider_value_changed_ignored",
+                        "data": {"axis_name": axis_name, "reason": "user_not_touching", "timestamp": time.time()},
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+            return
+        
+        # Convertir la valeur du slider (0-1000) en valeur normalisée (0.0-1.0)
+        normalized_value = value / 1000.0
+        
+        # Mettre à jour la valeur dans CameraData
+        cam_data = self.get_active_camera_data()
+        if axis_name == 'pan':
+            cam_data.slider_pan_value = normalized_value
+        elif axis_name == 'tilt':
+            cam_data.slider_tilt_value = normalized_value
+        elif axis_name == 'zoom':
+            cam_data.slider_zoom_value = normalized_value
+        elif axis_name == 'slide':
+            cam_data.slider_slide_value = normalized_value
+        
+        # Envoyer la commande au slider (pas besoin de mettre à jour l'affichage, on a supprimé les labels)
+        self._send_slider_command(axis_name, normalized_value)
+        # Marquer qu'une commande a été envoyée pendant cette interaction
+        self.slider_command_sent[axis_name] = True
+    
+    def _send_slider_command(self, axis_name: str, value: float):
+        """Envoie une commande au slider pour déplacer un axe."""
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C",
+                    "location": "focus_ui_pyside6_standalone.py:4446",
+                    "message": "send_slider_command_start",
+                    "data": {"axis_name": axis_name, "value": value, "timestamp": time.time()},
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
+        cam_data = self.get_active_camera_data()
+        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        
+        if not slider_controller or not slider_controller.is_configured():
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C",
+                        "location": "focus_ui_pyside6_standalone.py:4451",
+                        "message": "send_slider_command_aborted",
+                        "data": {"axis_name": axis_name, "reason": "not_configured", "timestamp": time.time()},
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+            return  # Slider non configuré
+        
+        # Mapper les noms d'axes aux méthodes du SliderController
+        axis_map = {
+            'pan': 'move_pan',
+            'tilt': 'move_tilt',
+            'slide': 'move_slide',
+            'zoom': 'move_zoom'
+        }
+        
+        if axis_name in axis_map:
+            method = getattr(slider_controller, axis_map[axis_name])
+            result = method(value, silent=True)
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C",
+                        "location": "focus_ui_pyside6_standalone.py:4464",
+                        "message": "send_slider_command_complete",
+                        "data": {"axis_name": axis_name, "value": value, "success": result, "timestamp": time.time()},
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+    
     def _on_focus_send_complete(self):
         """Appelé après le délai de 50ms, lit la position actuelle du fader si l'utilisateur le touche encore."""
         self.focus_sending = False
@@ -4127,6 +4833,36 @@ class MainWindow(QMainWindow):
             except:
                 pass
             
+            # Récupérer les valeurs du slider
+            slider_controller = self.slider_controllers.get(self.active_camera_id)
+            if slider_controller and slider_controller.is_configured():
+                try:
+                    slider_status = slider_controller.get_status(silent=True)
+                    if slider_status:
+                        preset_data["pan"] = slider_status.get('pan', 0.0)
+                        preset_data["tilt"] = slider_status.get('tilt', 0.0)
+                        preset_data["zoom_motor"] = slider_status.get('zoom', 0.0)
+                        preset_data["slide"] = slider_status.get('slide', 0.0)
+                    else:
+                        # Si le slider n'est pas accessible, utiliser les valeurs actuelles des sliders UI
+                        preset_data["pan"] = cam_data.slider_pan_value
+                        preset_data["tilt"] = cam_data.slider_tilt_value
+                        preset_data["zoom_motor"] = cam_data.slider_zoom_value
+                        preset_data["slide"] = cam_data.slider_slide_value
+                except Exception as e:
+                    logger.debug(f"Erreur lors de la lecture du statut du slider: {e}")
+                    # Utiliser les valeurs actuelles des sliders UI en cas d'erreur
+                    preset_data["pan"] = cam_data.slider_pan_value
+                    preset_data["tilt"] = cam_data.slider_tilt_value
+                    preset_data["zoom_motor"] = cam_data.slider_zoom_value
+                    preset_data["slide"] = cam_data.slider_slide_value
+            else:
+                # Slider non configuré, utiliser les valeurs actuelles des sliders UI ou 0.0
+                preset_data["pan"] = cam_data.slider_pan_value
+                preset_data["tilt"] = cam_data.slider_tilt_value
+                preset_data["zoom_motor"] = cam_data.slider_zoom_value
+                preset_data["slide"] = cam_data.slider_slide_value
+            
             # Sauvegarder le preset dans la caméra active
             cam_data.presets[f"preset_{preset_number}"] = preset_data
             
@@ -4162,11 +4898,29 @@ class MainWindow(QMainWindow):
             
             preset_data = cam_data.presets[preset_key]
             
-            # Filtrer les paramètres selon le recall scope (exclure ceux où recall_scope[param] == True)
-            filtered_preset_data = {
-                param: value for param, value in preset_data.items()
+            # Séparer les valeurs slider des autres valeurs
+            slider_values = {}
+            camera_values = {}
+            
+            for param, value in preset_data.items():
+                if param in ['pan', 'tilt', 'zoom_motor', 'slide']:
+                    slider_values[param] = value
+                else:
+                    camera_values[param] = value
+            
+            # Filtrer les paramètres caméra selon le recall scope (exclure ceux où recall_scope[param] == True)
+            filtered_camera_data = {
+                param: value for param, value in camera_values.items()
                 if param not in cam_data.recall_scope or not cam_data.recall_scope[param]
             }
+            
+            # Filtrer les valeurs slider selon le recall scope
+            # Si recall_scope['slider'] == True, on n'envoie pas les valeurs slider
+            should_send_slider = (
+                slider_values and 
+                'slider' in cam_data.recall_scope and 
+                not cam_data.recall_scope['slider']
+            )
             
             # Arrêter toute transition en cours
             if self.preset_transition_timer:
@@ -4176,13 +4930,34 @@ class MainWindow(QMainWindow):
             # Si transition progressive activée, faire une transition
             if self.smooth_preset_transition:
                 try:
-                    self._start_smooth_preset_transition(filtered_preset_data, preset_number)
+                    self._start_smooth_preset_transition(filtered_camera_data, preset_number)
                 except Exception as e:
                     logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
                     raise
             else:
                 # Appliquer les valeurs instantanément
-                self._apply_preset_values_instant(filtered_preset_data, preset_number)
+                self._apply_preset_values_instant(filtered_camera_data, preset_number)
+            
+            # Envoyer les valeurs slider si nécessaire
+            if should_send_slider:
+                slider_controller = self.slider_controllers.get(self.active_camera_id)
+                if slider_controller and slider_controller.is_configured():
+                    # Les valeurs pan/tilt dans les presets sont en -1.0 à +1.0
+                    # move_axes() les convertira automatiquement en 0.0-1.0 pour l'API
+                    pan = slider_values.get('pan')
+                    tilt = slider_values.get('tilt')
+                    zoom = slider_values.get('zoom_motor')  # zoom_motor dans preset -> zoom dans API
+                    slide = slider_values.get('slide')
+                    
+                    # Envoyer avec la durée de crossfade pour synchronisation
+                    slider_controller.move_axes(
+                        pan=pan,
+                        tilt=tilt,
+                        zoom=zoom,
+                        slide=slide,
+                        duration=cam_data.crossfade_duration,
+                        silent=True
+                    )
             
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
@@ -4345,7 +5120,8 @@ class MainWindow(QMainWindow):
             'iris': 'Iris',
             'gain': 'Gain',
             'shutter': 'Shutter',
-            'whitebalance': 'White Balance'
+            'whitebalance': 'White Balance',
+            'slider': 'Slider'
         }
         return display_names.get(param, param.capitalize())
     
