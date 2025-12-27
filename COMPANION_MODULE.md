@@ -36,22 +36,30 @@
         "active_cam": 1,
         "cams": {
         "1": {
-            "connected": true,
-            "focus": 0.12,
-            "iris": 2.8,
-            "gain": 12,
-            "shutter": 0.02,
-            "whiteBalance": 3200,
-            "zoom": 0.0
+        "connected": true,
+        "focus": 0.12,
+        "iris": 2.8,
+        "gain": 12,
+        "shutter": 0.02,
+        "whiteBalance": 3200,
+        "zoom": 0.0,
+        "slider_pan": 0.5,
+        "slider_tilt": 0.75,
+        "slider_zoom": 0.3,
+        "slider_slide": 0.6
         },
         "2": {
-            "connected": false,
-            "focus": null,
-            "iris": null,
-            "gain": null,
-            "shutter": null,
-            "whiteBalance": null,
-            "zoom": null
+        "connected": false,
+        "focus": null,
+        "iris": null,
+        "gain": null,
+        "shutter": null,
+        "whiteBalance": null,
+        "zoom": null,
+        "slider_pan": null,
+        "slider_tilt": null,
+        "slider_zoom": null,
+        "slider_slide": null
         },
         ...
         },
@@ -139,7 +147,7 @@
 
     Définit la valeur d'un paramètre pour une caméra spécifique.
 
-    **Paramètres supportés** : `focus`, `gain`, `shutter`, `whiteBalance`
+    **Paramètres supportés** : `focus`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `slider_zoom`, `slider_slide`
 
     **Note** : `iris` n'est plus supporté par `set_param`. Utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour ajuster l'iris.
 
@@ -193,13 +201,59 @@
     }
     ```
 
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "set_param",
+    "cam": 3,
+    "param": "slider_pan",
+    "value": 0.5
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "set_param",
+    "cam": 3,
+    "param": "slider_tilt",
+    "value": 0.75
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "set_param",
+    "cam": 3,
+    "param": "slider_zoom",
+    "value": 0.3
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "set_param",
+    "cam": 3,
+    "param": "slider_slide",
+    "value": 0.6
+    }
+    ```
+
     **Valeurs** :
     - `focus` : 0.0 à 1.0 (float)
     - `gain` : Valeur entière en dB (doit correspondre à une valeur supportée par la caméra)
     - `shutter` : Valeur entière en fractions de seconde (doit correspondre à une valeur supportée par la caméra)
     - `whiteBalance` : Valeur entière en Kelvin (doit être dans la plage min/max de la caméra, généralement 2000K-10000K)
+    - `slider_pan` : 0.0 à 1.0 (float) - Position de l'axe pan du slider motorisé
+    - `slider_tilt` : 0.0 à 1.0 (float) - Position de l'axe tilt du slider motorisé
+    - `slider_zoom` : 0.0 à 1.0 (float) - Position de l'axe zoom motor du slider motorisé
+    - `slider_slide` : 0.0 à 1.0 (float) - Position de l'axe slide du slider motorisé
 
     **Note** : `iris` n'est plus supporté par `set_param`. Utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour ajuster l'iris d'un stop d'aperture.
+
+    **Note sur les sliders** : Chaque caméra peut avoir un slider motorisé configuré (via l'IP du slider dans la configuration). Les valeurs des axes slider sont normalisées entre 0.0 et 1.0. Si le slider n'est pas configuré pour une caméra, la commande retournera une erreur.
 
     **Réponse** :
     ```json
@@ -481,9 +535,15 @@
     shutter: number | null;    // fractions de seconde (entier)
     whiteBalance: number | null; // Kelvin (entier, généralement 2000K-10000K)
     zoom: number | null;       // 0.0 à 1.0
+    slider_pan: number | null;    // 0.0 à 1.0 - Position de l'axe pan du slider motorisé
+    slider_tilt: number | null;  // 0.0 à 1.0 - Position de l'axe tilt du slider motorisé
+    slider_zoom: number | null;  // 0.0 à 1.0 - Position de l'axe zoom motor du slider motorisé
+    slider_slide: number | null;  // 0.0 à 1.0 - Position de l'axe slide du slider motorisé
     }
 
     **Note importante sur iris** : Dans les snapshots et patchs, `iris` est toujours envoyé en aperture stop (f/2.8, f/4, etc.), pas en valeur normalisée. Pour contrôler l'iris, utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour incrémenter/décrémenter d'un stop d'aperture. Ne pas utiliser `set_param` ou `nudge` pour iris.
+
+    **Note sur les sliders** : Les valeurs `slider_pan`, `slider_tilt`, `slider_zoom` et `slider_slide` sont normalisées entre 0.0 et 1.0. Elles sont mises à jour en temps réel via WebSocket lorsque le slider physique bouge. Si le slider n'est pas configuré pour une caméra, ces valeurs seront `null`.
     ```
 
     ### État complet

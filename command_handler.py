@@ -115,6 +115,60 @@ class CommandHandler:
                 main_window.send_shutter_value(int(value), camera_id=cam)
             elif param == "whiteBalance":
                 main_window.send_whitebalance_value(int(value), camera_id=cam)
+            elif param in ["slider_pan", "slider_tilt", "slider_zoom", "slider_slide"]:
+                # Commandes pour les axes du slider motorisé
+                # Les valeurs doivent être entre 0.0 et 1.0
+                slider_value = float(value)
+                if slider_value < 0.0 or slider_value > 1.0:
+                    return False, f"Valeur slider invalide: {slider_value} (doit être entre 0.0 et 1.0)"
+                
+                # Mapper les noms de paramètres aux noms d'axes
+                axis_map = {
+                    "slider_pan": "pan",
+                    "slider_tilt": "tilt",
+                    "slider_zoom": "zoom",
+                    "slider_slide": "slide"
+                }
+                axis_name = axis_map[param]
+                
+                # Vérifier que le slider est configuré pour cette caméra
+                slider_controller = main_window.slider_controllers.get(cam)
+                if not slider_controller or not slider_controller.is_configured():
+                    return False, f"Slider non configuré pour la caméra {cam}"
+                
+                # Envoyer la commande au slider pour cette caméra spécifique
+                # Utiliser directement le SliderController de la caméra
+                if axis_name == "pan":
+                    slider_controller.move_pan(slider_value, silent=True)
+                elif axis_name == "tilt":
+                    slider_controller.move_tilt(slider_value, silent=True)
+                elif axis_name == "zoom":
+                    slider_controller.move_zoom(slider_value, silent=True)
+                elif axis_name == "slide":
+                    slider_controller.move_slide(slider_value, silent=True)
+                
+                # Mettre à jour les valeurs dans CameraData
+                if axis_name == "pan":
+                    cam_data.slider_pan_value = slider_value
+                elif axis_name == "tilt":
+                    cam_data.slider_tilt_value = slider_value
+                elif axis_name == "zoom":
+                    cam_data.slider_zoom_value = slider_value
+                elif axis_name == "slide":
+                    cam_data.slider_slide_value = slider_value
+                
+                # Mettre à jour le StateStore pour Companion
+                update_kwargs = {}
+                if axis_name == "pan":
+                    update_kwargs['slider_pan'] = slider_value
+                elif axis_name == "tilt":
+                    update_kwargs['slider_tilt'] = slider_value
+                elif axis_name == "zoom":
+                    update_kwargs['slider_zoom'] = slider_value
+                elif axis_name == "slide":
+                    update_kwargs['slider_slide'] = slider_value
+                if update_kwargs:
+                    main_window.state_store.update_cam(cam, **update_kwargs)
             else:
                 return False, f"Paramètre inconnu: {param}"
             

@@ -785,16 +785,17 @@ class MainWindow(QMainWindow):
         
         central_layout.addWidget(shutter_zoom_container)
         
-        # Conteneur vertical pour les panneaux de contrôle du slider (pan, tilt, slide, zoom motor)
+        # Conteneur vertical pour les panneaux de contrôle du slider (pan, tilt, zoom, slide)
         slider_container = QWidget()
         slider_container_layout = QVBoxLayout(slider_container)
         slider_container_layout.setSpacing(10)  # Réduire l'espacement pour donner plus d'espace aux faders
         slider_container_layout.setContentsMargins(0, 0, 0, 0)
         # Ajouter chaque panneau avec un stretch factor pour qu'ils prennent plus d'espace vertical
+        # Ordre : pan, tilt, zoom, slide
         slider_container_layout.addWidget(self.pan_panel, stretch=1)
         slider_container_layout.addWidget(self.tilt_panel, stretch=1)
-        slider_container_layout.addWidget(self.slide_panel, stretch=1)
         slider_container_layout.addWidget(self.zoom_motor_panel, stretch=1)
+        slider_container_layout.addWidget(self.slide_panel, stretch=1)
         # Pas de stretch à la fin pour que les panneaux prennent tout l'espace disponible
         
         # Ajouter le conteneur slider à gauche des presets
@@ -1031,6 +1032,16 @@ class MainWindow(QMainWindow):
                         border-radius: 4px;
                     }
                 """))
+        
+        # Mettre à jour les largeurs des panneaux de slider (proportionnels à la fenêtre)
+        if hasattr(self, 'pan_panel') and self.pan_panel:
+            base_width = self.width() if self.width() > 0 else 1920
+            slider_panel_width = max(self._scale_value(150), int(base_width * 0.08))
+            slider_panels = [self.pan_panel, self.tilt_panel, self.slide_panel, self.zoom_motor_panel]
+            for slider_panel in slider_panels:
+                if slider_panel:
+                    slider_panel.setMinimumWidth(slider_panel_width)
+                    slider_panel.setMaximumWidth(slider_panel_width)
         
         # Mettre à jour les boutons de caméra
         if hasattr(self, 'camera_buttons'):
@@ -2848,7 +2859,10 @@ class MainWindow(QMainWindow):
     def create_slider_axis_panel(self, axis_name: str, display_name: str):
         """Crée un panneau de contrôle pour un axe du slider (pan, tilt, slide, zoom motor)."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        # Utiliser un pourcentage de la largeur de la fenêtre (environ 8% de la largeur de référence)
+        # Cela rend les sliders proportionnels à la taille de la fenêtre
+        # La largeur sera mise à jour dans _update_ui_scaling lors du redimensionnement
+        panel_width = self._scale_value(150)  # Largeur initiale minimale, sera mise à jour lors du resize
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         # Avec slider horizontal, on n'a plus besoin d'Expanding verticalement
@@ -2887,15 +2901,15 @@ class MainWindow(QMainWindow):
         
         values_layout.addStretch()
         
-        # Label pour les steps
-        steps_label = QLabel("0 steps")
+        # Label pour les steps (juste la valeur numérique en jaune)
+        steps_label = QLabel("0")
         steps_label.setAlignment(Qt.AlignRight)
         steps_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
         values_layout.addWidget(steps_label)
         
         # Initialiser les labels avec des valeurs par défaut
         percent_label.setText("0.0%")
-        steps_label.setText("0 steps")
+        steps_label.setText("0")
         
         layout.addWidget(values_display, stretch=0)
         
@@ -3009,6 +3023,15 @@ class MainWindow(QMainWindow):
                 cam_data.slider_tilt_steps = int(tilt_data.get('steps', 0))
                 cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
                 cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
+                
+                # Mettre à jour le StateStore pour Companion (même si ce n'est pas la caméra active)
+                self.state_store.update_cam(
+                    camera_id,
+                    slider_pan=cam_data.slider_pan_value,
+                    slider_tilt=cam_data.slider_tilt_value,
+                    slider_zoom=cam_data.slider_zoom_value,
+                    slider_slide=cam_data.slider_slide_value
+                )
             except Exception:
                 pass
             return
@@ -3019,6 +3042,9 @@ class MainWindow(QMainWindow):
             tilt_data = data.get('tilt', {})
             zoom_data = data.get('zoom', {})
             slide_data = data.get('slide', {})
+            
+            # Debug: vérifier si les steps sont présents dans les données
+            logger.debug(f"WebSocket data reçue - pan steps: {pan_data.get('steps')}, tilt steps: {tilt_data.get('steps')}, zoom steps: {zoom_data.get('steps')}, slide steps: {slide_data.get('steps')}")
             
             # #region agent log
             try:
@@ -3059,6 +3085,15 @@ class MainWindow(QMainWindow):
             cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
             cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
             
+            # Mettre à jour le StateStore pour Companion
+            self.state_store.update_cam(
+                camera_id,
+                slider_pan=cam_data.slider_pan_value,
+                slider_tilt=cam_data.slider_tilt_value,
+                slider_zoom=cam_data.slider_zoom_value,
+                slider_slide=cam_data.slider_slide_value
+            )
+            
             # Mettre à jour les sliders UI et les labels (sans déclencher les événements)
             # MAIS seulement si l'utilisateur ne touche pas le slider
             if hasattr(self, 'pan_panel') and hasattr(self.pan_panel, 'slider'):
@@ -3067,31 +3102,11 @@ class MainWindow(QMainWindow):
                     self.pan_panel.slider.blockSignals(True)
                     self.pan_panel.slider.setValue(pan_value)
                     self.pan_panel.slider.blockSignals(False)
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "D",
-                            "location": "focus_ui_pyside6_standalone.py:3031",
-                            "message": "websocket_ui_update_pan",
-                            "data": {
-                                "pan_value": int(cam_data.slider_pan_value * 1000),
-                                "user_touching": self.slider_user_touching.get('pan', False),
-                                "updated": not self.slider_user_touching.get('pan', False),
-                                "timestamp": time.time()
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }) + "\n")
-                except: pass
-                # #endregion
-                # Mettre à jour les labels
+                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
                 if hasattr(self.pan_panel, 'percent_label'):
                     self.pan_panel.percent_label.setText(f"{cam_data.slider_pan_value * 100:.1f}%")
                 if hasattr(self.pan_panel, 'steps_label'):
-                    self.pan_panel.steps_label.setText(f"{cam_data.slider_pan_steps} steps")
+                    self.pan_panel.steps_label.setText(f"{cam_data.slider_pan_steps}")
             
             if hasattr(self, 'tilt_panel') and hasattr(self.tilt_panel, 'slider'):
                 if not self.slider_user_touching.get('tilt', False):
@@ -3099,11 +3114,11 @@ class MainWindow(QMainWindow):
                     self.tilt_panel.slider.blockSignals(True)
                     self.tilt_panel.slider.setValue(tilt_value)
                     self.tilt_panel.slider.blockSignals(False)
-                # Mettre à jour les labels
+                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
                 if hasattr(self.tilt_panel, 'percent_label'):
                     self.tilt_panel.percent_label.setText(f"{cam_data.slider_tilt_value * 100:.1f}%")
                 if hasattr(self.tilt_panel, 'steps_label'):
-                    self.tilt_panel.steps_label.setText(f"{cam_data.slider_tilt_steps} steps")
+                    self.tilt_panel.steps_label.setText(f"{cam_data.slider_tilt_steps}")
             
             if hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'slider'):
                 if not self.slider_user_touching.get('zoom', False):
@@ -3111,11 +3126,11 @@ class MainWindow(QMainWindow):
                     self.zoom_motor_panel.slider.blockSignals(True)
                     self.zoom_motor_panel.slider.setValue(zoom_value)
                     self.zoom_motor_panel.slider.blockSignals(False)
-                # Mettre à jour les labels
+                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
                 if hasattr(self.zoom_motor_panel, 'percent_label'):
                     self.zoom_motor_panel.percent_label.setText(f"{cam_data.slider_zoom_value * 100:.1f}%")
                 if hasattr(self.zoom_motor_panel, 'steps_label'):
-                    self.zoom_motor_panel.steps_label.setText(f"{cam_data.slider_zoom_steps} steps")
+                    self.zoom_motor_panel.steps_label.setText(f"{cam_data.slider_zoom_steps}")
             
             if hasattr(self, 'slide_panel') and hasattr(self.slide_panel, 'slider'):
                 if not self.slider_user_touching.get('slide', False):
@@ -3123,11 +3138,11 @@ class MainWindow(QMainWindow):
                     self.slide_panel.slider.blockSignals(True)
                     self.slide_panel.slider.setValue(slide_value)
                     self.slide_panel.slider.blockSignals(False)
-                # Mettre à jour les labels
+                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
                 if hasattr(self.slide_panel, 'percent_label'):
                     self.slide_panel.percent_label.setText(f"{cam_data.slider_slide_value * 100:.1f}%")
                 if hasattr(self.slide_panel, 'steps_label'):
-                    self.slide_panel.steps_label.setText(f"{cam_data.slider_slide_steps} steps")
+                    self.slide_panel.steps_label.setText(f"{cam_data.slider_slide_steps}")
             
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour des positions du slider via WebSocket: {e}")
@@ -3209,16 +3224,18 @@ class MainWindow(QMainWindow):
         
         # Colonne Save
         save_column = QVBoxLayout()
-        save_column.setSpacing(self._scale_value(5))
+        save_column.setSpacing(self._scale_value(3))  # Réduire l'espacement pour éviter le décalage
+        save_column.setContentsMargins(0, 0, 0, 0)  # Pas de marges pour un alignement parfait
         save_label = QLabel("Save")
         save_label.setAlignment(Qt.AlignCenter)
+        save_label.setFixedHeight(self._scale_value(20))  # Hauteur fixe pour alignement
         save_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
         save_column.addWidget(save_label)
         
         self.preset_save_buttons = []
         save_btn_style = self._scale_style("""
             QPushButton {
-                padding: 8px;
+                padding: 6px;
                 font-size: 10px;
                 font-weight: bold;
                 border: 1px solid #555;
@@ -3236,22 +3253,25 @@ class MainWindow(QMainWindow):
         for i in range(1, 11):
             save_btn = QPushButton(f"{i}")
             save_btn.setStyleSheet(save_btn_style)
+            save_btn.setFixedHeight(self._scale_value(28))  # Hauteur fixe pour alignement
             save_btn.clicked.connect(lambda checked, n=i: self.save_preset(n))
             save_column.addWidget(save_btn)
             self.preset_save_buttons.append(save_btn)
         
         # Colonne Recall
         recall_column = QVBoxLayout()
-        recall_column.setSpacing(self._scale_value(5))
+        recall_column.setSpacing(self._scale_value(3))  # Réduire l'espacement pour éviter le décalage
+        recall_column.setContentsMargins(0, 0, 0, 0)  # Pas de marges pour un alignement parfait
         recall_label = QLabel("Recall")
         recall_label.setAlignment(Qt.AlignCenter)
+        recall_label.setFixedHeight(self._scale_value(20))  # Hauteur fixe identique à Save pour alignement
         recall_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
         recall_column.addWidget(recall_label)
         
         self.preset_recall_buttons = []
         recall_btn_style = self._scale_style("""
             QPushButton {
-                padding: 8px;
+                padding: 6px;
                 font-size: 10px;
                 font-weight: bold;
                 border: 1px solid #555;
@@ -3269,6 +3289,7 @@ class MainWindow(QMainWindow):
         for i in range(1, 11):
             recall_btn = QPushButton(f"{i}")
             recall_btn.setStyleSheet(recall_btn_style)
+            recall_btn.setFixedHeight(self._scale_value(28))  # Hauteur fixe identique à Save pour alignement
             recall_btn.clicked.connect(lambda checked, n=i: self.recall_preset(n))
             recall_column.addWidget(recall_btn)
             self.preset_recall_buttons.append(recall_btn)
@@ -4607,6 +4628,19 @@ class MainWindow(QMainWindow):
             cam_data.slider_zoom_value = normalized_value
         elif axis_name == 'slide':
             cam_data.slider_slide_value = normalized_value
+        
+        # Mettre à jour le StateStore pour Companion
+        update_kwargs = {}
+        if axis_name == 'pan':
+            update_kwargs['slider_pan'] = normalized_value
+        elif axis_name == 'tilt':
+            update_kwargs['slider_tilt'] = normalized_value
+        elif axis_name == 'zoom':
+            update_kwargs['slider_zoom'] = normalized_value
+        elif axis_name == 'slide':
+            update_kwargs['slider_slide'] = normalized_value
+        if update_kwargs:
+            self.state_store.update_cam(self.active_camera_id, **update_kwargs)
         
         # Envoyer la commande au slider (pas besoin de mettre à jour l'affichage, on a supprimé les labels)
         self._send_slider_command(axis_name, normalized_value)

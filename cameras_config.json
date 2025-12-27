@@ -7,28 +7,28 @@
     "slider_ip": "192.168.1.37",
     "presets": {
       "preset_1": {
-        "focus": 0.7223330140113831,
+        "focus": 0.5014940500259399,
         "iris": 0.0,
-        "gain": 8,
+        "gain": 14,
         "shutter": 50,
-        "whitebalance": 4750,
+        "whitebalance": 5600,
         "zoom": 0.0,
-        "pan": 0.6810065000000001,
-        "tilt": 0.1010294,
+        "pan": 0.9429974,
+        "tilt": 0.6570589,
         "zoom_motor": 0.0,
-        "slide": 0.00700807
+        "slide": 0.4860009
       },
       "preset_2": {
-        "focus": 0.7971124649047852,
+        "focus": 0.7881295084953308,
         "iris": 0.0,
-        "gain": 8,
+        "gain": 14,
         "shutter": 50,
-        "whitebalance": 4750,
+        "whitebalance": 5600,
         "zoom": 0.0,
-        "pan": 0.2680047,
-        "tilt": 0.44205880000000003,
-        "zoom_motor": 1.0,
-        "slide": 0.2389922
+        "pan": 0.37000079999999996,
+        "tilt": 0.5579412,
+        "zoom_motor": 0.44896549999999996,
+        "slide": 0.4860009
       },
       "preset_4": {
         "focus": 0.8753483891487122,
@@ -43,27 +43,27 @@
         "slide": 0.00700807
       },
       "preset_3": {
-        "focus": 0.5643956065177917,
+        "focus": 0.8261421322822571,
         "iris": 0.0,
-        "gain": 8,
+        "gain": 14,
         "shutter": 50,
-        "whitebalance": 4750,
+        "whitebalance": 5600,
         "zoom": 0.0,
-        "pan": 0.5869982,
-        "tilt": 0.7389705999999999,
-        "zoom_motor": 0.1810345,
-        "slide": 0.2970053
+        "pan": 0.5940083,
+        "tilt": 0.29,
+        "zoom_motor": 1.0,
+        "slide": 0.00700807
       },
       "preset_5": {
-        "focus": 0.8432727456092834,
+        "focus": 0.8807048201560974,
         "iris": 0.0,
         "gain": 8,
         "shutter": 50,
         "whitebalance": 4750,
         "zoom": 0.0,
-        "pan": 0.08000665,
-        "tilt": 0.4129412,
-        "zoom_motor": 0.4348276,
+        "pan": 0.07200045000000001,
+        "tilt": 0.48602939999999994,
+        "zoom_motor": 0.79,
         "slide": 0.00700807
       },
       "preset_10": {
@@ -131,7 +131,7 @@
       "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 4.3999999999999995
+    "crossfade_duration": 7.799999999999988
   },
   "camera_2": {
     "url": "http://Micro-Studio-Camera-4K-G2-2.local",
