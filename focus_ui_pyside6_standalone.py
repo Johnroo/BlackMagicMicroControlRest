@@ -737,7 +737,7 @@ class MainWindow(QMainWindow):
         # Widget central avec layout horizontal
         central_widget = QWidget()
         central_layout = QHBoxLayout(central_widget)
-        central_layout.setSpacing(self._scale_value(20))
+        central_layout.setSpacing(self._scale_value(5))  # Espacement minimal pour coller les colonnes
         margin = self._scale_value(20)
         central_layout.setContentsMargins(margin, margin, margin, margin)
         
@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
         self.gain_panel = self.create_gain_panel()
         self.whitebalance_panel = self.create_whitebalance_panel()
         self.shutter_panel = self.create_shutter_panel()
-        self.zoom_panel = self.create_zoom_panel()
+        # Le panneau zoom a été supprimé, la focale est maintenant affichée dans zoom_motor_panel
         self.presets_panel = self.create_presets_panel()
         self.controls_panel = self.create_controls_panel()
         
@@ -770,23 +770,34 @@ class MainWindow(QMainWindow):
         
         # Ajouter les panneaux au layout central
         central_layout.addWidget(self.focus_panel)
-        central_layout.addWidget(self.iris_panel)
-        central_layout.addWidget(self.gain_panel)
-        central_layout.addWidget(self.whitebalance_panel)
         
-        # Conteneur vertical pour shutter et zoom (zoom en dessous de shutter)
-        shutter_zoom_container = QWidget()
-        shutter_zoom_layout = QVBoxLayout(shutter_zoom_container)
-        shutter_zoom_layout.setSpacing(20)
-        shutter_zoom_layout.setContentsMargins(0, 0, 0, 0)
-        shutter_zoom_layout.addWidget(self.shutter_panel)
-        shutter_zoom_layout.addWidget(self.zoom_panel)
-        shutter_zoom_layout.addStretch()  # Pour pousser les panneaux vers le haut
+        # Conteneur vertical pour iris et whitebalance (whitebalance en dessous de iris)
+        iris_whitebalance_container = QWidget()
+        iris_whitebalance_layout = QVBoxLayout(iris_whitebalance_container)
+        iris_whitebalance_layout.setSpacing(20)
+        iris_whitebalance_layout.setContentsMargins(0, 0, 0, 0)
+        iris_whitebalance_layout.addWidget(self.iris_panel)
+        iris_whitebalance_layout.addWidget(self.whitebalance_panel)
+        iris_whitebalance_layout.addStretch()  # Pour pousser les panneaux vers le haut
         
-        central_layout.addWidget(shutter_zoom_container)
+        central_layout.addWidget(iris_whitebalance_container)
+        
+        # Conteneur vertical pour gain et shutter (shutter en dessous de gain)
+        gain_shutter_container = QWidget()
+        gain_shutter_layout = QVBoxLayout(gain_shutter_container)
+        gain_shutter_layout.setSpacing(20)
+        gain_shutter_layout.setContentsMargins(0, 0, 0, 0)
+        gain_shutter_layout.addWidget(self.gain_panel)
+        gain_shutter_layout.addWidget(self.shutter_panel)
+        gain_shutter_layout.addStretch()  # Pour pousser les panneaux vers le haut
+        
+        central_layout.addWidget(gain_shutter_container)
+        
+        # Le panneau zoom a été supprimé, la focale est maintenant affichée dans zoom_motor_panel
         
         # Conteneur vertical pour les panneaux de contrôle du slider (pan, tilt, zoom, slide)
         slider_container = QWidget()
+        self.slider_container = slider_container  # Stocker la référence pour _update_ui_scaling
         slider_container_layout = QVBoxLayout(slider_container)
         slider_container_layout.setSpacing(10)  # Réduire l'espacement pour donner plus d'espace aux faders
         slider_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -798,8 +809,9 @@ class MainWindow(QMainWindow):
         slider_container_layout.addWidget(self.slide_panel, stretch=1)
         # Pas de stretch à la fin pour que les panneaux prennent tout l'espace disponible
         
-        # Ajouter le conteneur slider à gauche des presets
-        central_layout.addWidget(slider_container)
+        # Ajouter le conteneur slider avec un stretch factor pour qu'il prenne tout l'espace disponible
+        # entre gain/shutter et presets
+        central_layout.addWidget(slider_container, stretch=1)
         central_layout.addWidget(self.presets_panel)
         central_layout.addWidget(self.controls_panel)
         
@@ -965,7 +977,7 @@ class MainWindow(QMainWindow):
         # Zoom
         self.zoom_sent_value = cam_data.zoom_sent_value
         self.zoom_actual_value = cam_data.zoom_actual_value
-        # TODO: Mettre à jour les widgets zoom
+        # La focale sera mise à jour via on_zoom_changed quand les données sont chargées
         
         # Zebra, Focus Assist, False Color, Cleanfeed
         if hasattr(self, 'zebra_toggle'):
@@ -1013,11 +1025,11 @@ class MainWindow(QMainWindow):
         if not self.ui_scaler:
             return
         
-        # Mettre à jour les largeurs des panneaux
-        panel_width = self._scale_value(200)
+        # Mettre à jour les largeurs des panneaux (réduites pour libérer de l'espace pour les sliders)
+        panel_width = self._scale_value(170)  # Réduit de 200 à 170 pour optimiser l'espace
         panels = [
             self.focus_panel, self.iris_panel, self.gain_panel, 
-            self.whitebalance_panel, self.shutter_panel, self.zoom_panel,
+            self.whitebalance_panel, self.shutter_panel,
             self.presets_panel, self.controls_panel
         ]
         for panel in panels:
@@ -1033,10 +1045,26 @@ class MainWindow(QMainWindow):
                     }
                 """))
         
-        # Mettre à jour les largeurs des panneaux de slider (proportionnels à la fenêtre)
-        if hasattr(self, 'pan_panel') and self.pan_panel:
-            base_width = self.width() if self.width() > 0 else 1920
-            slider_panel_width = max(self._scale_value(150), int(base_width * 0.08))
+        # Mettre à jour les largeurs des panneaux de slider (utilisent tout l'espace disponible)
+        # Les sliders prennent maintenant tout l'espace entre gain/shutter et presets grâce au stretch factor
+        if hasattr(self, 'pan_panel') and self.pan_panel and hasattr(self, 'slider_container') and self.slider_container:
+            # Obtenir la largeur réelle du conteneur slider (qui s'étire avec le stretch factor)
+            slider_container_width = self.slider_container.width()
+            if slider_container_width > 0:
+                # Utiliser toute la largeur du conteneur moins une petite marge pour l'espacement interne
+                slider_panel_width = max(self._scale_value(300), slider_container_width - self._scale_value(10))
+            else:
+                # Fallback si le conteneur n'a pas encore de largeur (calcul basé sur la fenêtre)
+                base_width = self.width() if self.width() > 0 else 1920
+                # Calculer la largeur disponible : largeur totale - marges - autres colonnes
+                # Colonnes fixes : focus (170) + iris/wb (170) + gain/shutter (170) + presets (170) + controls (170) + spacing
+                fixed_columns_width = self._scale_value(170) * 5  # 5 colonnes fixes
+                spacing_width = self._scale_value(5) * 4  # 4 espacements entre 5 colonnes
+                margins_width = self._scale_value(20) * 2  # marges gauche et droite
+                available_width = base_width - fixed_columns_width - spacing_width - margins_width
+                # Utiliser 95% de l'espace disponible pour maximiser l'utilisation
+                slider_panel_width = max(self._scale_value(300), int(available_width * 0.95))
+            
             slider_panels = [self.pan_panel, self.tilt_panel, self.slide_panel, self.zoom_motor_panel]
             for slider_panel in slider_panels:
                 if slider_panel:
@@ -1108,7 +1136,6 @@ class MainWindow(QMainWindow):
             (self.gain_panel, "Gain Control"),
             (self.whitebalance_panel, "White Balance"),
             (self.shutter_panel, "⚡ Shutter Control"),
-            (self.zoom_panel, "🔍 Zoom Control"),
             (self.controls_panel, "Contrôles"),
         ]
         
@@ -1361,7 +1388,7 @@ class MainWindow(QMainWindow):
     def create_focus_panel(self):
         """Crée le panneau de contrôle du focus."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         # Permettre au panneau de s'étirer en hauteur
@@ -1580,7 +1607,7 @@ class MainWindow(QMainWindow):
     def create_iris_panel(self):
         """Crée le panneau de contrôle de l'iris."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -1817,7 +1844,7 @@ class MainWindow(QMainWindow):
     def create_gain_panel(self):
         """Crée le panneau de contrôle du gain."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -1945,7 +1972,7 @@ class MainWindow(QMainWindow):
     def create_whitebalance_panel(self):
         """Crée le panneau de contrôle du white balance."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -2391,7 +2418,7 @@ class MainWindow(QMainWindow):
     def create_shutter_panel(self):
         """Crée le panneau de contrôle du shutter."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -2633,7 +2660,7 @@ class MainWindow(QMainWindow):
     def create_zoom_panel(self):
         """Crée le panneau d'affichage du zoom."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders (panneau non utilisé)
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -2720,7 +2747,7 @@ class MainWindow(QMainWindow):
     def create_controls_panel(self):
         """Crée le panneau de contrôles."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -2859,10 +2886,10 @@ class MainWindow(QMainWindow):
     def create_slider_axis_panel(self, axis_name: str, display_name: str):
         """Crée un panneau de contrôle pour un axe du slider (pan, tilt, slide, zoom motor)."""
         panel = QWidget()
-        # Utiliser un pourcentage de la largeur de la fenêtre (environ 8% de la largeur de référence)
-        # Cela rend les sliders proportionnels à la taille de la fenêtre
+        # Utiliser un pourcentage de la largeur de la fenêtre (environ 20% de la largeur de référence)
+        # Cela rend les sliders proportionnels à la taille de la fenêtre et optimisés pour maximum de largeur
         # La largeur sera mise à jour dans _update_ui_scaling lors du redimensionnement
-        panel_width = self._scale_value(150)  # Largeur initiale minimale, sera mise à jour lors du resize
+        panel_width = self._scale_value(280)  # Largeur initiale optimisée, sera mise à jour lors du resize
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         # Avec slider horizontal, on n'a plus besoin d'Expanding verticalement
@@ -3191,13 +3218,27 @@ class MainWindow(QMainWindow):
         return self.create_slider_axis_panel("slide", "Slide Control")
     
     def create_zoom_motor_panel(self):
-        """Crée le panneau de contrôle Zoom Motor."""
-        return self.create_slider_axis_panel("zoom", "Zoom Motor Control")
+        """Crée le panneau de contrôle Zoom Motor avec affichage de la focale caméra."""
+        # Créer le panneau de base
+        panel = self.create_slider_axis_panel("zoom", "Zoom Motor Control")
+        
+        # Ajouter un label pour afficher la focale caméra en rouge sous le titre
+        focal_length_label = QLabel("- mm")
+        focal_length_label.setAlignment(Qt.AlignCenter)
+        focal_length_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #f00; font-family: 'Courier New';")
+        
+        # Insérer le label après le titre (index 0) dans le layout
+        panel.layout().insertWidget(1, focal_length_label)
+        
+        # Stocker la référence pour pouvoir la mettre à jour
+        panel.focal_length_label = focal_length_label
+        
+        return panel
     
     def create_presets_panel(self):
         """Crée le panneau de presets."""
         panel = QWidget()
-        panel_width = self._scale_value(200)
+        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -4317,6 +4358,10 @@ class MainWindow(QMainWindow):
             # Zoom
             zoom_data = cam_data.controller.get_zoom()
             if zoom_data:
+                # Stocker la valeur dans CameraData
+                if 'normalised' in zoom_data:
+                    cam_data.zoom_actual_value = float(zoom_data['normalised'])
+                    cam_data.zoom_sent_value = float(zoom_data['normalised'])
                 if camera_id == self.active_camera_id:
                     self.on_zoom_changed(zoom_data)
             
@@ -4712,6 +4757,219 @@ class MainWindow(QMainWindow):
             except: pass
             # #endregion
     
+    def increment_slider_pan(self, camera_id: Optional[int] = None):
+        """Incrémente le pan du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        # Vérifier que le slider est configuré
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        # Incrémenter de 1% (0.01) et clamper entre 0.0 et 1.0
+        current_value = cam_data.slider_pan_value
+        new_value = min(1.0, current_value + 0.01)
+        cam_data.slider_pan_value = new_value
+        
+        # Mettre à jour le StateStore
+        self.state_store.update_cam(actual_camera_id, slider_pan=new_value)
+        
+        # Envoyer la commande directement au slider
+        slider_controller.move_pan(new_value, silent=True)
+    
+    def decrement_slider_pan(self, camera_id: Optional[int] = None):
+        """Décrémente le pan du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_pan_value
+        new_value = max(0.0, current_value - 0.01)
+        cam_data.slider_pan_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_pan=new_value)
+        slider_controller.move_pan(new_value, silent=True)
+    
+    def increment_slider_tilt(self, camera_id: Optional[int] = None):
+        """Incrémente le tilt du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_tilt_value
+        new_value = min(1.0, current_value + 0.01)
+        cam_data.slider_tilt_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_tilt=new_value)
+        slider_controller.move_tilt(new_value, silent=True)
+    
+    def decrement_slider_tilt(self, camera_id: Optional[int] = None):
+        """Décrémente le tilt du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_tilt_value
+        new_value = max(0.0, current_value - 0.01)
+        cam_data.slider_tilt_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_tilt=new_value)
+        slider_controller.move_tilt(new_value, silent=True)
+    
+    def increment_slider_zoom(self, camera_id: Optional[int] = None):
+        """Incrémente le zoom du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_zoom_value
+        new_value = min(1.0, current_value + 0.01)
+        cam_data.slider_zoom_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_zoom=new_value)
+        slider_controller.move_zoom(new_value, silent=True)
+    
+    def decrement_slider_zoom(self, camera_id: Optional[int] = None):
+        """Décrémente le zoom du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_zoom_value
+        new_value = max(0.0, current_value - 0.01)
+        cam_data.slider_zoom_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_zoom=new_value)
+        slider_controller.move_zoom(new_value, silent=True)
+    
+    def increment_slider_slide(self, camera_id: Optional[int] = None):
+        """Incrémente le slide du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_slide_value
+        new_value = min(1.0, current_value + 0.01)
+        cam_data.slider_slide_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_slide=new_value)
+        slider_controller.move_slide(new_value, silent=True)
+    
+    def decrement_slider_slide(self, camera_id: Optional[int] = None):
+        """Décrémente le slide du slider de 1% (0.01) pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
+        else:
+            cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
+        
+        if not cam_data.connected:
+            return
+        
+        slider_controller = self.slider_controllers.get(actual_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        current_value = cam_data.slider_slide_value
+        new_value = max(0.0, current_value - 0.01)
+        cam_data.slider_slide_value = new_value
+        
+        self.state_store.update_cam(actual_camera_id, slider_slide=new_value)
+        slider_controller.move_slide(new_value, silent=True)
+    
     def _on_focus_send_complete(self):
         """Appelé après le délai de 50ms, lit la position actuelle du fader si l'utilisateur le touche encore."""
         self.focus_sending = False
@@ -4763,10 +5021,18 @@ class MainWindow(QMainWindow):
     
     def on_zoom_changed(self, data: dict):
         """Slot appelé quand le zoom change."""
+        cam_data = self.get_active_camera_data()
+        
+        # Mettre à jour la focale dans le panneau zoom motor (en rouge)
         if 'focalLength' in data:
-            self.zoom_focal_length.setText(f"{data['focalLength']} mm")
+            if hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'focal_length_label'):
+                self.zoom_motor_panel.focal_length_label.setText(f"{data['focalLength']} mm")
+        
         if 'normalised' in data:
-            self.zoom_normalised.setText(f"{data['normalised']:.2f}")
+            zoom_value = float(data['normalised'])
+            # Mettre à jour la valeur dans CameraData
+            cam_data.zoom_actual_value = zoom_value
+            cam_data.zoom_sent_value = zoom_value
     
     def on_zebra_changed(self, enabled: bool):
         """Slot appelé quand le zebra change."""

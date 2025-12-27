@@ -412,8 +412,28 @@ class CommandHandler:
                     main_window.increment_iris(camera_id=cam)
                 else:
                     main_window.decrement_iris(camera_id=cam)
+            elif param == "slider_pan":
+                if direction == "up":
+                    main_window.increment_slider_pan(camera_id=cam)
+                else:
+                    main_window.decrement_slider_pan(camera_id=cam)
+            elif param == "slider_tilt":
+                if direction == "up":
+                    main_window.increment_slider_tilt(camera_id=cam)
+                else:
+                    main_window.decrement_slider_tilt(camera_id=cam)
+            elif param == "slider_zoom":
+                if direction == "up":
+                    main_window.increment_slider_zoom(camera_id=cam)
+                else:
+                    main_window.decrement_slider_zoom(camera_id=cam)
+            elif param == "slider_slide":
+                if direction == "up":
+                    main_window.increment_slider_slide(camera_id=cam)
+                else:
+                    main_window.decrement_slider_slide(camera_id=cam)
             else:
-                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance)"
+                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, slider_zoom, slider_slide)"
             
             return True, None
         except Exception as e:

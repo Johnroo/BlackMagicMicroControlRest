@@ -434,7 +434,7 @@
 
     ### 8. `adjust_param`
 
-    Ajuste un paramètre discret (iris, gain, shutter, whiteBalance) d'un pas vers le haut ou le bas, exactement comme les boutons +/- dans l'UI.
+    Ajuste un paramètre discret (iris, gain, shutter, whiteBalance) ou continu (slider_pan, slider_tilt, slider_zoom, slider_slide) d'un pas vers le haut ou le bas, exactement comme les boutons +/- dans l'UI.
 
     ```json
     {
@@ -486,7 +486,47 @@
     }
     ```
 
-    **Paramètres supportés** : `iris`, `gain`, `shutter`, `whiteBalance`
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "adjust_param",
+    "cam": 3,
+    "param": "slider_pan",
+    "direction": "up"
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "adjust_param",
+    "cam": 3,
+    "param": "slider_tilt",
+    "direction": "down"
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "adjust_param",
+    "cam": 3,
+    "param": "slider_zoom",
+    "direction": "up"
+    }
+    ```
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "adjust_param",
+    "cam": 3,
+    "param": "slider_slide",
+    "direction": "down"
+    }
+    ```
+
+    **Paramètres supportés** : `iris`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `slider_zoom`, `slider_slide`
 
     **Direction** : `"up"` ou `"down"`
 
@@ -495,6 +535,10 @@
     - **Pour `gain`** : Passe à la valeur suivante/précédente dans la liste des gains supportés (ex: -12, -6, 0, 6, 12, 18 dB)
     - **Pour `shutter`** : Passe à la vitesse suivante/précédente dans la liste des vitesses supportées (ex: 50, 60, 120, 240)
     - **Pour `whiteBalance`** : Incrémente/décrémente de 100K (avec respect des limites min/max, généralement 2000K-10000K)
+    - **Pour `slider_pan`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
+    - **Pour `slider_tilt`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
+    - **Pour `slider_zoom`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
+    - **Pour `slider_slide`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
 
     **Réponse** :
     ```json
@@ -518,7 +562,16 @@
     {
     "type": "ack",
     "ok": false,
-    "error": "Paramètre non supporté pour adjust_param: focus (supportés: iris, gain, shutter, whiteBalance)"
+    "error": "Paramètre non supporté pour adjust_param: focus (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, slider_zoom, slider_slide)"
+    }
+    ```
+
+    ou si le slider n'est pas configuré :
+    ```json
+    {
+    "type": "ack",
+    "ok": false,
+    "error": "Slider non configuré pour la caméra 3"
     }
     ```
 
@@ -763,6 +816,18 @@
     
     // Ajuster le white balance de la caméra 1 vers le haut (+100K)
     module.adjustParam(1, 'whiteBalance', 'up');
+    
+    // Ajuster le pan du slider de la caméra 2 vers le haut (+1%)
+    module.adjustParam(2, 'slider_pan', 'up');
+    
+    // Ajuster le tilt du slider de la caméra 3 vers le bas (-1%)
+    module.adjustParam(3, 'slider_tilt', 'down');
+    
+    // Ajuster le zoom du slider de la caméra 1 vers le haut (+1%)
+    module.adjustParam(1, 'slider_zoom', 'up');
+    
+    // Ajuster le slide du slider de la caméra 2 vers le bas (-1%)
+    module.adjustParam(2, 'slider_slide', 'down');
     }, 2000);
     ```
 
