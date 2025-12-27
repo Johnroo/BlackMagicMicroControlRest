@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
     QDialogButtonBox, QSizePolicy, QDoubleSpinBox
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent
-from PySide6.QtGui import QResizeEvent, QKeyEvent
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
+from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent
 
 from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSocketClient
 from state_store import StateStore
@@ -29,6 +29,143 @@ from slider_websocket_client import SliderWebSocketClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class XYMatrixWidget(QWidget):
+    """Widget personnalisé pour contrôler pan (X) et tilt (Y) via une matrice XY."""
+    
+    # Signal émis quand la position change (pan, tilt en valeurs normalisées 0.0-1.0)
+    positionChanged = Signal(float, float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pan_value = 0.5  # Valeur normalisée 0.0-1.0
+        self.tilt_value = 0.5  # Valeur normalisée 0.0-1.0
+        self.pan_steps = 0
+        self.tilt_steps = 0
+        self.dragging = False
+        self.setMinimumSize(200, 200)
+        self.setMouseTracking(True)
+    
+    def setPosition(self, pan: float, tilt: float):
+        """Met à jour la position (valeurs normalisées 0.0-1.0)."""
+        self.pan_value = max(0.0, min(1.0, pan))
+        self.tilt_value = max(0.0, min(1.0, tilt))
+        self.update()
+    
+    def setSteps(self, pan_steps: int, tilt_steps: int):
+        """Met à jour les valeurs en steps."""
+        self.pan_steps = pan_steps
+        self.tilt_steps = tilt_steps
+        self.update()
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self._updatePositionFromMouse(event)
+    
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.dragging:
+            self._updatePositionFromMouse(event)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+    
+    def _updatePositionFromMouse(self, event: QMouseEvent):
+        """Met à jour la position à partir de la position de la souris."""
+        width = self.width()
+        height = self.height()
+        margin = 20
+        matrix_width = width - 2 * margin
+        matrix_height = height - 2 * margin
+        
+        # Calculer la position relative dans la matrice (0.0-1.0)
+        x = (event.x() - margin) / matrix_width if matrix_width > 0 else 0.5
+        y = (event.y() - margin) / matrix_height if matrix_height > 0 else 0.5
+        
+        # Inverser Y (0.0 en haut, 1.0 en bas -> 0.0 en bas, 1.0 en haut pour tilt)
+        y = 1.0 - y
+        
+        # Clamper les valeurs
+        pan = max(0.0, min(1.0, x))
+        tilt = max(0.0, min(1.0, y))
+        
+        self.pan_value = pan
+        self.tilt_value = tilt
+        self.update()
+        
+        # Émettre le signal
+        self.positionChanged.emit(pan, tilt)
+    
+    def paintEvent(self, event):
+        """Dessine la matrice XY."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        margin = 20
+        
+        # Zone de la matrice
+        matrix_rect = QRect(margin, margin, width - 2 * margin, height - 2 * margin)
+        
+        # Dessiner le fond de la matrice
+        painter.fillRect(matrix_rect, QColor(30, 30, 30))
+        painter.setPen(QPen(QColor(100, 100, 100), 1))
+        painter.drawRect(matrix_rect)
+        
+        # Dessiner la grille (lignes verticales et horizontales)
+        grid_pen = QPen(QColor(60, 60, 60), 1)
+        painter.setPen(grid_pen)
+        
+        # Lignes verticales (pour pan)
+        for i in range(5):
+            x = margin + (matrix_rect.width() / 4) * i
+            painter.drawLine(int(x), margin, int(x), margin + matrix_rect.height())
+        
+        # Lignes horizontales (pour tilt)
+        for i in range(5):
+            y = margin + (matrix_rect.height() / 4) * i
+            painter.drawLine(margin, int(y), margin + matrix_rect.width(), int(y))
+        
+        # Dessiner les axes centraux
+        center_pen = QPen(QColor(150, 150, 150), 2)
+        painter.setPen(center_pen)
+        center_x = margin + matrix_rect.width() / 2
+        center_y = margin + matrix_rect.height() / 2
+        painter.drawLine(int(center_x), margin, int(center_x), margin + matrix_rect.height())
+        painter.drawLine(margin, int(center_y), margin + matrix_rect.width(), int(center_y))
+        
+        # Dessiner le point de position actuelle
+        point_x = margin + matrix_rect.width() * self.pan_value
+        point_y = margin + matrix_rect.height() * (1.0 - self.tilt_value)  # Inverser Y
+        
+        # Cercle extérieur (blanc)
+        painter.setPen(QPen(QColor(255, 255, 255), 2))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawEllipse(int(point_x - 6), int(point_y - 6), 12, 12)
+        
+        # Cercle intérieur (cyan)
+        painter.setPen(QPen(QColor(0, 255, 255), 1))
+        painter.setBrush(QBrush(QColor(0, 255, 255)))
+        painter.drawEllipse(int(point_x - 4), int(point_y - 4), 8, 8)
+        
+        # Labels des axes
+        label_pen = QPen(QColor(200, 200, 200), 1)
+        painter.setPen(label_pen)
+        font = painter.font()
+        font.setPointSize(9)
+        painter.setFont(font)
+        
+        # Label Pan (X) en bas
+        painter.drawText(margin, height - 5, "Pan (X)")
+        # Label Tilt (Y) à gauche (rotation)
+        painter.save()
+        painter.translate(10, margin + matrix_rect.height() / 2)
+        painter.rotate(-90)
+        painter.drawText(0, 0, "Tilt (Y)")
+        painter.restore()
 
 
 @dataclass
@@ -763,8 +900,7 @@ class MainWindow(QMainWindow):
         self.controls_panel = self.create_controls_panel()
         
         # Créer les panneaux de contrôle du slider
-        self.pan_panel = self.create_pan_panel()
-        self.tilt_panel = self.create_tilt_panel()
+        self.pan_tilt_panel = self.create_pan_tilt_matrix_panel()  # Matrice XY pour pan/tilt
         self.slide_panel = self.create_slide_panel()
         self.zoom_motor_panel = self.create_zoom_motor_panel()
         
@@ -802,9 +938,8 @@ class MainWindow(QMainWindow):
         slider_container_layout.setSpacing(10)  # Réduire l'espacement pour donner plus d'espace aux faders
         slider_container_layout.setContentsMargins(0, 0, 0, 0)
         # Ajouter chaque panneau avec un stretch factor pour qu'ils prennent plus d'espace vertical
-        # Ordre : pan, tilt, zoom, slide
-        slider_container_layout.addWidget(self.pan_panel, stretch=1)
-        slider_container_layout.addWidget(self.tilt_panel, stretch=1)
+        # Ordre : pan/tilt (matrice XY), zoom, slide
+        slider_container_layout.addWidget(self.pan_tilt_panel, stretch=1)
         slider_container_layout.addWidget(self.zoom_motor_panel, stretch=1)
         slider_container_layout.addWidget(self.slide_panel, stretch=1)
         # Pas de stretch à la fin pour que les panneaux prennent tout l'espace disponible
@@ -1047,9 +1182,29 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour les largeurs des panneaux de slider (utilisent tout l'espace disponible)
         # Les sliders prennent maintenant tout l'espace entre gain/shutter et presets grâce au stretch factor
-        if hasattr(self, 'pan_panel') and self.pan_panel and hasattr(self, 'slider_container') and self.slider_container:
+        if hasattr(self, 'pan_tilt_panel') and self.pan_tilt_panel and hasattr(self, 'slider_container') and self.slider_container:
             # Obtenir la largeur réelle du conteneur slider (qui s'étire avec le stretch factor)
             slider_container_width = self.slider_container.width()
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "focus_ui_pyside6_standalone.py:1052",
+                        "message": "update_slider_widths",
+                        "data": {
+                            "slider_container_width": slider_container_width,
+                            "window_width": self.width(),
+                            "has_slider_container": hasattr(self, 'slider_container'),
+                            "timestamp": time.time()
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
             if slider_container_width > 0:
                 # Utiliser toute la largeur du conteneur moins une petite marge pour l'espacement interne
                 slider_panel_width = max(self._scale_value(300), slider_container_width - self._scale_value(10))
@@ -1064,12 +1219,53 @@ class MainWindow(QMainWindow):
                 available_width = base_width - fixed_columns_width - spacing_width - margins_width
                 # Utiliser 95% de l'espace disponible pour maximiser l'utilisation
                 slider_panel_width = max(self._scale_value(300), int(available_width * 0.95))
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "focus_ui_pyside6_standalone.py:1066",
+                            "message": "update_slider_widths_fallback",
+                            "data": {
+                                "base_width": base_width,
+                                "available_width": available_width,
+                                "slider_panel_width": slider_panel_width,
+                                "timestamp": time.time()
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
             
-            slider_panels = [self.pan_panel, self.tilt_panel, self.slide_panel, self.zoom_motor_panel]
+            slider_panels = [self.pan_tilt_panel, self.slide_panel, self.zoom_motor_panel]
             for slider_panel in slider_panels:
                 if slider_panel:
                     slider_panel.setMinimumWidth(slider_panel_width)
                     slider_panel.setMaximumWidth(slider_panel_width)
+                    # #region agent log
+                    try:
+                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "A",
+                                "location": "focus_ui_pyside6_standalone.py:1071",
+                                "message": "slider_panel_width_set",
+                                "data": {
+                                    "panel": slider_panel.axis_name if hasattr(slider_panel, 'axis_name') else "unknown",
+                                    "width": slider_panel_width,
+                                    "actual_width": slider_panel.width(),
+                                    "is_visible": slider_panel.isVisible(),
+                                    "timestamp": time.time()
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + "\n")
+                    except: pass
+                    # #endregion
         
         # Mettre à jour les boutons de caméra
         if hasattr(self, 'camera_buttons'):
@@ -3121,31 +3317,22 @@ class MainWindow(QMainWindow):
                 slider_slide=cam_data.slider_slide_value
             )
             
-            # Mettre à jour les sliders UI et les labels (sans déclencher les événements)
-            # MAIS seulement si l'utilisateur ne touche pas le slider
-            if hasattr(self, 'pan_panel') and hasattr(self.pan_panel, 'slider'):
-                if not self.slider_user_touching.get('pan', False):
-                    pan_value = int(cam_data.slider_pan_value * 1000)
-                    self.pan_panel.slider.blockSignals(True)
-                    self.pan_panel.slider.setValue(pan_value)
-                    self.pan_panel.slider.blockSignals(False)
-                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
-                if hasattr(self.pan_panel, 'percent_label'):
-                    self.pan_panel.percent_label.setText(f"{cam_data.slider_pan_value * 100:.1f}%")
-                if hasattr(self.pan_panel, 'steps_label'):
-                    self.pan_panel.steps_label.setText(f"{cam_data.slider_pan_steps}")
-            
-            if hasattr(self, 'tilt_panel') and hasattr(self.tilt_panel, 'slider'):
-                if not self.slider_user_touching.get('tilt', False):
-                    tilt_value = int(cam_data.slider_tilt_value * 1000)
-                    self.tilt_panel.slider.blockSignals(True)
-                    self.tilt_panel.slider.setValue(tilt_value)
-                    self.tilt_panel.slider.blockSignals(False)
-                # Mettre à jour les labels (toujours, même si l'utilisateur touche le slider)
-                if hasattr(self.tilt_panel, 'percent_label'):
-                    self.tilt_panel.percent_label.setText(f"{cam_data.slider_tilt_value * 100:.1f}%")
-                if hasattr(self.tilt_panel, 'steps_label'):
-                    self.tilt_panel.steps_label.setText(f"{cam_data.slider_tilt_steps}")
+            # Mettre à jour la matrice XY pan/tilt et les labels
+            if hasattr(self, 'pan_tilt_panel') and hasattr(self.pan_tilt_panel, 'xy_matrix'):
+                # Mettre à jour les labels (toujours, même si l'utilisateur touche la matrice)
+                if hasattr(self.pan_tilt_panel, 'pan_percent_label'):
+                    self.pan_tilt_panel.pan_percent_label.setText(f"{cam_data.slider_pan_value * 100:.1f}%")
+                if hasattr(self.pan_tilt_panel, 'pan_steps_label'):
+                    self.pan_tilt_panel.pan_steps_label.setText(f"{cam_data.slider_pan_steps}")
+                if hasattr(self.pan_tilt_panel, 'tilt_percent_label'):
+                    self.pan_tilt_panel.tilt_percent_label.setText(f"{cam_data.slider_tilt_value * 100:.1f}%")
+                if hasattr(self.pan_tilt_panel, 'tilt_steps_label'):
+                    self.pan_tilt_panel.tilt_steps_label.setText(f"{cam_data.slider_tilt_steps}")
+                
+                # Mettre à jour la position de la matrice seulement si l'utilisateur ne la touche pas
+                if not self.slider_user_touching.get('pan', False) and not self.slider_user_touching.get('tilt', False):
+                    self.pan_tilt_panel.xy_matrix.setPosition(cam_data.slider_pan_value, cam_data.slider_tilt_value)
+                    self.pan_tilt_panel.xy_matrix.setSteps(cam_data.slider_pan_steps, cam_data.slider_tilt_steps)
             
             if hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'slider'):
                 if not self.slider_user_touching.get('zoom', False):
@@ -3205,13 +3392,100 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Erreur lors de la synchronisation des positions du slider: {e}")
     
-    def create_pan_panel(self):
-        """Crée le panneau de contrôle Pan."""
-        return self.create_slider_axis_panel("pan", "Pan Control")
-    
-    def create_tilt_panel(self):
-        """Crée le panneau de contrôle Tilt."""
-        return self.create_slider_axis_panel("tilt", "Tilt Control")
+    def create_pan_tilt_matrix_panel(self):
+        """Crée le panneau de contrôle Pan/Tilt avec une matrice XY."""
+        panel = QWidget()
+        # La largeur sera mise à jour dans _update_ui_scaling
+        panel_width = self._scale_value(280)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        spacing = self._scale_value(10)
+        margin = self._scale_value(20)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        
+        # Titre
+        title = QLabel("Pan/Tilt Control")
+        title.setAlignment(Qt.AlignCenter)
+        font_size = self._scale_font(14)
+        title.setStyleSheet(f"font-size: {font_size}; color: #fff;")
+        layout.addWidget(title, stretch=0)
+        
+        # Affichage des valeurs normalisées et steps
+        values_display = QWidget()
+        values_layout = QVBoxLayout(values_display)
+        values_layout.setContentsMargins(0, 0, 0, 0)
+        values_layout.setSpacing(5)
+        
+        # Ligne pour Pan
+        pan_row = QWidget()
+        pan_layout = QHBoxLayout(pan_row)
+        pan_layout.setContentsMargins(0, 0, 0, 0)
+        pan_layout.setSpacing(10)
+        
+        pan_label = QLabel("Pan:")
+        pan_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        pan_layout.addWidget(pan_label)
+        
+        pan_percent_label = QLabel("0.0%")
+        pan_percent_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        pan_layout.addWidget(pan_percent_label)
+        
+        pan_layout.addStretch()
+        
+        pan_steps_label = QLabel("0")
+        pan_steps_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        pan_layout.addWidget(pan_steps_label)
+        
+        values_layout.addWidget(pan_row)
+        
+        # Ligne pour Tilt
+        tilt_row = QWidget()
+        tilt_layout = QHBoxLayout(tilt_row)
+        tilt_layout.setContentsMargins(0, 0, 0, 0)
+        tilt_layout.setSpacing(10)
+        
+        tilt_label = QLabel("Tilt:")
+        tilt_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        tilt_layout.addWidget(tilt_label)
+        
+        tilt_percent_label = QLabel("0.0%")
+        tilt_percent_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        tilt_layout.addWidget(tilt_percent_label)
+        
+        tilt_layout.addStretch()
+        
+        tilt_steps_label = QLabel("0")
+        tilt_steps_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        tilt_layout.addWidget(tilt_steps_label)
+        
+        values_layout.addWidget(tilt_row)
+        
+        layout.addWidget(values_display, stretch=0)
+        
+        # Matrice XY
+        xy_matrix = XYMatrixWidget()
+        xy_matrix.setMinimumHeight(self._scale_value(200))
+        xy_matrix.setMaximumHeight(self._scale_value(300))
+        layout.addWidget(xy_matrix, stretch=1)
+        
+        # Stocker les références
+        panel.xy_matrix = xy_matrix
+        panel.pan_percent_label = pan_percent_label
+        panel.pan_steps_label = pan_steps_label
+        panel.tilt_percent_label = tilt_percent_label
+        panel.tilt_steps_label = tilt_steps_label
+        
+        return panel
     
     def create_slide_panel(self):
         """Crée le panneau de contrôle Slide."""
@@ -3685,13 +3959,9 @@ class MainWindow(QMainWindow):
         # Note: websocket_status n'est plus utilisé car on utilise maintenant _handle_websocket_change avec camera_id
         
         # Connecter les signaux des sliders (pan, tilt, slide, zoom motor)
-        self.pan_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('pan'))
-        self.pan_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('pan'))
-        self.pan_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('pan', v))
-        
-        self.tilt_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('tilt'))
-        self.tilt_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('tilt'))
-        self.tilt_panel.slider.valueChanged.connect(lambda v: self.on_slider_value_changed('tilt', v))
+        # Connecter la matrice XY pan/tilt
+        if hasattr(self, 'pan_tilt_panel') and hasattr(self.pan_tilt_panel, 'xy_matrix'):
+            self.pan_tilt_panel.xy_matrix.positionChanged.connect(self.on_pan_tilt_matrix_changed)
         
         self.slide_panel.slider.sliderPressed.connect(lambda: self.on_slider_pressed('slide'))
         self.slide_panel.slider.sliderReleased.connect(lambda: self.on_slider_released('slide'))
@@ -4537,6 +4807,43 @@ class MainWindow(QMainWindow):
             # En cas d'erreur, attendre quand même 50ms
             QTimer.singleShot(50, self._on_focus_send_complete)
     
+    def on_pan_tilt_matrix_changed(self, pan: float, tilt: float):
+        """Appelé quand la position de la matrice XY pan/tilt change."""
+        # Marquer que l'utilisateur touche les contrôles pan/tilt
+        self.slider_user_touching['pan'] = True
+        self.slider_user_touching['tilt'] = True
+        self.slider_command_sent['pan'] = False
+        self.slider_command_sent['tilt'] = False
+        
+        # Mettre à jour les valeurs dans CameraData
+        cam_data = self.get_active_camera_data()
+        cam_data.slider_pan_value = pan
+        cam_data.slider_tilt_value = tilt
+        
+        # Mettre à jour le StateStore pour Companion
+        self.state_store.update_cam(self.active_camera_id, slider_pan=pan, slider_tilt=tilt)
+        
+        # Envoyer les commandes au slider (pan et tilt simultanément)
+        self._send_slider_command('pan', pan)
+        self._send_slider_command('tilt', tilt)
+        
+        # Marquer que les commandes ont été envoyées
+        self.slider_command_sent['pan'] = True
+        self.slider_command_sent['tilt'] = True
+        
+        # Réinitialiser les flags après un court délai pour permettre les mises à jour continues
+        QTimer.singleShot(100, lambda: self._reset_pan_tilt_touching_flags())
+    
+    def _reset_pan_tilt_touching_flags(self):
+        """Réinitialise les flags de toucher pour pan/tilt après un délai."""
+        # Ne réinitialiser que si l'utilisateur ne touche plus (vérifier via le widget)
+        if hasattr(self, 'pan_tilt_panel') and hasattr(self.pan_tilt_panel, 'xy_matrix'):
+            if not self.pan_tilt_panel.xy_matrix.dragging:
+                self.slider_user_touching['pan'] = False
+                self.slider_user_touching['tilt'] = False
+                self.slider_command_sent['pan'] = False
+                self.slider_command_sent['tilt'] = False
+    
     def on_slider_pressed(self, axis_name: str):
         """Appelé quand on appuie sur un slider (pan, tilt, slide, zoom)."""
         # #region agent log
@@ -4579,10 +4886,10 @@ class MainWindow(QMainWindow):
         # envoyer la valeur actuelle du slider
         if not self.slider_command_sent.get(axis_name, False):
             # Récupérer la valeur actuelle du slider
-            if axis_name == 'pan' and hasattr(self, 'pan_panel') and hasattr(self.pan_panel, 'slider'):
-                current_value = self.pan_panel.slider.value()
-            elif axis_name == 'tilt' and hasattr(self, 'tilt_panel') and hasattr(self.tilt_panel, 'slider'):
-                current_value = self.tilt_panel.slider.value()
+            if axis_name == 'pan' and hasattr(self, 'pan_tilt_panel') and hasattr(self.pan_tilt_panel, 'xy_matrix'):
+                current_value = int(self.pan_tilt_panel.xy_matrix.pan_value * 1000)
+            elif axis_name == 'tilt' and hasattr(self, 'pan_tilt_panel') and hasattr(self.pan_tilt_panel, 'xy_matrix'):
+                current_value = int(self.pan_tilt_panel.xy_matrix.tilt_value * 1000)
             elif axis_name == 'zoom' and hasattr(self, 'zoom_motor_panel') and hasattr(self.zoom_motor_panel, 'slider'):
                 current_value = self.zoom_motor_panel.slider.value()
             elif axis_name == 'slide' and hasattr(self, 'slide_panel') and hasattr(self.slide_panel, 'slider'):
