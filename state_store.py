@@ -40,10 +40,10 @@ class StateStore(QObject):
                 "gain": None,
                 "shutter": None,
                 "whiteBalance": None,
-                "zoom": None,
+                "zoom": None,  # Focale en mm (lue depuis l'API)
+                "zoom_motor": None,  # Position du moteur zoom du slider (0.0-1.0)
                 "slider_pan": None,
                 "slider_tilt": None,
-                "slider_zoom": None,
                 "slider_slide": None
             }
             self._state["presets"][str(i)] = {}
@@ -87,8 +87,8 @@ class StateStore(QObject):
         # Mettre à jour les valeurs dans l'état
         cam_state = self._state["cams"][cam_key]
         for key, value in kwargs.items():
-            if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "zoom", 
-                       "slider_pan", "slider_tilt", "slider_zoom", "slider_slide"]:
+            if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "zoom", "zoom_motor",
+                       "slider_pan", "slider_tilt", "slider_slide"]:
                 # Vérifier si la valeur a changé
                 # Utiliser une comparaison qui gère correctement None vs 0.0
                 old_value = cam_state.get(key)

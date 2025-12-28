@@ -1,6 +1,6 @@
     # Guide de développement du module Bitfocus Companion
 
-    Ce document explique comment créer un module Bitfocus Companion pour contrôler les caméras Blackmagic via l'application PySide6.
+    Ce document explique comment créer un module Bitfocus Companion pour contrôler les caméras Blackmagic et les sliders motorisés via l'application PySide6.
 
     ## Architecture
 
@@ -42,10 +42,10 @@
         "gain": 12,
         "shutter": 0.02,
         "whiteBalance": 3200,
-        "zoom": 0.0,
+        "zoom": 12.5,
+        "zoom_motor": 0.3,
         "slider_pan": 0.5,
         "slider_tilt": 0.75,
-        "slider_zoom": 0.3,
         "slider_slide": 0.6
         },
         "2": {
@@ -56,9 +56,9 @@
         "shutter": null,
         "whiteBalance": null,
         "zoom": null,
+        "zoom_motor": null,
         "slider_pan": null,
         "slider_tilt": null,
-        "slider_zoom": null,
         "slider_slide": null
         },
         ...
@@ -147,7 +147,7 @@
 
     Définit la valeur d'un paramètre pour une caméra spécifique.
 
-    **Paramètres supportés** : `focus`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `slider_zoom`, `slider_slide`
+    **Paramètres supportés** : `focus`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide`
 
     **Note** : `iris` n'est plus supporté par `set_param`. Utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour ajuster l'iris.
 
@@ -226,10 +226,11 @@
     "type": "cmd",
     "cmd": "set_param",
     "cam": 3,
-    "param": "slider_zoom",
-    "value": 0.3
+    "param": "zoom_motor",
+    "value": 0.8
     }
     ```
+    *Commande joystick : déplace le zoom motor vers l'avant à 80% de la vitesse maximale*
 
     ```json
     {
@@ -237,23 +238,54 @@
     "cmd": "set_param",
     "cam": 3,
     "param": "slider_slide",
-    "value": 0.6
+    "value": -0.2
     }
     ```
+    *Commande joystick : déplace le slide vers l'arrière à 20% de la vitesse maximale*
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "set_param",
+    "cam": 3,
+    "param": "slider_pan",
+    "value": 0.0
+    }
+    ```
+    *Commande joystick : arrête le mouvement du pan (retour au centre)*
 
     **Valeurs** :
     - `focus` : 0.0 à 1.0 (float)
     - `gain` : Valeur entière en dB (doit correspondre à une valeur supportée par la caméra)
     - `shutter` : Valeur entière en fractions de seconde (doit correspondre à une valeur supportée par la caméra)
     - `whiteBalance` : Valeur entière en Kelvin (doit être dans la plage min/max de la caméra, généralement 2000K-10000K)
-    - `slider_pan` : 0.0 à 1.0 (float) - Position de l'axe pan du slider motorisé
-    - `slider_tilt` : 0.0 à 1.0 (float) - Position de l'axe tilt du slider motorisé
-    - `slider_zoom` : 0.0 à 1.0 (float) - Position de l'axe zoom motor du slider motorisé
-    - `slider_slide` : 0.0 à 1.0 (float) - Position de l'axe slide du slider motorisé
+    - `slider_pan` : -1.0 à +1.0 (float) - Commande joystick pour l'axe pan du slider motorisé
+    - `slider_tilt` : -1.0 à +1.0 (float) - Commande joystick pour l'axe tilt du slider motorisé
+    - `zoom_motor` : -1.0 à +1.0 (float) - Commande joystick pour le moteur zoom du slider motorisé
+    - `slider_slide` : -1.0 à +1.0 (float) - Commande joystick pour l'axe slide du slider motorisé
 
     **Note** : `iris` n'est plus supporté par `set_param`. Utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour ajuster l'iris d'un stop d'aperture.
 
-    **Note sur les sliders** : Chaque caméra peut avoir un slider motorisé configuré (via l'IP du slider dans la configuration). Les valeurs des axes slider sont normalisées entre 0.0 et 1.0. Si le slider n'est pas configuré pour une caméra, la commande retournera une erreur.
+    **⚠️ IMPORTANT - Contrôle du slider via protocole joystick** :
+    
+    Les commandes pour contrôler le slider (`slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide`) utilisent maintenant le **protocole joystick** avec des valeurs de **-1.0 à +1.0**, exactement comme le joystick du workspace 2 de l'application.
+    
+    **Comportement des commandes** :
+    - Les valeurs **positives** (0.0 à +1.0) déplacent le slider dans un sens
+    - Les valeurs **négatives** (-1.0 à 0.0) déplacent le slider dans l'autre sens
+    - La valeur **0.0** arrête le mouvement (retour au centre pour le joystick)
+    - Les commandes sont envoyées via `POST /api/v1/joy` (protocole joystick)
+    
+    **Différence avec les valeurs d'état** :
+    - Dans les **snapshots/patchs** (état de l'application), les valeurs `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide` représentent les **positions actuelles** du slider (0.0 à 1.0)
+    - Dans les **commandes** (`set_param`, `adjust_param`), ces mêmes paramètres utilisent des **valeurs joystick** (-1.0 à +1.0) pour contrôler le mouvement
+    
+    **Exemple** :
+    - Pour déplacer le pan vers la droite : `set_param` avec `slider_pan: 0.5` (commande joystick)
+    - Pour déplacer le pan vers la gauche : `set_param` avec `slider_pan: -0.5` (commande joystick)
+    - Pour arrêter le mouvement : `set_param` avec `slider_pan: 0.0` (commande joystick)
+    
+    Si le slider n'est pas configuré pour une caméra (IP vide), la commande retournera une erreur.
 
     **Réponse** :
     ```json
@@ -344,7 +376,7 @@
     **Presets** : Numérotés de 1 à 10
 
     **Important** :
-    - Cette commande sauvegarde les valeurs **actuelles** de la caméra (focus, iris, gain, shutter, whiteBalance, zoom)
+    - Cette commande sauvegarde les valeurs **actuelles** de la caméra (focus, iris, gain, shutter, whiteBalance, zoom, zoom_motor, slider_pan, slider_tilt, slider_slide)
     - Le contenu du preset sauvegardé n'est **pas envoyé** à Companion
     - Companion n'a pas besoin de connaître ce qui a été sauvegardé, seulement de pouvoir le rappeler plus tard avec `recall_preset`
 
@@ -434,7 +466,7 @@
 
     ### 8. `adjust_param`
 
-    Ajuste un paramètre discret (iris, gain, shutter, whiteBalance) ou continu (slider_pan, slider_tilt, slider_zoom, slider_slide) d'un pas vers le haut ou le bas, exactement comme les boutons +/- dans l'UI.
+    Ajuste un paramètre discret (iris, gain, shutter, whiteBalance) ou continu (slider_pan, slider_tilt, zoom_motor, slider_slide) d'un pas vers le haut ou le bas, exactement comme les boutons +/- dans l'UI.
 
     ```json
     {
@@ -511,10 +543,22 @@
     "type": "cmd",
     "cmd": "adjust_param",
     "cam": 3,
-    "param": "slider_zoom",
+    "param": "zoom_motor",
     "direction": "up"
     }
     ```
+    *Commande joystick : envoie une impulsion de mouvement positif (+0.1) pour le zoom motor*
+
+    ```json
+    {
+    "type": "cmd",
+    "cmd": "adjust_param",
+    "cam": 3,
+    "param": "zoom_motor",
+    "direction": "down"
+    }
+    ```
+    *Commande joystick : envoie une impulsion de mouvement négatif (-0.1) pour le zoom motor*
 
     ```json
     {
@@ -526,7 +570,7 @@
     }
     ```
 
-    **Paramètres supportés** : `iris`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `slider_zoom`, `slider_slide`
+    **Paramètres supportés** : `iris`, `gain`, `shutter`, `whiteBalance`, `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide`
 
     **Direction** : `"up"` ou `"down"`
 
@@ -535,10 +579,7 @@
     - **Pour `gain`** : Passe à la valeur suivante/précédente dans la liste des gains supportés (ex: -12, -6, 0, 6, 12, 18 dB)
     - **Pour `shutter`** : Passe à la vitesse suivante/précédente dans la liste des vitesses supportées (ex: 50, 60, 120, 240)
     - **Pour `whiteBalance`** : Incrémente/décrémente de 100K (avec respect des limites min/max, généralement 2000K-10000K)
-    - **Pour `slider_pan`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
-    - **Pour `slider_tilt`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
-    - **Pour `slider_zoom`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
-    - **Pour `slider_slide`** : Incrémente/décrémente de 1% (0.01) de la valeur normalisée (0.0-1.0). Chaque appel ajuste de 1% de la plage totale
+    - **Pour `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide`** : Envoie une commande joystick relative de ±0.1 (-10% à +10%). Chaque appel envoie une impulsion de mouvement dans la direction spécifiée, exactement comme le joystick du workspace 2. "up" envoie +0.1, "down" envoie -0.1.
 
     **Réponse** :
     ```json
@@ -562,7 +603,7 @@
     {
     "type": "ack",
     "ok": false,
-    "error": "Paramètre non supporté pour adjust_param: focus (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, slider_zoom, slider_slide)"
+    "error": "Paramètre non supporté pour adjust_param: focus (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, zoom_motor, slider_slide)"
     }
     ```
 
@@ -587,16 +628,29 @@
     gain: number | null;        // dB (entier)
     shutter: number | null;    // fractions de seconde (entier)
     whiteBalance: number | null; // Kelvin (entier, généralement 2000K-10000K)
-    zoom: number | null;       // 0.0 à 1.0
+    zoom: number | null;       // Focale de la caméra en mm (lue depuis l'API)
     slider_pan: number | null;    // 0.0 à 1.0 - Position de l'axe pan du slider motorisé
     slider_tilt: number | null;  // 0.0 à 1.0 - Position de l'axe tilt du slider motorisé
-    slider_zoom: number | null;  // 0.0 à 1.0 - Position de l'axe zoom motor du slider motorisé
+    zoom_motor: number | null;  // 0.0 à 1.0 - Position du moteur zoom du slider motorisé
     slider_slide: number | null;  // 0.0 à 1.0 - Position de l'axe slide du slider motorisé
     }
 
     **Note importante sur iris** : Dans les snapshots et patchs, `iris` est toujours envoyé en aperture stop (f/2.8, f/4, etc.), pas en valeur normalisée. Pour contrôler l'iris, utilisez `adjust_param` avec `direction: "up"` ou `"down"` pour incrémenter/décrémenter d'un stop d'aperture. Ne pas utiliser `set_param` ou `nudge` pour iris.
 
-    **Note sur les sliders** : Les valeurs `slider_pan`, `slider_tilt`, `slider_zoom` et `slider_slide` sont normalisées entre 0.0 et 1.0. Elles sont mises à jour en temps réel via WebSocket lorsque le slider physique bouge. Si le slider n'est pas configuré pour une caméra, ces valeurs seront `null`.
+    **⚠️ IMPORTANT - Différence entre état et commandes pour les sliders** :
+    
+    **Dans l'état (snapshots/patchs)** :
+    - `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide` : Positions actuelles du slider (0.0 à 1.0)
+    - Ces valeurs sont mises à jour en temps réel via WebSocket lorsque le slider physique bouge
+    - Si le slider n'est pas configuré pour une caméra, ces valeurs seront `null`
+    
+    **Dans les commandes (`set_param`, `adjust_param`)** :
+    - `slider_pan`, `slider_tilt`, `zoom_motor`, `slider_slide` : Commandes joystick (-1.0 à +1.0)
+    - Les valeurs positives déplacent dans un sens, les valeurs négatives dans l'autre sens
+    - Les commandes sont envoyées via `POST /api/v1/joy` (protocole joystick)
+    - Voir la section "Contrôle du slider via protocole joystick" ci-dessus pour plus de détails
+    
+    **Note sur `zoom`** : La variable `zoom` contient la focale de la caméra en millimètres (lue depuis l'API), tandis que `zoom_motor` contient la position normalisée (0.0-1.0) du moteur zoom du slider motorisé dans l'état, ou une commande joystick (-1.0 à +1.0) dans les commandes.
     ```
 
     ### État complet
@@ -823,11 +877,18 @@
     // Ajuster le tilt du slider de la caméra 3 vers le bas (-1%)
     module.adjustParam(3, 'slider_tilt', 'down');
     
-    // Ajuster le zoom du slider de la caméra 1 vers le haut (+1%)
-    module.adjustParam(1, 'slider_zoom', 'up');
+    // Ajuster le zoom motor du slider de la caméra 1 (commande joystick +0.1)
+    module.adjustParam(1, 'zoom_motor', 'up');
     
-    // Ajuster le slide du slider de la caméra 2 vers le bas (-1%)
+    // Ajuster le slide du slider de la caméra 2 (commande joystick -0.1)
     module.adjustParam(2, 'slider_slide', 'down');
+    
+    // Contrôler le slider avec des commandes joystick (comme le workspace 2)
+    module.setParam(1, 'slider_pan', 0.5);      // Pan vers la droite à 50%
+    module.setParam(1, 'slider_tilt', -0.3);    // Tilt vers le bas à 30%
+    module.setParam(1, 'zoom_motor', 0.8);       // Zoom motor vers l'avant à 80%
+    module.setParam(1, 'slider_slide', -0.2);    // Slide vers l'arrière à 20%
+    module.setParam(1, 'slider_pan', 0.0);       // Arrêter le pan (retour au centre)
     }, 2000);
     ```
 

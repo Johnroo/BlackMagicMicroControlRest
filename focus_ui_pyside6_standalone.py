@@ -1267,7 +1267,7 @@ class MainWindow(QMainWindow):
                         # Joystick 2D pour pan/tilt
                         widget.joystick_2d.positionChanged.connect(self.on_joystick_pan_tilt_changed)
                     if hasattr(widget, 'zoom_fader'):
-                        # Fader zoom
+                        # Fader zoom motor (slider) - revient à 0 au relâchement
                         widget.zoom_fader.valueChanged.connect(self.on_joystick_zoom_fader_changed)
                         widget.zoom_fader.sliderReleased.connect(lambda: widget.zoom_fader.setValue(0))
                     if hasattr(widget, 'slide_fader'):
@@ -1454,7 +1454,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'whitebalance_value_actual'):
             self.whitebalance_value_actual.setText(f"{cam_data.whitebalance_actual_value}K")
         
-        # Zoom
+        # Zoom (focale caméra)
         self.zoom_sent_value = cam_data.zoom_sent_value
         self.zoom_actual_value = cam_data.zoom_actual_value
         # La focale sera mise à jour via on_zoom_changed quand les données sont chargées
@@ -3658,7 +3658,7 @@ class MainWindow(QMainWindow):
                 camera_id,
                 slider_pan=cam_data.slider_pan_value,
                 slider_tilt=cam_data.slider_tilt_value,
-                slider_zoom=cam_data.slider_zoom_value,
+                zoom_motor=cam_data.slider_zoom_value,  # Position moteur zoom du slider (0.0-1.0)
                 slider_slide=cam_data.slider_slide_value
             )
             
@@ -3818,9 +3818,9 @@ class MainWindow(QMainWindow):
         zoom_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
         zoom_container_layout.addWidget(zoom_label)
         
-        # Fader horizontal pour zoom - utilise toute la largeur disponible
+        # Fader horizontal pour zoom motor (slider) - utilise toute la largeur disponible
         zoom_fader = QSlider(Qt.Horizontal)
-        zoom_fader.setMinimum(-1000)  # -1.0 * 1000 pour précision
+        zoom_fader.setMinimum(-1000)  # -1.0 * 1000 pour précision (joystick)
         zoom_fader.setMaximum(1000)  # +1.0 * 1000
         zoom_fader.setValue(0)  # Position centrale (0.0)
         zoom_fader.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -3910,12 +3910,13 @@ class MainWindow(QMainWindow):
             slider_controller.send_joy_command(pan=pan, tilt=tilt, silent=True)
     
     def on_joystick_zoom_fader_changed(self, value: int):
-        """Gère le changement de valeur du fader zoom."""
-        # Convertir de -1000..1000 à -1.0..+1.0
+        """Gère le changement de valeur du fader zoom motor (slider)."""
+        # Convertir de -1000..1000 à -1.0..+1.0 (joystick zoom motor)
         normalized_value = value / 1000.0
         camera_id = self.active_camera_id
         slider_controller = self.slider_controllers.get(camera_id)
         
+        # Contrôler le zoom motor du slider (pas la focale de la caméra)
         if slider_controller and slider_controller.is_configured():
             slider_controller.send_joy_command(zoom=normalized_value, silent=True)
     
@@ -5051,8 +5052,13 @@ class MainWindow(QMainWindow):
                 if camera_id == self.active_camera_id:
                     self.signals.cleanfeed_changed.emit(cam_data.cleanfeed_enabled)
         elif param_name == 'zoom':
-            if 'normalised' in data:
-                update_kwargs['zoom'] = float(data['normalised'])
+            # zoom = focale en mm (lue depuis l'API)
+            if 'focalLength' in data:
+                focal_length = data.get('focalLength')
+                if focal_length is not None:
+                    update_kwargs['zoom'] = float(focal_length)
+            # zoom_motor = position normalisée du moteur zoom du slider (0.0-1.0)
+            # Note: zoom_motor est mis à jour via on_slider_position_update pour slider_zoom
             if camera_id == self.active_camera_id:
                 self.signals.zoom_changed.emit(data)
         
@@ -5204,6 +5210,11 @@ class MainWindow(QMainWindow):
                 if 'normalised' in zoom_data:
                     cam_data.zoom_actual_value = float(zoom_data['normalised'])
                     cam_data.zoom_sent_value = float(zoom_data['normalised'])
+                # Mettre à jour le StateStore avec la focale en mm
+                if 'focalLength' in zoom_data:
+                    focal_length = zoom_data.get('focalLength')
+                    if focal_length is not None:
+                        self.state_store.update_cam(camera_id, zoom=float(focal_length))
                 if camera_id == self.active_camera_id:
                     self.on_zoom_changed(zoom_data)
             
@@ -5263,7 +5274,7 @@ class MainWindow(QMainWindow):
             # Les valeurs seront mises à jour via WebSocket ou sync_slider_positions_from_api
             update_kwargs['slider_pan'] = cam_data.slider_pan_value
             update_kwargs['slider_tilt'] = cam_data.slider_tilt_value
-            update_kwargs['slider_zoom'] = cam_data.slider_zoom_value
+            update_kwargs['zoom_motor'] = cam_data.slider_zoom_value  # Position moteur zoom du slider (0.0-1.0)
             update_kwargs['slider_slide'] = cam_data.slider_slide_value
             if update_kwargs:
                 self.state_store.update_cam(camera_id, **update_kwargs)
@@ -5566,7 +5577,7 @@ class MainWindow(QMainWindow):
         elif axis_name == 'tilt':
             update_kwargs['slider_tilt'] = normalized_value
         elif axis_name == 'zoom':
-            update_kwargs['slider_zoom'] = normalized_value
+            update_kwargs['zoom_motor'] = normalized_value
         elif axis_name == 'slide':
             update_kwargs['slider_slide'] = normalized_value
         if update_kwargs:
@@ -5774,7 +5785,7 @@ class MainWindow(QMainWindow):
         new_value = min(1.0, current_value + 0.01)
         cam_data.slider_zoom_value = new_value
         
-        self.state_store.update_cam(actual_camera_id, slider_zoom=new_value)
+        self.state_store.update_cam(actual_camera_id, zoom_motor=new_value)
         slider_controller.move_zoom(new_value, silent=True)
     
     def decrement_slider_zoom(self, camera_id: Optional[int] = None):
@@ -5800,7 +5811,7 @@ class MainWindow(QMainWindow):
         new_value = max(0.0, current_value - 0.01)
         cam_data.slider_zoom_value = new_value
         
-        self.state_store.update_cam(actual_camera_id, slider_zoom=new_value)
+        self.state_store.update_cam(actual_camera_id, zoom_motor=new_value)
         slider_controller.move_zoom(new_value, silent=True)
     
     def increment_slider_slide(self, camera_id: Optional[int] = None):

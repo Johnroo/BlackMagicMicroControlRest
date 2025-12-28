@@ -115,60 +115,35 @@ class CommandHandler:
                 main_window.send_shutter_value(int(value), camera_id=cam)
             elif param == "whiteBalance":
                 main_window.send_whitebalance_value(int(value), camera_id=cam)
-            elif param in ["slider_pan", "slider_tilt", "slider_zoom", "slider_slide"]:
-                # Commandes pour les axes du slider motorisé
-                # Les valeurs doivent être entre 0.0 et 1.0
-                slider_value = float(value)
-                if slider_value < 0.0 or slider_value > 1.0:
-                    return False, f"Valeur slider invalide: {slider_value} (doit être entre 0.0 et 1.0)"
+            elif param in ["slider_pan", "slider_tilt", "zoom_motor", "slider_slide"]:
+                # ⚠️ IMPORTANT: Commandes joystick relatives (-1.0 à +1.0), PAS des positions absolues
+                # Ces commandes fonctionnent exactement comme le joystick du workspace 2:
+                # - Valeurs positives (0.0 à +1.0) = mouvement dans un sens
+                # - Valeurs négatives (-1.0 à 0.0) = mouvement dans l'autre sens
+                # - 0.0 = arrêt du mouvement (retour au centre)
+                # Les commandes sont envoyées via POST /api/v1/joy (protocole joystick)
+                # NE PAS mettre à jour les valeurs dans CameraData car ce sont des commandes de mouvement, pas des positions
                 
-                # Mapper les noms de paramètres aux noms d'axes
-                axis_map = {
-                    "slider_pan": "pan",
-                    "slider_tilt": "tilt",
-                    "slider_zoom": "zoom",
-                    "slider_slide": "slide"
-                }
-                axis_name = axis_map[param]
+                joy_value = float(value)
+                if joy_value < -1.0 or joy_value > 1.0:
+                    return False, f"Valeur joystick invalide: {joy_value} (doit être entre -1.0 et +1.0)"
                 
                 # Vérifier que le slider est configuré pour cette caméra
                 slider_controller = main_window.slider_controllers.get(cam)
                 if not slider_controller or not slider_controller.is_configured():
                     return False, f"Slider non configuré pour la caméra {cam}"
                 
-                # Envoyer la commande au slider pour cette caméra spécifique
-                # Utiliser directement le SliderController de la caméra
-                if axis_name == "pan":
-                    slider_controller.move_pan(slider_value, silent=True)
-                elif axis_name == "tilt":
-                    slider_controller.move_tilt(slider_value, silent=True)
-                elif axis_name == "zoom":
-                    slider_controller.move_zoom(slider_value, silent=True)
-                elif axis_name == "slide":
-                    slider_controller.move_slide(slider_value, silent=True)
-                
-                # Mettre à jour les valeurs dans CameraData
-                if axis_name == "pan":
-                    cam_data.slider_pan_value = slider_value
-                elif axis_name == "tilt":
-                    cam_data.slider_tilt_value = slider_value
-                elif axis_name == "zoom":
-                    cam_data.slider_zoom_value = slider_value
-                elif axis_name == "slide":
-                    cam_data.slider_slide_value = slider_value
-                
-                # Mettre à jour le StateStore pour Companion
-                update_kwargs = {}
-                if axis_name == "pan":
-                    update_kwargs['slider_pan'] = slider_value
-                elif axis_name == "tilt":
-                    update_kwargs['slider_tilt'] = slider_value
-                elif axis_name == "zoom":
-                    update_kwargs['slider_zoom'] = slider_value
-                elif axis_name == "slide":
-                    update_kwargs['slider_slide'] = slider_value
-                if update_kwargs:
-                    main_window.state_store.update_cam(cam, **update_kwargs)
+                # Envoyer UNIQUEMENT la commande joystick (mouvement relatif)
+                # Ne PAS mettre à jour CameraData.slider_*_value car ce sont des positions absolues (0.0-1.0)
+                # Ne PAS mettre à jour le StateStore car les positions sont mises à jour via WebSocket
+                if param == "slider_pan":
+                    slider_controller.send_joy_command(pan=joy_value, silent=True)
+                elif param == "slider_tilt":
+                    slider_controller.send_joy_command(tilt=joy_value, silent=True)
+                elif param == "zoom_motor":
+                    slider_controller.send_joy_command(zoom=joy_value, silent=True)
+                elif param == "slider_slide":
+                    slider_controller.send_joy_command(slide=joy_value, silent=True)
             else:
                 return False, f"Paramètre inconnu: {param}"
             
@@ -412,28 +387,29 @@ class CommandHandler:
                     main_window.increment_iris(camera_id=cam)
                 else:
                     main_window.decrement_iris(camera_id=cam)
-            elif param == "slider_pan":
-                if direction == "up":
-                    main_window.increment_slider_pan(camera_id=cam)
-                else:
-                    main_window.decrement_slider_pan(camera_id=cam)
-            elif param == "slider_tilt":
-                if direction == "up":
-                    main_window.increment_slider_tilt(camera_id=cam)
-                else:
-                    main_window.decrement_slider_tilt(camera_id=cam)
-            elif param == "slider_zoom":
-                if direction == "up":
-                    main_window.increment_slider_zoom(camera_id=cam)
-                else:
-                    main_window.decrement_slider_zoom(camera_id=cam)
-            elif param == "slider_slide":
-                if direction == "up":
-                    main_window.increment_slider_slide(camera_id=cam)
-                else:
-                    main_window.decrement_slider_slide(camera_id=cam)
+            elif param in ["slider_pan", "slider_tilt", "zoom_motor", "slider_slide"]:
+                # ⚠️ IMPORTANT: Commandes joystick relatives (-1.0 à +1.0), PAS des positions absolues
+                # Fonctionne exactement comme le joystick du workspace 2
+                # "up" = mouvement positif, "down" = mouvement négatif
+                slider_controller = main_window.slider_controllers.get(cam)
+                if not slider_controller or not slider_controller.is_configured():
+                    return False, f"Slider non configuré pour la caméra {cam}"
+                
+                # Valeur relative pour le joystick (impulsion de mouvement)
+                joy_value = 0.1 if direction == "up" else -0.1
+                
+                # Envoyer UNIQUEMENT la commande joystick (mouvement relatif)
+                # Ne PAS mettre à jour CameraData ou StateStore car ce sont des positions absolues
+                if param == "slider_pan":
+                    slider_controller.send_joy_command(pan=joy_value, silent=True)
+                elif param == "slider_tilt":
+                    slider_controller.send_joy_command(tilt=joy_value, silent=True)
+                elif param == "zoom_motor":
+                    slider_controller.send_joy_command(zoom=joy_value, silent=True)
+                elif param == "slider_slide":
+                    slider_controller.send_joy_command(slide=joy_value, silent=True)
             else:
-                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, slider_zoom, slider_slide)"
+                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, zoom_motor, slider_slide)"
             
             return True, None
         except Exception as e:

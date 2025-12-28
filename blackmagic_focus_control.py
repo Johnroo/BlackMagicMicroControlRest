@@ -558,6 +558,58 @@ class BlackmagicFocusController:
                 print(f"Response: {e.response.text}")
             return None
     
+    def set_zoom(self, value: float, silent: bool = False) -> bool:
+        """
+        Définit la valeur du zoom (focale).
+        
+        Args:
+            value: Valeur normalisée du zoom (0.0 à 1.0)
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si la mise à jour a réussi, False sinon
+        """
+        if not 0.0 <= value <= 1.0:
+            print(f"Erreur: La valeur doit être entre 0.0 et 1.0, reçu: {value}")
+            return False
+            
+        try:
+            payload = {"normalised": value}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {self.zoom_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+                print(f"[DEBUG] Auth: {self.auth[0]}:{self.auth[1]}")
+            
+            response = self.session.put(
+                self.zoom_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            if not silent:
+                print(f"Zoom mis à jour avec succès: {value}")
+            return True
+        except requests.exceptions.SSLError as e:
+            print(f"Erreur SSL lors de la mise à jour du zoom: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"Erreur de connexion lors de la mise à jour du zoom: {e}")
+            print(f"Vérifiez que la caméra est accessible à: {self.zoom_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la mise à jour du zoom: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Status code: {e.response.status_code}")
+                print(f"Response: {e.response.text}")
+            return False
+    
     def set_focus(self, value: float, silent: bool = False) -> bool:
         """
         Définit la valeur du focus.
