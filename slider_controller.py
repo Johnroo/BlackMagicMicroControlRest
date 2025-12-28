@@ -191,4 +191,69 @@ class SliderController:
     def move_zoom(self, value: float, silent: bool = False) -> bool:
         """Déplace uniquement l'axe zoom motor."""
         return self.move_axes(zoom=value, silent=silent)
+    
+    def send_joy_command(self, pan: Optional[float] = None, tilt: Optional[float] = None, 
+                         slide: Optional[float] = None, zoom: Optional[float] = None,
+                         silent: bool = False) -> bool:
+        """
+        Envoie une commande joystick au slider.
+        
+        Args:
+            pan: Valeur pan (-1.0 à +1.0), optionnel
+            tilt: Valeur tilt (-1.0 à +1.0), optionnel
+            slide: Valeur slide (-1.0 à +1.0), optionnel
+            zoom: Valeur zoom (-1.0 à +1.0), optionnel
+            silent: Si True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        # Construire le payload avec seulement les axes spécifiés
+        payload = {}
+        if pan is not None:
+            payload["pan"] = max(-1.0, min(1.0, pan))  # Clamper entre -1.0 et +1.0
+        if tilt is not None:
+            payload["tilt"] = max(-1.0, min(1.0, tilt))
+        if slide is not None:
+            payload["slide"] = max(-1.0, min(1.0, slide))
+        if zoom is not None:
+            payload["zoom"] = max(-1.0, min(1.0, zoom))
+        
+        # Si aucun axe n'est spécifié, ne rien faire
+        if not payload:
+            return False
+        
+        try:
+            url = f"{self.base_url}/api/v1/joy"
+            response = self.session.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code in [200, 204]:
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError as e:
+            # Le slider n'est pas accessible (éteint, réseau différent, mDNS non résolu, etc.)
+            # En mode silent, on retourne False sans message pour éviter le spam
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider: {e}")
+            return False
 

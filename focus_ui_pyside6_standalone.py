@@ -10,12 +10,13 @@ import logging
 import time
 import json
 import os
+import math
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
-    QDialogButtonBox, QSizePolicy, QDoubleSpinBox
+    QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
 from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent
@@ -166,6 +167,256 @@ class XYMatrixWidget(QWidget):
         painter.rotate(-90)
         painter.drawText(0, 0, "Tilt (Y)")
         painter.restore()
+
+
+class Joystick2DWidget(QWidget):
+    """Widget personnalisé pour contrôler pan (X) et tilt (Y) via un joystick circulaire 2D."""
+    
+    # Signal émis quand la position change (pan, tilt en valeurs -1.0 à +1.0)
+    positionChanged = Signal(float, float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pan_value = 0.0  # Valeur -1.0 à +1.0
+        self.tilt_value = 0.0  # Valeur -1.0 à +1.0
+        self.dragging = False
+        self.setMinimumSize(200, 200)
+        self.setMouseTracking(True)
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self._updatePositionFromMouse(event)
+    
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.dragging:
+            self._updatePositionFromMouse(event)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+            # Revenir au centre
+            self.pan_value = 0.0
+            self.tilt_value = 0.0
+            self.update()
+            # Émettre le signal avec les valeurs à 0.0
+            self.positionChanged.emit(0.0, 0.0)
+    
+    def _updatePositionFromMouse(self, event: QMouseEvent):
+        """Met à jour la position à partir de la position de la souris."""
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) / 2 - 20  # Marge de 20px
+        
+        # Calculer la distance et l'angle depuis le centre
+        dx = event.x() - center_x
+        dy = event.y() - center_y
+        distance = math.sqrt(dx * dx + dy * dy)
+        
+        # Normaliser la distance (0.0 au centre, 1.0 au bord)
+        normalized_distance = min(1.0, distance / radius) if radius > 0 else 0.0
+        
+        # Calculer l'angle
+        angle = math.atan2(dy, dx)
+        
+        # Convertir en valeurs pan/tilt (-1.0 à +1.0)
+        # Inverser tilt pour que descendre = négatif
+        pan = normalized_distance * math.cos(angle)
+        tilt = -normalized_distance * math.sin(angle)  # Inversé : quand on descend (dy positif), tilt devient négatif
+        
+        # Clamper les valeurs
+        pan = max(-1.0, min(1.0, pan))
+        tilt = max(-1.0, min(1.0, tilt))
+        
+        self.pan_value = pan
+        self.tilt_value = tilt
+        self.update()
+        
+        # Émettre le signal
+        self.positionChanged.emit(pan, tilt)
+    
+    def paintEvent(self, event):
+        """Dessine le joystick 2D."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) / 2 - 20
+        
+        # Dessiner le cercle extérieur
+        circle_rect = QRect(int(center_x - radius), int(center_y - radius), 
+                           int(radius * 2), int(radius * 2))
+        painter.setPen(QPen(QColor(100, 100, 100), 2))
+        painter.setBrush(QBrush(QColor(30, 30, 30)))
+        painter.drawEllipse(circle_rect)
+        
+        # Dessiner la grille (lignes de centre)
+        painter.setPen(QPen(QColor(60, 60, 60), 1))
+        painter.drawLine(int(center_x), int(center_y - radius), 
+                        int(center_x), int(center_y + radius))
+        painter.drawLine(int(center_x - radius), int(center_y), 
+                        int(center_x + radius), int(center_y))
+        
+        # Dessiner le point de position actuelle
+        # tilt est inversé dans le calcul, donc on inverse aussi pour l'affichage
+        point_x = center_x + self.pan_value * radius
+        point_y = center_y - self.tilt_value * radius  # Inversé pour l'affichage
+        
+        # Cercle extérieur (blanc)
+        painter.setPen(QPen(QColor(255, 255, 255), 2))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawEllipse(int(point_x - 8), int(point_y - 8), 16, 16)
+        
+        # Cercle intérieur (cyan)
+        painter.setPen(QPen(QColor(0, 255, 255), 1))
+        painter.setBrush(QBrush(QColor(0, 255, 255)))
+        painter.drawEllipse(int(point_x - 5), int(point_y - 5), 10, 10)
+        
+        # Labels des axes
+        label_pen = QPen(QColor(200, 200, 200), 1)
+        painter.setPen(label_pen)
+        font = painter.font()
+        font.setPointSize(9)
+        painter.setFont(font)
+        
+        # Label Pan (X) en bas
+        painter.drawText(int(center_x - 20), int(height - 5), "Pan")
+        # Label Tilt (Y) à gauche
+        painter.save()
+        painter.translate(10, int(center_y))
+        painter.rotate(-90)
+        painter.drawText(0, 0, "Tilt")
+        painter.restore()
+
+
+class RotaryKnobWidget(QWidget):
+    """Widget personnalisé pour contrôler un axe via un bouton rotatif."""
+    
+    # Signal émis quand la valeur change (-1.0 à +1.0)
+    valueChanged = Signal(float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.value = 0.0  # Valeur -1.0 à +1.0
+        self.dragging = False
+        self.initial_angle = 0.0
+        self.accumulated_rotation = 0.0
+        self.setMinimumSize(120, 120)
+        self.setMouseTracking(True)
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self.initial_angle = self._getAngleFromMouse(event)
+            self.accumulated_rotation = 0.0
+    
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.dragging:
+            current_angle = self._getAngleFromMouse(event)
+            # Calculer la différence d'angle
+            angle_diff = current_angle - self.initial_angle
+            
+            # Gérer le passage par -π/+π
+            if angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            elif angle_diff < -math.pi:
+                angle_diff += 2 * math.pi
+            
+            # Accumuler la rotation
+            self.accumulated_rotation += angle_diff
+            self.initial_angle = current_angle
+            
+            # Convertir la rotation accumulée en valeur -1.0 à +1.0
+            # Une rotation complète (2π) = 1.0
+            self.value = max(-1.0, min(1.0, self.accumulated_rotation / (2 * math.pi)))
+            self.update()
+            
+            # Émettre le signal
+            self.valueChanged.emit(self.value)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+            # Revenir à 0.0
+            self.value = 0.0
+            self.accumulated_rotation = 0.0
+            self.update()
+            # Émettre le signal avec la valeur à 0.0
+            self.valueChanged.emit(0.0)
+    
+    def _getAngleFromMouse(self, event: QMouseEvent) -> float:
+        """Calcule l'angle de la souris par rapport au centre."""
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        
+        dx = event.x() - center_x
+        dy = center_y - event.y()  # Inverser Y pour avoir 0° en haut
+        
+        return math.atan2(dy, dx)
+    
+    def paintEvent(self, event):
+        """Dessine le bouton rotatif."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) / 2 - 10
+        
+        # Dessiner le cercle extérieur
+        circle_rect = QRect(int(center_x - radius), int(center_y - radius), 
+                           int(radius * 2), int(radius * 2))
+        painter.setPen(QPen(QColor(100, 100, 100), 2))
+        painter.setBrush(QBrush(QColor(30, 30, 30)))
+        painter.drawEllipse(circle_rect)
+        
+        # Dessiner les marqueurs aux positions -1.0, 0.0, +1.0
+        marker_pen = QPen(QColor(80, 80, 80), 1)
+        painter.setPen(marker_pen)
+        
+        # Marqueur à 12h (0.0)
+        marker_length = 8
+        painter.drawLine(int(center_x), int(center_y - radius), 
+                        int(center_x), int(center_y - radius + marker_length))
+        
+        # Marqueur à 3h (+1.0)
+        marker_x = center_x + radius * math.cos(0)
+        marker_y = center_y - radius * math.sin(0)
+        painter.drawLine(int(marker_x), int(marker_y), 
+                        int(marker_x - marker_length), int(marker_y))
+        
+        # Marqueur à 9h (-1.0)
+        marker_x = center_x + radius * math.cos(math.pi)
+        marker_y = center_y - radius * math.sin(math.pi)
+        painter.drawLine(int(marker_x), int(marker_y), 
+                        int(marker_x + marker_length), int(marker_y))
+        
+        # Calculer l'angle de l'indicateur basé sur la valeur
+        # 0.0 = 12h (angle 0), +1.0 = rotation complète horaire, -1.0 = rotation complète anti-horaire
+        indicator_angle = self.value * 2 * math.pi
+        
+        # Dessiner l'indicateur (ligne pointant vers la position)
+        indicator_length = radius - 5
+        indicator_end_x = center_x + indicator_length * math.cos(indicator_angle)
+        indicator_end_y = center_y - indicator_length * math.sin(indicator_angle)
+        
+        painter.setPen(QPen(QColor(0, 255, 255), 3))
+        painter.drawLine(int(center_x), int(center_y), 
+                        int(indicator_end_x), int(indicator_end_y))
+        
+        # Dessiner un point au centre
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawEllipse(int(center_x - 3), int(center_y - 3), 6, 6)
 
 
 @dataclass
@@ -816,20 +1067,25 @@ class MainWindow(QMainWindow):
         # Activer le focus pour recevoir les événements clavier
         self.setFocusPolicy(Qt.StrongFocus)
         
+        # Initialiser l'onglet actif
+        self.active_workspace_id = 1
+        
         # Layout principal vertical
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Sélecteur de caméra - 8 boutons
-        camera_selector_layout = QHBoxLayout()
+        # Ligne supérieure : Sélecteur de caméra (gauche) + Sélecteur d'onglets (droite)
+        top_bar_layout = QHBoxLayout()
         margin_h = self._scale_value(10)
         margin_v = self._scale_value(5)
-        camera_selector_layout.setContentsMargins(margin_h, margin_v, margin_h, margin_v)
-        camera_selector_layout.setSpacing(self._scale_value(5))
+        top_bar_layout.setContentsMargins(margin_h, margin_v, margin_h, margin_v)
+        top_bar_layout.setSpacing(self._scale_value(5))
+        
+        # Sélecteur de caméra - 8 boutons (gauche)
         camera_label = QLabel("Caméra:")
         camera_label.setStyleSheet(f"font-size: {self._scale_font(12)}; color: #aaa;")
-        camera_selector_layout.addWidget(camera_label)
+        top_bar_layout.addWidget(camera_label)
         
         # Créer 8 boutons pour les caméras
         self.camera_buttons = []
@@ -862,14 +1118,53 @@ class MainWindow(QMainWindow):
                 }
             """))
             self.camera_buttons.append(btn)
-            camera_selector_layout.addWidget(btn)
+            top_bar_layout.addWidget(btn)
         
-        camera_selector_layout.addStretch()
+        # Espacement pour pousser le sélecteur d'onglets à droite
+        top_bar_layout.addStretch()
         
-        camera_selector_widget = QWidget()
-        camera_selector_widget.setLayout(camera_selector_layout)
-        camera_selector_widget.setStyleSheet("background-color: #1a1a1a; border-bottom: 1px solid #444;")
-        main_layout.addWidget(camera_selector_widget)
+        # Sélecteur d'onglets (droite)
+        workspace_label = QLabel("Workspace:")
+        workspace_label.setStyleSheet(f"font-size: {self._scale_font(12)}; color: #aaa;")
+        top_bar_layout.addWidget(workspace_label)
+        
+        # Créer 2 boutons pour les workspaces
+        self.workspace_buttons = []
+        for i in range(1, 3):
+            btn = QPushButton(f"Workspace {i}")
+            btn_width = self._scale_value(100)
+            btn_height = self._scale_value(30)
+            btn.setMinimumSize(btn_width, btn_height)
+            btn.setMaximumSize(btn_width, btn_height)
+            btn.setCheckable(True)
+            if i == self.active_workspace_id:
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, ws_id=i: self.switch_workspace(ws_id))
+            btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 5px;
+                    background-color: #333;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    color: #fff;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    border-color: #777;
+                    background-color: #444;
+                }
+                QPushButton:checked {
+                    background-color: #0066cc;
+                    border-color: #0088ff;
+                }
+            """))
+            self.workspace_buttons.append(btn)
+            top_bar_layout.addWidget(btn)
+        
+        top_bar_widget = QWidget()
+        top_bar_widget.setLayout(top_bar_layout)
+        top_bar_widget.setStyleSheet("background-color: #1a1a1a; border-bottom: 1px solid #444;")
+        main_layout.addWidget(top_bar_widget)
         
         # Widget central avec layout horizontal
         central_widget = QWidget()
@@ -950,8 +1245,41 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.presets_panel)
         central_layout.addWidget(self.controls_panel)
         
-        # Ajouter le widget central au layout principal
-        main_layout.addWidget(central_widget)
+        # Créer le QStackedWidget pour gérer les différents workspaces
+        self.workspace_stack = QStackedWidget()
+        
+        # Page 1 (Workspace 1) : Contenu actuel
+        workspace_1_page = central_widget
+        self.workspace_stack.addWidget(workspace_1_page)
+        
+        # Page 2 (Workspace 2) : Nouvelle page avec Joystick Control
+        workspace_2_page = self.create_workspace_2_page()
+        self.workspace_stack.addWidget(workspace_2_page)
+        
+        # Connecter les signaux du panneau joystick
+        if hasattr(workspace_2_page, 'layout') and workspace_2_page.layout():
+            # Trouver le panneau joystick dans la page
+            for i in range(workspace_2_page.layout().count()):
+                item = workspace_2_page.layout().itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if hasattr(widget, 'joystick_2d'):
+                        # Joystick 2D pour pan/tilt
+                        widget.joystick_2d.positionChanged.connect(self.on_joystick_pan_tilt_changed)
+                    if hasattr(widget, 'zoom_fader'):
+                        # Fader zoom
+                        widget.zoom_fader.valueChanged.connect(self.on_joystick_zoom_fader_changed)
+                        widget.zoom_fader.sliderReleased.connect(lambda: widget.zoom_fader.setValue(0))
+                    if hasattr(widget, 'slide_fader'):
+                        # Fader slide
+                        widget.slide_fader.valueChanged.connect(self.on_joystick_slide_fader_changed)
+                        widget.slide_fader.sliderReleased.connect(lambda: widget.slide_fader.setValue(0))
+        
+        # Définir la page active (Workspace 1)
+        self.workspace_stack.setCurrentIndex(0)
+        
+        # Ajouter le QStackedWidget au layout principal
+        main_layout.addWidget(self.workspace_stack)
         
         # Créer le widget principal et le définir comme central widget
         main_widget = QWidget()
@@ -1017,6 +1345,23 @@ class MainWindow(QMainWindow):
                 border-top: 1px solid #444;
             }
         """)
+    
+    def switch_workspace(self, workspace_id: int):
+        """Change l'onglet workspace actif."""
+        if workspace_id < 1 or workspace_id > 2:
+            logger.warning(f"ID de workspace invalide: {workspace_id}")
+            return
+        
+        self.active_workspace_id = workspace_id
+        
+        # Changer la page affichée dans le QStackedWidget (index 0-based)
+        self.workspace_stack.setCurrentIndex(workspace_id - 1)
+        
+        # Mettre à jour l'état des boutons d'onglets
+        for i, btn in enumerate(self.workspace_buttons, start=1):
+            btn.setChecked(i == workspace_id)
+        
+        logger.debug(f"Workspace changé vers {workspace_id}")
     
     def switch_active_camera(self, camera_id: int):
         """Bascule vers la caméra spécifiée (pour l'affichage UI)."""
@@ -3393,6 +3738,196 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Erreur lors de la synchronisation des positions du slider: {e}")
+    
+    def create_workspace_2_page(self):
+        """Crée la page pour le Workspace 2 avec le panneau Joystick Control."""
+        page = QWidget()
+        page.setStyleSheet("""
+            QWidget {
+                background-color: #2a2a2a;
+            }
+        """)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(self._scale_value(20), self._scale_value(20), 
+                                 self._scale_value(20), self._scale_value(20))
+        layout.setSpacing(self._scale_value(20))
+        
+        # Créer le panneau Joystick Control
+        joystick_panel = self.create_joystick_control_panel()
+        layout.addWidget(joystick_panel)
+        
+        layout.addStretch()
+        
+        return page
+    
+    def create_joystick_control_panel(self):
+        """Crée le panneau de contrôle Joystick."""
+        panel = QWidget()
+        panel_width = self._scale_value(340)  # 2x plus large que les autres panneaux pour voir tout le cercle
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        
+        # Titre du panneau (style identique aux autres panneaux)
+        title = QLabel("Joystick")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
+        layout.addWidget(title)
+        
+        # Container principal pour le contenu (utilise toute la largeur)
+        main_container = QWidget()
+        main_container_layout = QVBoxLayout(main_container)
+        main_container_layout.setContentsMargins(0, 0, 0, 0)
+        main_container_layout.setSpacing(self._scale_value(20))
+        
+        # Joystick 2D pour Pan/Tilt (centré)
+        joystick_2d = Joystick2DWidget()
+        joystick_2d.setMinimumSize(self._scale_value(200), self._scale_value(200))
+        joystick_2d.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        main_container_layout.addWidget(joystick_2d, alignment=Qt.AlignCenter)
+        
+        # Stocker la référence pour les connexions
+        panel.joystick_2d = joystick_2d
+        
+        # Container pour les faders (vertical, utilise toute la largeur)
+        fader_container = QWidget()
+        fader_layout = QVBoxLayout(fader_container)
+        fader_layout.setContentsMargins(0, 0, 0, 0)
+        fader_layout.setSpacing(self._scale_value(15))
+        
+        # Fader Zoom
+        zoom_container = QWidget()
+        zoom_container_layout = QVBoxLayout(zoom_container)
+        zoom_container_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_container_layout.setSpacing(self._scale_value(5))
+        
+        zoom_label = QLabel("Zoom")
+        zoom_label.setAlignment(Qt.AlignCenter)
+        zoom_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        zoom_container_layout.addWidget(zoom_label)
+        
+        # Fader horizontal pour zoom - utilise toute la largeur disponible
+        zoom_fader = QSlider(Qt.Horizontal)
+        zoom_fader.setMinimum(-1000)  # -1.0 * 1000 pour précision
+        zoom_fader.setMaximum(1000)  # +1.0 * 1000
+        zoom_fader.setValue(0)  # Position centrale (0.0)
+        zoom_fader.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        zoom_fader.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+            QSlider::handle:horizontal:pressed {
+                background: #0ff;
+            }
+        """))
+        zoom_container_layout.addWidget(zoom_fader)
+        fader_layout.addWidget(zoom_container)
+        panel.zoom_fader = zoom_fader
+        
+        # Fader Slide (en dessous de Zoom)
+        slide_container = QWidget()
+        slide_container_layout = QVBoxLayout(slide_container)
+        slide_container_layout.setContentsMargins(0, 0, 0, 0)
+        slide_container_layout.setSpacing(self._scale_value(5))
+        
+        slide_label = QLabel("Slide")
+        slide_label.setAlignment(Qt.AlignCenter)
+        slide_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        slide_container_layout.addWidget(slide_label)
+        
+        # Fader horizontal pour slide - utilise toute la largeur disponible
+        slide_fader = QSlider(Qt.Horizontal)
+        slide_fader.setMinimum(-1000)  # -1.0 * 1000 pour précision
+        slide_fader.setMaximum(1000)  # +1.0 * 1000
+        slide_fader.setValue(0)  # Position centrale (0.0)
+        slide_fader.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        slide_fader.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+            QSlider::handle:horizontal:pressed {
+                background: #0ff;
+            }
+        """))
+        slide_container_layout.addWidget(slide_fader)
+        fader_layout.addWidget(slide_container)
+        panel.slide_fader = slide_fader
+        
+        # Ajouter les faders au container principal
+        main_container_layout.addWidget(fader_container)
+        
+        layout.addWidget(main_container)
+        layout.addStretch()
+        
+        return panel
+    
+    def on_joystick_pan_tilt_changed(self, pan: float, tilt: float):
+        """Gère le changement de position du joystick pan/tilt."""
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        
+        if slider_controller and slider_controller.is_configured():
+            slider_controller.send_joy_command(pan=pan, tilt=tilt, silent=True)
+    
+    def on_joystick_zoom_fader_changed(self, value: int):
+        """Gère le changement de valeur du fader zoom."""
+        # Convertir de -1000..1000 à -1.0..+1.0
+        normalized_value = value / 1000.0
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        
+        if slider_controller and slider_controller.is_configured():
+            slider_controller.send_joy_command(zoom=normalized_value, silent=True)
+    
+    def on_joystick_slide_fader_changed(self, value: int):
+        """Gère le changement de valeur du fader slide."""
+        # Convertir de -1000..1000 à -1.0..+1.0
+        normalized_value = value / 1000.0
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        
+        if slider_controller and slider_controller.is_configured():
+            slider_controller.send_joy_command(slide=normalized_value, silent=True)
     
     def create_pan_tilt_matrix_panel(self):
         """Crée le panneau de contrôle Pan/Tilt avec une matrice XY."""
