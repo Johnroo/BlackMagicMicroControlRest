@@ -90,7 +90,25 @@ class StateStore(QObject):
             if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "zoom", 
                        "slider_pan", "slider_tilt", "slider_zoom", "slider_slide"]:
                 # Vérifier si la valeur a changé
-                if cam_state.get(key) != value:
+                # Utiliser une comparaison qui gère correctement None vs 0.0
+                old_value = cam_state.get(key)
+                # Si l'ancienne valeur est None et la nouvelle est 0.0 (ou vice versa), considérer comme un changement
+                # Sinon, comparer normalement
+                if old_value is None and value is not None:
+                    # Changement de None vers une valeur
+                    cam_state[key] = value
+                    patch["cams"][cam_key][key] = value
+                elif old_value is not None and value is None:
+                    # Changement d'une valeur vers None
+                    cam_state[key] = value
+                    patch["cams"][cam_key][key] = value
+                elif old_value != value:
+                    # Changement de valeur normale
+                    # Pour les valeurs flottantes, utiliser une comparaison avec tolérance pour éviter les problèmes de précision
+                    if isinstance(old_value, float) and isinstance(value, float):
+                        # Si la différence est très petite (< 0.0001), considérer comme identique
+                        if abs(old_value - value) < 0.0001:
+                            continue  # Pas de changement significatif
                     cam_state[key] = value
                     patch["cams"][cam_key][key] = value
         

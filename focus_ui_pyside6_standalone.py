@@ -3361,11 +3361,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour des positions du slider via WebSocket: {e}")
     
-    def sync_slider_positions_from_api(self):
+    def sync_slider_positions_from_api(self, camera_id: Optional[int] = None):
         """Synchronise les positions des faders UI avec les positions réelles du slider via l'API HTTP (fallback)."""
         # Cette méthode est maintenant utilisée uniquement comme fallback si le WebSocket n'est pas disponible
-        cam_data = self.get_active_camera_data()
-        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        if camera_id is None:
+            camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
+        slider_controller = self.slider_controllers.get(camera_id)
         
         if not slider_controller or not slider_controller.is_configured():
             return  # Slider non configuré
@@ -4086,6 +4088,32 @@ class MainWindow(QMainWindow):
             # Mettre à jour le StateStore avec l'état de connexion
             self.state_store.update_cam(camera_id, connected=True)
             
+            # Synchroniser les positions du slider via API (fallback si WebSocket n'est pas encore connecté)
+            # Cela garantit que les valeurs initiales sont chargées même si le WebSocket n'est pas encore prêt
+            slider_controller = self.slider_controllers.get(camera_id)
+            if slider_controller and slider_controller.is_configured():
+                # Synchroniser les positions du slider après un court délai pour laisser le temps à la connexion de s'établir
+                # Envoyer un snapshot mis à jour après la synchronisation pour inclure les valeurs du slider
+                def sync_and_broadcast():
+                    # Utiliser sync_slider_positions_from_api mais pour la bonne caméra
+                    cam_data = self.cameras[camera_id]
+                    if slider_controller and slider_controller.is_configured():
+                        try:
+                            slider_status = slider_controller.get_status(silent=True)
+                            if slider_status:
+                                data = {
+                                    'pan': {'steps': cam_data.slider_pan_steps, 'normalized': slider_status.get('pan', 0.0)},
+                                    'tilt': {'steps': cam_data.slider_tilt_steps, 'normalized': slider_status.get('tilt', 0.0)},
+                                    'zoom': {'steps': cam_data.slider_zoom_steps, 'normalized': slider_status.get('zoom', 0.0)},
+                                    'slide': {'steps': cam_data.slider_slide_steps, 'normalized': slider_status.get('slide', 0.0)}
+                                }
+                                self.on_slider_position_update(data, camera_id=camera_id)
+                        except Exception as e:
+                            logger.error(f"Erreur lors de la synchronisation des positions du slider: {e}")
+                    # Envoyer un snapshot mis à jour après un court délai
+                    QTimer.singleShot(200, lambda: self.companion_server.broadcast_snapshot())
+                QTimer.singleShot(500, sync_and_broadcast)
+            
             # Démarrer le WebSocket du slider si configuré
             if cam_data.slider_ip:
                 try:
@@ -4101,6 +4129,10 @@ class MainWindow(QMainWindow):
                     slider_ws_client.start()
                     cam_data.slider_websocket_client = slider_ws_client
                     logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
+                    
+                    # Envoyer un snapshot mis à jour après un court délai pour inclure les valeurs du slider
+                    # Cela garantit que Companion reçoit les valeurs même si le WebSocket n'a pas encore envoyé de données
+                    QTimer.singleShot(1000, lambda: self.companion_server.broadcast_snapshot())
                 except Exception as e:
                     logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
             
@@ -4111,7 +4143,12 @@ class MainWindow(QMainWindow):
                 # Activer tous les contrôles
                 self.set_controls_enabled(True)
                 # Synchronisation initiale via HTTP (fallback si WebSocket pas encore connecté)
-                QTimer.singleShot(500, self.sync_slider_positions_from_api)
+                # Envoyer un snapshot mis à jour après la synchronisation pour inclure les valeurs du slider
+                def sync_and_broadcast():
+                    self.sync_slider_positions_from_api(self.active_camera_id)
+                    # Envoyer un snapshot mis à jour après un court délai pour inclure les valeurs synchronisées
+                    QTimer.singleShot(200, lambda: self.companion_server.broadcast_snapshot())
+                QTimer.singleShot(500, sync_and_broadcast)
             
             logger.info(f"Caméra {camera_id} connectée à {cam_data.url}")
         except Exception as e:
@@ -4687,6 +4724,12 @@ class MainWindow(QMainWindow):
                 update_kwargs['shutter'] = cam_data.shutter_actual_value
             if cam_data.whitebalance_actual_value is not None:
                 update_kwargs['whiteBalance'] = cam_data.whitebalance_actual_value
+            # Ajouter les valeurs des sliders (elles sont initialisées à 0.0, donc toujours présentes)
+            # Les valeurs seront mises à jour via WebSocket ou sync_slider_positions_from_api
+            update_kwargs['slider_pan'] = cam_data.slider_pan_value
+            update_kwargs['slider_tilt'] = cam_data.slider_tilt_value
+            update_kwargs['slider_zoom'] = cam_data.slider_zoom_value
+            update_kwargs['slider_slide'] = cam_data.slider_slide_value
             if update_kwargs:
                 self.state_store.update_cam(camera_id, **update_kwargs)
             
