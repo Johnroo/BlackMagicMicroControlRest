@@ -456,6 +456,10 @@ class CameraData:
     whitebalance_actual_value: int = 0
     whitebalance_min: int = 0
     whitebalance_max: int = 0
+    tint_sent_value: int = 0
+    tint_actual_value: int = 0
+    tint_min: int = 0
+    tint_max: int = 0
     zoom_sent_value: float = 0.0
     zoom_actual_value: float = 0.0
     
@@ -517,6 +521,7 @@ class CameraSignals(QObject):
     falseColor_changed = Signal(bool)
     cleanfeed_changed = Signal(bool)
     whitebalance_changed = Signal(int)
+    tint_changed = Signal(int)
     websocket_status = Signal(bool, str)
 
 
@@ -856,6 +861,7 @@ class MainWindow(QMainWindow):
         
         # Variables pour white balance
         self.whitebalance_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
+        self.tint_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         
         # Variables pour la répétition des touches flèches
         self.key_repeat_timer = None
@@ -1244,27 +1250,29 @@ class MainWindow(QMainWindow):
         # Ajouter les panneaux au layout central
         central_layout.addWidget(self.focus_panel)
         
-        # Conteneur vertical pour iris et whitebalance (whitebalance en dessous de iris)
-        iris_whitebalance_container = QWidget()
-        iris_whitebalance_layout = QVBoxLayout(iris_whitebalance_container)
-        iris_whitebalance_layout.setSpacing(20)
-        iris_whitebalance_layout.setContentsMargins(0, 0, 0, 0)
-        iris_whitebalance_layout.addWidget(self.iris_panel)
-        iris_whitebalance_layout.addWidget(self.whitebalance_panel)
-        iris_whitebalance_layout.addStretch()  # Pour pousser les panneaux vers le haut
+        # Conteneur avec grille 2x2 pour les 4 panneaux (Iris, Gain, White Balance, Shutter)
+        grid_container = QWidget()
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setSpacing(20)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
         
-        central_layout.addWidget(iris_whitebalance_container)
+        # Grille 2x2 :
+        # Ligne 0, Colonne 0 : Iris Control
+        # Ligne 0, Colonne 1 : Gain Control
+        # Ligne 1, Colonne 0 : White Balance
+        # Ligne 1, Colonne 1 : Shutter Control
+        grid_layout.addWidget(self.iris_panel, 0, 0, 1, 1)
+        grid_layout.addWidget(self.gain_panel, 0, 1, 1, 1)
+        grid_layout.addWidget(self.whitebalance_panel, 1, 0, 1, 1)
+        grid_layout.addWidget(self.shutter_panel, 1, 1, 1, 1)
         
-        # Conteneur vertical pour gain et shutter (shutter en dessous de gain)
-        gain_shutter_container = QWidget()
-        gain_shutter_layout = QVBoxLayout(gain_shutter_container)
-        gain_shutter_layout.setSpacing(20)
-        gain_shutter_layout.setContentsMargins(0, 0, 0, 0)
-        gain_shutter_layout.addWidget(self.gain_panel)
-        gain_shutter_layout.addWidget(self.shutter_panel)
-        gain_shutter_layout.addStretch()  # Pour pousser les panneaux vers le haut
+        # Définir les stretch factors pour que chaque panneau ait la même taille
+        grid_layout.setRowStretch(0, 1)  # Ligne 0 : même hauteur
+        grid_layout.setRowStretch(1, 1)  # Ligne 1 : même hauteur
+        grid_layout.setColumnStretch(0, 1)  # Colonne 0 : même largeur
+        grid_layout.setColumnStretch(1, 1)  # Colonne 1 : même largeur
         
-        central_layout.addWidget(gain_shutter_container)
+        central_layout.addWidget(grid_container)
         
         # Le panneau zoom a été supprimé, la focale est maintenant affichée dans zoom_motor_panel
         
@@ -1281,10 +1289,15 @@ class MainWindow(QMainWindow):
         slider_container_layout.addWidget(self.slide_panel, stretch=1)
         # Pas de stretch à la fin pour que les panneaux prennent tout l'espace disponible
         
-        # Ajouter le conteneur slider avec un stretch factor pour qu'il prenne tout l'espace disponible
-        # entre gain/shutter et presets
-        central_layout.addWidget(slider_container, stretch=1)
-        central_layout.addWidget(self.presets_panel)
+        # Conteneur horizontal pour slider et presets (slider à gauche, collé)
+        slider_presets_container = QWidget()
+        slider_presets_layout = QHBoxLayout(slider_presets_container)
+        slider_presets_layout.setSpacing(0)  # Collé
+        slider_presets_layout.setContentsMargins(0, 0, 0, 0)
+        slider_presets_layout.addWidget(slider_container, stretch=1)
+        slider_presets_layout.addWidget(self.presets_panel)
+        
+        central_layout.addWidget(slider_presets_container, stretch=1)
         central_layout.addWidget(self.controls_panel)
         
         # Créer le QStackedWidget pour gérer les différents workspaces
@@ -1486,10 +1499,7 @@ class MainWindow(QMainWindow):
         # Iris
         self.iris_sent_value = cam_data.iris_sent_value
         self.iris_actual_value = cam_data.iris_actual_value
-        if hasattr(self, 'iris_value_sent'):
-            self.iris_value_sent.setText(f"{cam_data.iris_sent_value:.2f}")
-        if hasattr(self, 'iris_value_actual') and cam_data.iris_actual_value is not None:
-            self.iris_value_actual.setText(f"{cam_data.iris_actual_value:.2f}")
+        # Les valeurs iris_value_sent et iris_value_actual ont été supprimées, seul aperture_stop est affiché
         
         # Gain
         self.gain_sent_value = cam_data.gain_sent_value
@@ -1504,10 +1514,12 @@ class MainWindow(QMainWindow):
         # White Balance
         self.whitebalance_sent_value = cam_data.whitebalance_sent_value
         self.whitebalance_actual_value = cam_data.whitebalance_actual_value
-        if hasattr(self, 'whitebalance_value_sent'):
-            self.whitebalance_value_sent.setText(f"{cam_data.whitebalance_sent_value}K")
         if hasattr(self, 'whitebalance_value_actual'):
             self.whitebalance_value_actual.setText(f"{cam_data.whitebalance_actual_value}K")
+        
+        # Tint
+        if hasattr(self, 'tint_value_actual'):
+            self.tint_value_actual.setText(f"{cam_data.tint_actual_value}")
         
         # Zoom (focale caméra)
         self.zoom_sent_value = cam_data.zoom_sent_value
@@ -1561,7 +1573,7 @@ class MainWindow(QMainWindow):
             return
         
         # Mettre à jour les largeurs des panneaux (réduites pour libérer de l'espace pour les sliders)
-        panel_width = self._scale_value(170)  # Réduit de 200 à 170 pour optimiser l'espace
+        panel_width = self._scale_value(200)  # Élargi
         panels = [
             self.focus_panel, self.iris_panel, self.gain_panel, 
             self.whitebalance_panel, self.shutter_panel,
@@ -1701,8 +1713,7 @@ class MainWindow(QMainWindow):
         value_labels = [
             (getattr(self, 'focus_value_sent', None), 12, "#ff0"),
             (getattr(self, 'focus_value_actual', None), 12, "#0ff"),
-            (getattr(self, 'iris_value_sent', None), 12, "#ff0"),
-            (getattr(self, 'iris_value_actual', None), 12, "#0ff"),
+            # iris_value_sent et iris_value_actual supprimés, seul aperture_stop est affiché
             (getattr(self, 'gain_value_sent', None), 12, "#ff0"),
             (getattr(self, 'gain_value_actual', None), 12, "#0ff"),
             (getattr(self, 'whitebalance_value_sent', None), 12, "#ff0"),
@@ -1920,12 +1931,80 @@ class MainWindow(QMainWindow):
                 if checkbox:
                     checkbox.setStyleSheet(recall_scope_style)
     
+    def _create_plus_minus_buttons(self, plus_callback, minus_callback, container_layout):
+        """Crée deux boutons + et - alignés horizontalement avec un style uniforme."""
+        btn_size = self._scale_value(50)
+        btn_spacing = self._scale_value(10)
+        
+        # Container horizontal pour les boutons
+        buttons_row = QWidget()
+        buttons_row_layout = QHBoxLayout(buttons_row)
+        buttons_row_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_row_layout.setSpacing(btn_spacing)
+        buttons_row_layout.setAlignment(Qt.AlignCenter)
+        
+        # Bouton +
+        plus_btn = QPushButton("+")
+        plus_btn.setMinimumSize(btn_size, btn_size)
+        plus_btn.setMaximumSize(btn_size, btn_size)
+        plus_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                font-size: 20px;
+                font-weight: bold;
+                border: 2px solid #666;
+                background-color: #2a2a2a;
+                color: #fff;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #3a3a3a;
+                border-color: #888;
+            }
+            QPushButton:pressed {
+                background-color: #4a4a4a;
+                border-color: #aaa;
+            }
+        """))
+        plus_btn.clicked.connect(plus_callback)
+        buttons_row_layout.addWidget(plus_btn)
+        
+        # Bouton -
+        minus_btn = QPushButton("−")
+        minus_btn.setMinimumSize(btn_size, btn_size)
+        minus_btn.setMaximumSize(btn_size, btn_size)
+        minus_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                font-size: 20px;
+                font-weight: bold;
+                border: 2px solid #666;
+                background-color: #2a2a2a;
+                color: #fff;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #3a3a3a;
+                border-color: #888;
+            }
+            QPushButton:pressed {
+                background-color: #4a4a4a;
+                border-color: #aaa;
+            }
+        """))
+        minus_btn.clicked.connect(minus_callback)
+        buttons_row_layout.addWidget(minus_btn)
+        
+        container_layout.addWidget(buttons_row, alignment=Qt.AlignCenter)
+        
+        return plus_btn, minus_btn
+    
     def create_focus_panel(self):
         """Crée le panneau de contrôle du focus."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
+        # Permettre au panneau de s'étirer en hauteur
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         # Permettre au panneau de s'étirer en hauteur
         panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
@@ -2142,9 +2221,10 @@ class MainWindow(QMainWindow):
     def create_iris_panel(self):
         """Crée le panneau de contrôle de l'iris."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
@@ -2163,119 +2243,50 @@ class MainWindow(QMainWindow):
         title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
         layout.addWidget(title)
         
-        # Section d'affichage
+        # Section d'affichage - Aperture Stop uniquement
         iris_display = QWidget()
         iris_display_layout = QVBoxLayout(iris_display)
         iris_display_layout.setSpacing(self._scale_value(10))
-        
-        iris_label = QLabel("Iris Normalisé")
-        iris_label.setAlignment(Qt.AlignCenter)
-        iris_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
-        iris_display_layout.addWidget(iris_label)
-        
-        # Container pour les valeurs (vertical : envoyé au-dessus de réel)
-        value_container = QWidget()
-        value_container_width = self._scale_value(90)
-        value_container.setMinimumWidth(value_container_width)
-        value_container.setMaximumWidth(value_container_width)
-        value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(self._scale_value(5))
-        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
-        
-        # Valeur envoyée
-        sent_label = QLabel("Envoyé")
-        sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
-        value_layout.addWidget(sent_label)
-        self.iris_value_sent = QLabel("0.00")
-        self.iris_value_sent.setAlignment(Qt.AlignCenter)
-        self.iris_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
-        value_layout.addWidget(self.iris_value_sent)
-        
-        # Espacement
-        value_layout.addSpacing(self._scale_value(5))
-        
-        # Valeur réelle
-        actual_label = QLabel("Réel (GET)")
-        actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
-        value_layout.addWidget(actual_label)
-        self.iris_value_actual = QLabel("0.00")
-        self.iris_value_actual.setAlignment(Qt.AlignCenter)
-        self.iris_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
-        value_layout.addWidget(self.iris_value_actual)
-        
-        iris_display_layout.addWidget(value_container)
+        iris_display_layout.setContentsMargins(0, 0, 0, 0)
         
         # Aperture Stop
-        aperture_label = QLabel("Aperture Stop:")
+        aperture_label = QLabel("Aperture Stop")
         aperture_label.setAlignment(Qt.AlignCenter)
-        aperture_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
+        aperture_label.setStyleSheet(f"font-size: {self._scale_font(11)}; color: #aaa; text-transform: uppercase;")
         iris_display_layout.addWidget(aperture_label)
+        
+        # Container pour la valeur Aperture Stop
+        aperture_value_container = QWidget()
+        aperture_value_container.setMinimumWidth(self._scale_value(150))
+        aperture_value_layout = QVBoxLayout(aperture_value_container)
+        aperture_value_layout.setSpacing(self._scale_value(2))
+        aperture_value_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.iris_aperture_stop = QLabel("-")
         self.iris_aperture_stop.setAlignment(Qt.AlignCenter)
-        self.iris_aperture_stop.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #0ff; font-weight: bold;")
-        iris_display_layout.addWidget(self.iris_aperture_stop)
+        self.iris_aperture_stop.setStyleSheet(f"font-size: {self._scale_font(18)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        aperture_value_layout.addWidget(self.iris_aperture_stop)
         
-        iris_display_layout.addWidget(value_container)
+        iris_display_layout.addWidget(aperture_value_container, alignment=Qt.AlignCenter)
         
-        layout.addWidget(iris_display, stretch=0)  # Pas de stretch pour l'affichage
+        layout.addWidget(iris_display)
         
-        # Boutons + et -
+        # Espacement avant les boutons
+        layout.addSpacing(self._scale_value(20))
+        
+        # Boutons + et - alignés horizontalement
         buttons_container = QWidget()
-        buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(self._scale_value(15))
-        margin_v = self._scale_value(30)
-        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
+        buttons_container_layout = QVBoxLayout(buttons_container)
+        buttons_container_layout.setContentsMargins(0, self._scale_value(15), 0, self._scale_value(15))
+        buttons_container_layout.setSpacing(0)
         
-        self.iris_plus_btn = QPushButton("+")
-        btn_size = self._scale_value(60)
-        self.iris_plus_btn.setMinimumSize(btn_size, btn_size)
-        self.iris_plus_btn.setMaximumSize(btn_size, btn_size)
-        self.iris_plus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.iris_plus_btn.clicked.connect(self.increment_iris)
-        buttons_layout.addWidget(self.iris_plus_btn, alignment=Qt.AlignCenter)
+        self.iris_plus_btn, self.iris_minus_btn = self._create_plus_minus_buttons(
+            self.increment_iris,
+            self.decrement_iris,
+            buttons_container_layout
+        )
         
-        self.iris_minus_btn = QPushButton("-")
-        self.iris_minus_btn.setMinimumSize(btn_size, btn_size)
-        self.iris_minus_btn.setMaximumSize(btn_size, btn_size)
-        self.iris_minus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.iris_minus_btn.clicked.connect(self.decrement_iris)
-        buttons_layout.addWidget(self.iris_minus_btn, alignment=Qt.AlignCenter)
-        
-        layout.addWidget(buttons_container)
+        layout.addWidget(buttons_container, alignment=Qt.AlignCenter)
         
         layout.addStretch()
         
@@ -2347,9 +2358,7 @@ class MainWindow(QMainWindow):
         value = max(0.0, min(1.0, value))
         cam_data.iris_sent_value = value
         
-        # Mettre à jour l'UI seulement si c'est la caméra active
-        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
-            self.iris_value_sent.setText(f"{value:.2f}")
+        # Les valeurs iris_value_sent et iris_value_actual ont été supprimées, seul aperture_stop est affiché
         
         # Envoyer la valeur à la caméra
         actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
@@ -2379,9 +2388,10 @@ class MainWindow(QMainWindow):
     def create_gain_panel(self):
         """Crée le panneau de contrôle du gain."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
@@ -2419,20 +2429,7 @@ class MainWindow(QMainWindow):
         value_layout.setSpacing(self._scale_value(5))
         value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
-        # Valeur envoyée
-        sent_label = QLabel("Envoyé")
-        sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
-        value_layout.addWidget(sent_label)
-        self.gain_value_sent = QLabel("0")
-        self.gain_value_sent.setAlignment(Qt.AlignCenter)
-        self.gain_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
-        value_layout.addWidget(self.gain_value_sent)
-        
-        # Espacement
-        value_layout.addSpacing(self._scale_value(5))
-        
-        # Valeur réelle
+        # Valeur réelle uniquement (pas d'envoyé)
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
         actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
@@ -2442,64 +2439,25 @@ class MainWindow(QMainWindow):
         self.gain_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.gain_value_actual)
         
-        gain_display_layout.addWidget(value_container)
+        gain_display_layout.addWidget(value_container, alignment=Qt.AlignCenter)
         layout.addWidget(gain_display)
         
-        # Boutons de contrôle
+        # Espacement avant les boutons
+        layout.addSpacing(self._scale_value(20))
+        
+        # Boutons + et - alignés horizontalement
         buttons_container = QWidget()
-        buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(self._scale_value(15))
-        margin_v = self._scale_value(30)
-        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
+        buttons_container_layout = QVBoxLayout(buttons_container)
+        buttons_container_layout.setContentsMargins(0, self._scale_value(15), 0, self._scale_value(15))
+        buttons_container_layout.setSpacing(0)
         
-        self.gain_plus_btn = QPushButton("+")
-        btn_size = self._scale_value(60)
-        self.gain_plus_btn.setMinimumSize(btn_size, btn_size)
-        self.gain_plus_btn.setMaximumSize(btn_size, btn_size)
-        self.gain_plus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.gain_plus_btn.clicked.connect(self.increment_gain)
-        buttons_layout.addWidget(self.gain_plus_btn, alignment=Qt.AlignCenter)
+        self.gain_plus_btn, self.gain_minus_btn = self._create_plus_minus_buttons(
+            self.increment_gain,
+            self.decrement_gain,
+            buttons_container_layout
+        )
         
-        self.gain_minus_btn = QPushButton("-")
-        self.gain_minus_btn.setMinimumSize(btn_size, btn_size)
-        self.gain_minus_btn.setMaximumSize(btn_size, btn_size)
-        self.gain_minus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.gain_minus_btn.clicked.connect(self.decrement_gain)
-        buttons_layout.addWidget(self.gain_minus_btn, alignment=Qt.AlignCenter)
-        
-        layout.addWidget(buttons_container)
+        layout.addWidget(buttons_container, alignment=Qt.AlignCenter)
         
         layout.addStretch()
         return panel
@@ -2507,9 +2465,10 @@ class MainWindow(QMainWindow):
     def create_whitebalance_panel(self):
         """Crée le panneau de contrôle du white balance."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
@@ -2518,119 +2477,59 @@ class MainWindow(QMainWindow):
             }
         """))
         layout = QVBoxLayout(panel)
-        spacing = self._scale_value(15)
-        margin = self._scale_value(30)
+        spacing = self._scale_value(8)  # Espacement réduit pour une mise en page compacte
+        margin = self._scale_value(15)  # Marges réduites pour une mise en page compacte
         layout.setSpacing(spacing)
         layout.setContentsMargins(margin, margin, margin, margin)
         
         title = QLabel("White Balance")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff; font-weight: bold;")
         layout.addWidget(title)
         
-        # Section d'affichage
+        # Section Température (K)
         wb_display = QWidget()
         wb_display_layout = QVBoxLayout(wb_display)
-        wb_display_layout.setSpacing(self._scale_value(10))
+        wb_display_layout.setSpacing(self._scale_value(4))  # Espacement réduit
         
         wb_label = QLabel("Température (K)")
         wb_label.setAlignment(Qt.AlignCenter)
-        wb_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa; text-transform: uppercase;")
+        wb_label.setStyleSheet(f"font-size: {self._scale_font(11)}; color: #aaa; text-transform: uppercase;")
         wb_display_layout.addWidget(wb_label)
         
-        # Container pour les valeurs (vertical : envoyé au-dessus de réel)
+        # Container pour les valeurs (seulement réel, pas d'envoyé)
         value_container = QWidget()
-        value_container_width = self._scale_value(90)
-        value_container.setMinimumWidth(value_container_width)
-        value_container.setMaximumWidth(value_container_width)
+        value_container.setMinimumWidth(self._scale_value(150))
         value_layout = QVBoxLayout(value_container)
-        value_layout.setSpacing(self._scale_value(5))
-        value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
+        value_layout.setSpacing(self._scale_value(2))
+        value_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Valeur envoyée
-        sent_label = QLabel("Envoyé")
-        sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
-        value_layout.addWidget(sent_label)
-        self.whitebalance_value_sent = QLabel("0K")
-        self.whitebalance_value_sent.setAlignment(Qt.AlignCenter)
-        self.whitebalance_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
-        value_layout.addWidget(self.whitebalance_value_sent)
-        
-        # Espacement
-        value_layout.addSpacing(self._scale_value(5))
-        
-        # Valeur réelle
-        actual_label = QLabel("Réel (GET)")
+        # Valeur réelle uniquement
+        actual_label = QLabel("Réel")
         actual_label.setAlignment(Qt.AlignCenter)
-        actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
+        actual_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #888;")
         value_layout.addWidget(actual_label)
         self.whitebalance_value_actual = QLabel("0K")
         self.whitebalance_value_actual.setAlignment(Qt.AlignCenter)
-        self.whitebalance_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        self.whitebalance_value_actual.setStyleSheet(f"font-size: {self._scale_font(18)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.whitebalance_value_actual)
         
-        wb_display_layout.addWidget(value_container)
+        wb_display_layout.addWidget(value_container, alignment=Qt.AlignCenter)
         layout.addWidget(wb_display)
         
-        # Boutons de contrôle
+        # Espacement avant les boutons
+        layout.addSpacing(self._scale_value(15))
+        
+        # Boutons de contrôle - Auto en premier, puis + et -
         buttons_container = QWidget()
-        buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(self._scale_value(15))
-        margin_v = self._scale_value(30)
-        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
-        
-        self.whitebalance_plus_btn = QPushButton("+")
-        btn_size = self._scale_value(60)
-        self.whitebalance_plus_btn.setMinimumSize(btn_size, btn_size)
-        self.whitebalance_plus_btn.setMaximumSize(btn_size, btn_size)
-        self.whitebalance_plus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.whitebalance_plus_btn.clicked.connect(self.increment_whitebalance)
-        buttons_layout.addWidget(self.whitebalance_plus_btn, alignment=Qt.AlignCenter)
-        
-        self.whitebalance_minus_btn = QPushButton("-")
-        self.whitebalance_minus_btn.setMinimumSize(btn_size, btn_size)
-        self.whitebalance_minus_btn.setMaximumSize(btn_size, btn_size)
-        self.whitebalance_minus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.whitebalance_minus_btn.clicked.connect(self.decrement_whitebalance)
-        buttons_layout.addWidget(self.whitebalance_minus_btn, alignment=Qt.AlignCenter)
+        buttons_container_layout = QVBoxLayout(buttons_container)
+        buttons_container_layout.setContentsMargins(0, self._scale_value(5), 0, self._scale_value(5))
+        buttons_container_layout.setSpacing(self._scale_value(8))
         
         # Bouton Auto
         self.whitebalance_auto_btn = QPushButton("Auto")
-        auto_btn_width = self._scale_value(80)
-        auto_btn_height = self._scale_value(40)
+        auto_btn_width = self._scale_value(100)
+        auto_btn_height = self._scale_value(35)
         self.whitebalance_auto_btn.setMinimumSize(auto_btn_width, auto_btn_height)
         self.whitebalance_auto_btn.setMaximumSize(auto_btn_width, auto_btn_height)
         self.whitebalance_auto_btn.setStyleSheet(self._scale_style("""
@@ -2651,9 +2550,66 @@ class MainWindow(QMainWindow):
             }
         """))
         self.whitebalance_auto_btn.clicked.connect(self.do_auto_whitebalance)
-        buttons_layout.addWidget(self.whitebalance_auto_btn, alignment=Qt.AlignCenter)
+        buttons_container_layout.addWidget(self.whitebalance_auto_btn, alignment=Qt.AlignCenter)
         
-        layout.addWidget(buttons_container)
+        # Boutons + et - alignés horizontalement
+        self.whitebalance_plus_btn, self.whitebalance_minus_btn = self._create_plus_minus_buttons(
+            self.increment_whitebalance,
+            self.decrement_whitebalance,
+            buttons_container_layout
+        )
+        
+        layout.addWidget(buttons_container, alignment=Qt.AlignCenter)
+        
+        # Séparateur entre température et tint
+        layout.addSpacing(self._scale_value(8))
+        
+        # Section Tint
+        tint_display = QWidget()
+        tint_display_layout = QVBoxLayout(tint_display)
+        tint_display_layout.setSpacing(self._scale_value(4))  # Espacement réduit
+        
+        tint_label = QLabel("Tint")
+        tint_label.setAlignment(Qt.AlignCenter)
+        tint_label.setStyleSheet(f"font-size: {self._scale_font(11)}; color: #aaa; text-transform: uppercase;")
+        tint_display_layout.addWidget(tint_label)
+        
+        # Container pour les valeurs tint (seulement réel, pas d'envoyé)
+        tint_value_container = QWidget()
+        tint_value_container.setMinimumWidth(self._scale_value(150))
+        tint_value_layout = QVBoxLayout(tint_value_container)
+        tint_value_layout.setSpacing(self._scale_value(2))
+        tint_value_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Valeur réelle uniquement
+        tint_actual_label = QLabel("Réel")
+        tint_actual_label.setAlignment(Qt.AlignCenter)
+        tint_actual_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #888;")
+        tint_value_layout.addWidget(tint_actual_label)
+        self.tint_value_actual = QLabel("0")
+        self.tint_value_actual.setAlignment(Qt.AlignCenter)
+        self.tint_value_actual.setStyleSheet(f"font-size: {self._scale_font(18)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
+        tint_value_layout.addWidget(self.tint_value_actual)
+        
+        tint_display_layout.addWidget(tint_value_container, alignment=Qt.AlignCenter)
+        layout.addWidget(tint_display)
+        
+        # Espacement avant les boutons
+        layout.addSpacing(self._scale_value(15))
+        
+        # Boutons de contrôle tint alignés horizontalement
+        tint_buttons_container = QWidget()
+        tint_buttons_container_layout = QVBoxLayout(tint_buttons_container)
+        tint_buttons_container_layout.setContentsMargins(0, self._scale_value(5), 0, self._scale_value(5))
+        tint_buttons_container_layout.setSpacing(0)
+        
+        self.tint_plus_btn, self.tint_minus_btn = self._create_plus_minus_buttons(
+            self.increment_tint,
+            self.decrement_tint,
+            tint_buttons_container_layout
+        )
+        
+        layout.addWidget(tint_buttons_container, alignment=Qt.AlignCenter)
         
         layout.addStretch()
         return panel
@@ -2744,10 +2700,6 @@ class MainWindow(QMainWindow):
             cam_data = self.get_active_camera_data()
         
         cam_data.gain_sent_value = value
-        # Mettre à jour l'UI seulement si c'est la caméra active
-        should_update_ui = (camera_id is None or camera_id is False) or camera_id == self.active_camera_id
-        if should_update_ui:
-            self.gain_value_sent.setText(f"{value} dB")
         # Passer None au lieu de False pour send_gain_value
         actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
         self.send_gain_value(value, camera_id=actual_camera_id)
@@ -2789,6 +2741,16 @@ class MainWindow(QMainWindow):
                 logger.info(f"Caméra {camera_id} - White balance range chargé: {cam_data.whitebalance_min}K - {cam_data.whitebalance_max}K")
         except Exception as e:
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement de la description du white balance: {e}")
+        
+        # Charger la description du tint
+        try:
+            tint_desc = cam_data.controller.get_whitebalance_tint_description()
+            if tint_desc:
+                cam_data.tint_min = tint_desc.get('min', 0)
+                cam_data.tint_max = tint_desc.get('max', 0)
+                logger.info(f"Caméra {camera_id} - Tint range chargé: {cam_data.tint_min} - {cam_data.tint_max}")
+        except Exception as e:
+            logger.error(f"Caméra {camera_id} - Erreur lors du chargement de la description du tint: {e}")
     
     def increment_whitebalance(self, camera_id: Optional[int] = None):
         """Incrémente le white balance de 100K pour la caméra spécifiée ou active."""
@@ -2856,9 +2818,6 @@ class MainWindow(QMainWindow):
             cam_data = self.get_active_camera_data()
         
         cam_data.whitebalance_sent_value = value
-        # Mettre à jour l'UI seulement si c'est la caméra active
-        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
-            self.whitebalance_value_sent.setText(f"{value}K")
         # Passer None au lieu de False pour send_whitebalance_value
         actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
         self.send_whitebalance_value(value, camera_id=actual_camera_id)
@@ -2950,12 +2909,158 @@ class MainWindow(QMainWindow):
         # Mettre à jour l'UI
         self.whitebalance_value_actual.setText(f"{value}K")
     
+    def increment_tint(self, camera_id: Optional[int] = None):
+        """Incrémente le tint de 1 pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Utiliser la valeur la plus récente entre sent et actual (comme pour whitebalance)
+        current_value = cam_data.tint_sent_value if cam_data.tint_sent_value != 0 else cam_data.tint_actual_value
+        if current_value == 0:
+            # Essayer de charger la valeur depuis la caméra
+            tint_value = cam_data.controller.get_whitebalance_tint()
+            if tint_value is not None:
+                current_value = tint_value
+                cam_data.tint_actual_value = tint_value
+                cam_data.tint_sent_value = tint_value
+        
+        increment = 1  # Incrément de 1
+        new_value = current_value + increment
+        
+        # Vérifier les limites
+        if cam_data.tint_max > 0 and new_value > cam_data.tint_max:
+            new_value = cam_data.tint_max
+        
+        self.update_tint_value(new_value, camera_id=camera_id)
+    
+    def decrement_tint(self, camera_id: Optional[int] = None):
+        """Décrémente le tint de 1 pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Utiliser la valeur la plus récente entre sent et actual (comme pour whitebalance)
+        current_value = cam_data.tint_sent_value if cam_data.tint_sent_value != 0 else cam_data.tint_actual_value
+        if current_value == 0:
+            # Essayer de charger la valeur depuis la caméra
+            tint_value = cam_data.controller.get_whitebalance_tint()
+            if tint_value is not None:
+                current_value = tint_value
+                cam_data.tint_actual_value = tint_value
+                cam_data.tint_sent_value = tint_value
+        
+        decrement = 1  # Décrément de 1
+        new_value = current_value - decrement
+        
+        # Vérifier les limites
+        if cam_data.tint_min > 0 and new_value < cam_data.tint_min:
+            new_value = cam_data.tint_min
+        
+        self.update_tint_value(new_value, camera_id=camera_id)
+    
+    def update_tint_value(self, value: int, camera_id: Optional[int] = None):
+        """Met à jour la valeur du tint pour la caméra spécifiée ou active."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        cam_data.tint_sent_value = value
+        # Passer None au lieu de False pour send_tint_value
+        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
+        self.send_tint_value(value, camera_id=actual_camera_id)
+    
+    def send_tint_value(self, value: int, camera_id: Optional[int] = None):
+        """Envoie la valeur du tint directement (utilisé par Companion)."""
+        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
+            if camera_id < 1 or camera_id > 8:
+                logger.error(f"ID de caméra invalide: {camera_id}")
+                return
+            cam_data = self.cameras[camera_id]
+        else:
+            cam_data = self.get_active_camera_data()
+        
+        if not cam_data.connected or not cam_data.controller:
+            return
+        
+        # Vérifier si un envoi est déjà en cours
+        if hasattr(self, 'tint_sending') and self.tint_sending:
+            return
+        
+        self.tint_sending = True
+        
+        try:
+            success = cam_data.controller.set_whitebalance_tint(value, silent=True)
+            if not success:
+                logger.error(f"Erreur lors de l'envoi du tint")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi du tint: {e}")
+        finally:
+            # Attendre 50ms après l'envoi avant de permettre le suivant
+            QTimer.singleShot(50, self._on_tint_send_complete)
+    
+    def _on_tint_send_complete(self):
+        """Callback après l'envoi du tint."""
+        self.tint_sending = False
+    
+    def on_tint_changed(self, value: int):
+        """Callback appelé quand le tint change via WebSocket."""
+        # #region agent log
+        try:
+            import json
+            import time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"focus_ui_pyside6_standalone.py:3112","message":"on_tint_changed called","data":{"value":value},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        cam_data = self.get_active_camera_data()
+        cam_data.tint_actual_value = value
+        # #region agent log
+        try:
+            import json
+            import time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"focus_ui_pyside6_standalone.py:3116","message":"tint_actual_value updated","data":{"tint_actual_value":cam_data.tint_actual_value,"active_camera_id":self.active_camera_id},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        # Mettre à jour l'UI
+        if cam_data == self.get_active_camera_data():
+            # #region agent log
+            try:
+                import json
+                import time
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"focus_ui_pyside6_standalone.py:3120","message":"updating UI tint_value_actual","data":{"value":value},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            self.tint_value_actual.setText(f"{value}")
+    
     def create_shutter_panel(self):
         """Crée le panneau de contrôle du shutter."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
@@ -2964,8 +3069,8 @@ class MainWindow(QMainWindow):
             }
         """))
         layout = QVBoxLayout(panel)
-        spacing = self._scale_value(15)
-        margin = self._scale_value(30)
+        spacing = self._scale_value(8)  # Espacement réduit pour correspondre à White Balance
+        margin = self._scale_value(15)  # Marges réduites pour correspondre à White Balance
         layout.setSpacing(spacing)
         layout.setContentsMargins(margin, margin, margin, margin)
         
@@ -2993,20 +3098,7 @@ class MainWindow(QMainWindow):
         value_layout.setSpacing(self._scale_value(5))
         value_layout.setContentsMargins(self._scale_value(5), 0, self._scale_value(5), 0)
         
-        # Valeur envoyée
-        sent_label = QLabel("Envoyé")
-        sent_label.setAlignment(Qt.AlignCenter)
-        sent_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
-        value_layout.addWidget(sent_label)
-        self.shutter_value_sent = QLabel("-")
-        self.shutter_value_sent.setAlignment(Qt.AlignCenter)
-        self.shutter_value_sent.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
-        value_layout.addWidget(self.shutter_value_sent)
-        
-        # Espacement
-        value_layout.addSpacing(self._scale_value(5))
-        
-        # Valeur réelle
+        # Valeur réelle uniquement (pas d'envoyé)
         actual_label = QLabel("Réel (GET)")
         actual_label.setAlignment(Qt.AlignCenter)
         actual_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
@@ -3016,64 +3108,25 @@ class MainWindow(QMainWindow):
         self.shutter_value_actual.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #0ff; font-family: 'Courier New';")
         value_layout.addWidget(self.shutter_value_actual)
         
-        shutter_display_layout.addWidget(value_container)
+        shutter_display_layout.addWidget(value_container, alignment=Qt.AlignCenter)
         layout.addWidget(shutter_display)
         
-        # Boutons de contrôle
+        # Espacement avant les boutons
+        layout.addSpacing(self._scale_value(20))
+        
+        # Boutons + et - alignés horizontalement
         buttons_container = QWidget()
-        buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(self._scale_value(15))
-        margin_v = self._scale_value(30)
-        buttons_layout.setContentsMargins(0, margin_v, 0, margin_v)
+        buttons_container_layout = QVBoxLayout(buttons_container)
+        buttons_container_layout.setContentsMargins(0, self._scale_value(15), 0, self._scale_value(15))
+        buttons_container_layout.setSpacing(0)
         
-        self.shutter_plus_btn = QPushButton("+")
-        btn_size = self._scale_value(60)
-        self.shutter_plus_btn.setMinimumSize(btn_size, btn_size)
-        self.shutter_plus_btn.setMaximumSize(btn_size, btn_size)
-        self.shutter_plus_btn.setStyleSheet(self._scale_style("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """))
-        self.shutter_plus_btn.clicked.connect(self.increment_shutter)
-        buttons_layout.addWidget(self.shutter_plus_btn, alignment=Qt.AlignCenter)
+        self.shutter_plus_btn, self.shutter_minus_btn = self._create_plus_minus_buttons(
+            self.increment_shutter,
+            self.decrement_shutter,
+            buttons_container_layout
+        )
         
-        self.shutter_minus_btn = QPushButton("-")
-        self.shutter_minus_btn.setMinimumSize(btn_size, btn_size)
-        self.shutter_minus_btn.setMaximumSize(btn_size, btn_size)
-        self.shutter_minus_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid #555;
-                background-color: #333;
-                color: #fff;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #444;
-                border-color: #777;
-            }
-            QPushButton:pressed {
-                background-color: #555;
-            }
-        """)
-        self.shutter_minus_btn.clicked.connect(self.decrement_shutter)
-        buttons_layout.addWidget(self.shutter_minus_btn, alignment=Qt.AlignCenter)
-        
-        layout.addWidget(buttons_container)
+        layout.addWidget(buttons_container, alignment=Qt.AlignCenter)
         
         layout.addStretch()
         return panel
@@ -3164,9 +3217,6 @@ class MainWindow(QMainWindow):
             cam_data = self.get_active_camera_data()
         
         cam_data.shutter_sent_value = value
-        # Mettre à jour l'UI seulement si c'est la caméra active
-        if (camera_id is None or camera_id is False) or camera_id == self.active_camera_id:
-            self.shutter_value_sent.setText(f"1/{value}s")
         # Passer None au lieu de False pour send_shutter_value
         actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
         self.send_shutter_value(value, camera_id=actual_camera_id)
@@ -4612,7 +4662,7 @@ class MainWindow(QMainWindow):
     def create_lfo_panel(self):
         """Crée le panneau de contrôle LFO (Low Frequency Oscillator)."""
         panel = QWidget()
-        panel_width = self._scale_value(170)
+        panel_width = self._scale_value(200)  # Élargi
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -5384,6 +5434,7 @@ class MainWindow(QMainWindow):
         self.signals.zoom_changed.connect(self.on_zoom_changed)
         self.signals.zebra_changed.connect(self.on_zebra_changed)
         self.signals.whitebalance_changed.connect(self.on_whitebalance_changed)
+        self.signals.tint_changed.connect(self.on_tint_changed)
         self.signals.focusAssist_changed.connect(self.on_focusAssist_changed)
         self.signals.falseColor_changed.connect(self.on_falseColor_changed)
         self.signals.cleanfeed_changed.connect(self.on_cleanfeed_changed)
@@ -6113,6 +6164,37 @@ class MainWindow(QMainWindow):
                 update_kwargs['whiteBalance'] = value
                 if camera_id == self.active_camera_id:
                     self.signals.whitebalance_changed.emit(value)
+        elif param_name == 'whiteBalanceTint':
+            # #region agent log
+            try:
+                import json
+                import time
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"focus_ui_pyside6_standalone.py:6244","message":"whiteBalanceTint param received","data":{"data":data,"camera_id":camera_id,"active_camera_id":self.active_camera_id},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            if 'whiteBalanceTint' in data:
+                value = int(data['whiteBalanceTint'])
+                # #region agent log
+                try:
+                    import json
+                    import time
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"focus_ui_pyside6_standalone.py:6250","message":"whiteBalanceTint value extracted","data":{"value":value},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+                cam_data.tint_actual_value = value
+                update_kwargs['tint'] = value
+                if camera_id == self.active_camera_id:
+                    # #region agent log
+                    try:
+                        import json
+                        import time
+                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"focus_ui_pyside6_standalone.py:6255","message":"emitting tint_changed signal","data":{"value":value},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
+                    self.signals.tint_changed.emit(value)
         elif param_name == 'zebra':
             if 'enabled' in data:
                 # TOUJOURS mettre à jour les données de la caméra
@@ -6293,6 +6375,22 @@ class MainWindow(QMainWindow):
                 if camera_id == self.active_camera_id:
                     self.on_whitebalance_changed(whitebalance_value)
             
+            # Tint
+            tint_value = cam_data.controller.get_whitebalance_tint()
+            # #region agent log
+            try:
+                import json
+                import time
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"focus_ui_pyside6_standalone.py:6437","message":"load_initial_values tint","data":{"tint_value":tint_value,"camera_id":camera_id,"active_camera_id":self.active_camera_id},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            if tint_value is not None:
+                cam_data.tint_actual_value = tint_value
+                cam_data.tint_sent_value = tint_value
+                if camera_id == self.active_camera_id:
+                    self.on_tint_changed(tint_value)
+            
             # Zoom
             zoom_data = cam_data.controller.get_zoom()
             if zoom_data:
@@ -6360,6 +6458,8 @@ class MainWindow(QMainWindow):
                 update_kwargs['shutter'] = cam_data.shutter_actual_value
             if cam_data.whitebalance_actual_value is not None:
                 update_kwargs['whiteBalance'] = cam_data.whitebalance_actual_value
+            if cam_data.tint_actual_value is not None:
+                update_kwargs['tint'] = cam_data.tint_actual_value
             # Ajouter les valeurs des sliders (elles sont initialisées à 0.0, donc toujours présentes)
             # Les valeurs seront mises à jour via WebSocket ou sync_slider_positions_from_api
             update_kwargs['slider_pan'] = cam_data.slider_pan_value
@@ -6860,7 +6960,7 @@ class MainWindow(QMainWindow):
             logger.debug(f"Mise à jour iris avec normalised: {data['normalised']}")
             value = float(data['normalised'])
             cam_data.iris_actual_value = value
-            self.iris_value_actual.setText(f"{value:.2f}")
+            # Les valeurs iris_value_sent et iris_value_actual ont été supprimées, seul aperture_stop est affiché
         
         # Toujours mettre à jour l'aperture stop si présent
         if 'apertureStop' in data:

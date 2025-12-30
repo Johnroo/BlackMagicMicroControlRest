@@ -40,6 +40,7 @@ class StateStore(QObject):
                 "gain": None,
                 "shutter": None,
                 "whiteBalance": None,
+                "tint": None,
                 "zoom": None,  # Focale en mm (lue depuis l'API)
                 "zoom_motor": None,  # Position du moteur zoom du slider (0.0-1.0)
                 "slider_pan": None,
@@ -87,7 +88,7 @@ class StateStore(QObject):
         # Mettre à jour les valeurs dans l'état
         cam_state = self._state["cams"][cam_key]
         for key, value in kwargs.items():
-            if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "zoom", "zoom_motor",
+            if key in ["connected", "focus", "iris", "gain", "shutter", "whiteBalance", "tint", "zoom", "zoom_motor",
                        "slider_pan", "slider_tilt", "slider_slide"]:
                 # Vérifier si la valeur a changé
                 # Utiliser une comparaison qui gère correctement None vs 0.0
@@ -160,6 +161,20 @@ class StateStore(QObject):
         
         # Ne PAS émettre de patch - Companion n'a pas besoin de connaître le contenu
         logger.debug(f"StateStore: Preset {name} mis à jour pour cam {cam} (interne uniquement)")
+    
+    def remove_preset(self, cam: int, name: str):
+        """
+        Supprime un preset pour une caméra.
+        
+        Args:
+            cam: Numéro de la caméra (1-8)
+            name: Nom du preset (ex: "preset_1")
+        """
+        cam_key = str(cam)
+        if cam_key in self._state["presets"]:
+            if name in self._state["presets"][cam_key]:
+                del self._state["presets"][cam_key][name]
+                logger.debug(f"StateStore: Preset {name} supprimé pour cam {cam}")
     
     def get_preset(self, cam: int, name: str) -> Optional[dict]:
         """

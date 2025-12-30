@@ -115,6 +115,8 @@ class CommandHandler:
                 main_window.send_shutter_value(int(value), camera_id=cam)
             elif param == "whiteBalance":
                 main_window.send_whitebalance_value(int(value), camera_id=cam)
+            elif param == "tint":
+                main_window.update_tint_value(int(value), camera_id=cam)
             elif param in ["slider_pan", "slider_tilt", "zoom_motor", "slider_slide"]:
                 # ⚠️ IMPORTANT: Commandes joystick relatives (-1.0 à +1.0), PAS des positions absolues
                 # Ces commandes fonctionnent exactement comme le joystick du workspace 2:
@@ -382,6 +384,11 @@ class CommandHandler:
                     main_window.increment_whitebalance(camera_id=cam)
                 else:
                     main_window.decrement_whitebalance(camera_id=cam)
+            elif param == "tint":
+                if direction == "up":
+                    main_window.increment_tint(camera_id=cam)
+                else:
+                    main_window.decrement_tint(camera_id=cam)
             elif param == "iris":
                 if direction == "up":
                     main_window.increment_iris(camera_id=cam)
@@ -409,7 +416,7 @@ class CommandHandler:
                 elif param == "slider_slide":
                     slider_controller.send_joy_command(slide=joy_value, silent=True)
             else:
-                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance, slider_pan, slider_tilt, zoom_motor, slider_slide)"
+                return False, f"Paramètre non supporté pour adjust_param: {param} (supportés: iris, gain, shutter, whiteBalance, tint, slider_pan, slider_tilt, zoom_motor, slider_slide)"
             
             return True, None
         except Exception as e:

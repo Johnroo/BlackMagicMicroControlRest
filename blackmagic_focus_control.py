@@ -260,12 +260,20 @@ class BlackmagicWebSocketClient:
                         "/video/gain",
                         "/video/shutter",
                         "/video/whiteBalance",
+                        "/video/whiteBalanceTint",
                         "/monitoring/HDMI/zebra",
                         "/monitoring/HDMI/focusAssist",
                         "/monitoring/HDMI/falseColor"
                     ]
                 }
             }
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"blackmagic_focus_control.py:270","message":"sending subscription","data":{"subscribe_msg":subscribe_msg},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             await self.websocket.send(json.dumps(subscribe_msg))
             self.logger.info("Abonnement envoyé pour tous les paramètres")
@@ -293,6 +301,13 @@ class BlackmagicWebSocketClient:
                     prop_path = event_data.get('property', '')
                     prop_value = event_data.get('value', {})
                     
+                    # #region agent log
+                    try:
+                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"blackmagic_focus_control.py:292","message":"propertyValueChanged received","data":{"prop_path":prop_path,"prop_value":prop_value},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
+                    
                     param_type = None
                     
                     # Déterminer le type de paramètre selon le chemin
@@ -318,9 +333,18 @@ class BlackmagicWebSocketClient:
                     elif '/video/shutter' in prop_path:
                         param_type = 'shutter'
                         param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                    elif '/video/whiteBalanceTint' in prop_path:
+                        param_type = 'whiteBalanceTint'
+                        param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalanceTint': prop_value}
                     elif '/video/whiteBalance' in prop_path:
                         param_type = 'whiteBalance'
                         param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalance': prop_value}
+                        # #region agent log
+                        try:
+                            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"blackmagic_focus_control.py:339","message":"whiteBalanceTint detected","data":{"prop_path":prop_path,"param_type":param_type,"param_data":param_data},"timestamp":int(time.time()*1000)})+'\n')
+                        except: pass
+                        # #endregion
                     elif '/monitoring/HDMI/zebra' in prop_path or '/video/zebra' in prop_path:
                         param_type = 'zebra'
                         param_data = prop_value if isinstance(prop_value, dict) else {'enabled': prop_value}
@@ -336,6 +360,12 @@ class BlackmagicWebSocketClient:
                     
                     if param_type and self.on_change_callback:
                         self.logger.debug(f"Événement {param_type} reçu: {param_data}")
+                        # #region agent log
+                        try:
+                            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"blackmagic_focus_control.py:355","message":"calling on_change_callback","data":{"param_type":param_type,"param_data":param_data},"timestamp":int(time.time()*1000)})+'\n')
+                        except: pass
+                        # #endregion
                         self.on_change_callback(param_type, param_data)
                 elif action == 'websocketOpened':
                     # Message de confirmation d'ouverture - on l'ignore
@@ -383,6 +413,9 @@ class BlackmagicWebSocketClient:
                             elif '/video/shutter' in prop_path:
                                 param_type = 'shutter'
                                 param_data = prop_value if isinstance(prop_value, dict) else prop_value
+                            elif '/video/whiteBalanceTint' in prop_path:
+                                param_type = 'whiteBalanceTint'
+                                param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalanceTint': prop_value}
                             elif '/video/whiteBalance' in prop_path:
                                 param_type = 'whiteBalance'
                                 param_data = prop_value if isinstance(prop_value, dict) else {'whiteBalance': prop_value}
@@ -440,6 +473,8 @@ class BlackmagicFocusController:
         self.whitebalance_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance"
         self.whitebalance_description_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/description"
         self.whitebalance_auto_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/doAuto"
+        self.whitebalance_tint_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalanceTint"
+        self.whitebalance_tint_description_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalanceTint/description"
         self.display_name = "HDMI"  # Display name fixe selon la documentation
         self.zebra_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/zebra"
         self.focus_assist_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/focusAssist"
@@ -1601,6 +1636,140 @@ class BlackmagicFocusController:
                 print(f"Erreur lors du déclenchement de l'auto white balance: {e}")
                 if hasattr(e, 'response') and e.response is not None:
                     print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
+            return False
+    
+    def get_whitebalance_tint(self) -> Optional[int]:
+        """
+        Récupère la valeur actuelle du white balance tint.
+        
+        Returns:
+            La valeur du tint (integer) ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.whitebalance_tint_endpoint}")
+            
+            response = self.session.get(
+                self.whitebalance_tint_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            return data.get('whiteBalanceTint')
+        except requests.exceptions.SSLError as e:
+            print(f"Erreur SSL lors de la récupération du tint: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"Erreur de connexion lors de la récupération du tint: {e}")
+            print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_tint_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la récupération du tint: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Status code: {e.response.status_code}")
+                print(f"Response: {e.response.text}")
+            return None
+    
+    def get_whitebalance_tint_description(self) -> Optional[dict]:
+        """
+        Récupère la plage de white balance tint supportée.
+        
+        Returns:
+            Dictionnaire avec whiteBalanceTint.min et whiteBalanceTint.max, ou None en cas d'erreur
+        """
+        try:
+            if self.debug:
+                print(f"[DEBUG] GET {self.whitebalance_tint_description_endpoint}")
+            
+            response = self.session.get(
+                self.whitebalance_tint_description_endpoint,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            data = response.json()
+            return data.get('whiteBalanceTint', {})
+        except requests.exceptions.SSLError as e:
+            print(f"Erreur SSL lors de la récupération de la description du tint: {e}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"Erreur de connexion lors de la récupération de la description du tint: {e}")
+            print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_tint_description_endpoint}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la récupération de la description du tint: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Status code: {e.response.status_code}")
+                print(f"Response: {e.response.text}")
+            return None
+    
+    def set_whitebalance_tint(self, value: int, silent: bool = False) -> bool:
+        """
+        Définit la valeur du white balance tint.
+        
+        Args:
+            value: Valeur du tint (integer)
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si la mise à jour a réussi, False sinon
+        """
+        try:
+            payload = {"whiteBalanceTint": value}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {self.whitebalance_tint_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+            
+            response = self.session.put(
+                self.whitebalance_tint_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+            
+            # Le code 204 (No Content) indique le succès selon la documentation
+            if response.status_code == 204:
+                if not silent:
+                    print(f"White balance tint mis à jour: {value}")
+                return True
+            else:
+                response.raise_for_status()
+                if not silent:
+                    print(f"White balance tint mis à jour: {value}")
+                return True
+        except requests.exceptions.SSLError as e:
+            if not silent:
+                print(f"Erreur SSL lors de la mise à jour du tint: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            if not silent:
+                print(f"Erreur de connexion lors de la mise à jour du tint: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.whitebalance_tint_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            if not silent:
+                print(f"Erreur lors de la mise à jour du tint: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    status_code = e.response.status_code
+                    print(f"Status code: {status_code}")
+                    if status_code == 400:
+                        print("Erreur: Valeur de white balance tint invalide (400)")
                     print(f"Response: {e.response.text}")
             return False
     
