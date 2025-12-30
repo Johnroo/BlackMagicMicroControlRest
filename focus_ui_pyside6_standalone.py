@@ -202,6 +202,13 @@ class Joystick2DWidget(QWidget):
             # Émettre le signal avec les valeurs à 0.0
             self.positionChanged.emit(0.0, 0.0)
     
+    def setPosition(self, pan: float, tilt: float):
+        """Met à jour la position programmatiquement sans émettre le signal (pour mise à jour visuelle depuis le clavier)."""
+        # Clamper les valeurs entre -1.0 et 1.0
+        self.pan_value = max(-1.0, min(1.0, pan))
+        self.tilt_value = max(-1.0, min(1.0, tilt))
+        self.update()  # Redessiner sans émettre le signal
+    
     def _updatePositionFromMouse(self, event: QMouseEvent):
         """Met à jour la position à partir de la position de la souris."""
         width = self.width()
@@ -853,6 +860,7 @@ class MainWindow(QMainWindow):
         # Variables pour la répétition des touches flèches
         self.key_repeat_timer = None
         self.key_repeat_direction = None  # 'up' ou 'down'
+        self.joystick_key_repeat_timer: Optional[QTimer] = None  # Timer pour répétition des touches joystick
         
         # File d'attente pour les valeurs clavier (pour ne pas perdre de valeurs)
         self.keyboard_focus_queue = []
@@ -885,6 +893,40 @@ class MainWindow(QMainWindow):
             'slide': False,
             'zoom': False
         }
+        
+        # Variables pour le LFO (Low Frequency Oscillator)
+        self.lfo_active: bool = False
+        self.lfo_amplitude: float = 0.0  # Amplitude normalisée (0.0-1.0)
+        self.lfo_speed: float = 1.0  # Vitesse en secondes/cycle (1-60)
+        self.lfo_distance: float = 1.0  # Distance du sujet en mètres (0.5-20)
+        self.lfo_timer: Optional[QTimer] = None
+        self.lfo_position_plus: Optional[dict] = None  # {slide: float, pan: float} - valeurs calculées
+        self.lfo_position_minus: Optional[dict] = None  # {slide: float, pan: float} - valeurs calculées
+        self.lfo_base_position: Optional[dict] = None  # {slide: float, pan: float} - position de base
+        self.lfo_panel: Optional[QWidget] = None  # Référence au panneau LFO
+        
+        # Attributs pour la surveillance en temps réel
+        self.lfo_monitor_timer: Optional[QTimer] = None  # Timer pour surveiller les changements (200ms)
+        self.lfo_last_pan_base: Optional[float] = None  # Dernière valeur de pan de base (hors compensation)
+        self.lfo_last_amplitude: float = 0.0  # Dernière valeur d'amplitude
+        self.lfo_last_distance: float = 1.0  # Dernière valeur de distance
+        self.lfo_last_speed: float = 1.0  # Dernière valeur de vitesse
+        self.lfo_update_pending: bool = False  # Flag pour éviter les mises à jour simultanées
+        self.lfo_debounce_timer: Optional[QTimer] = None  # Timer pour debounce des changements de paramètres
+        self.lfo_sequence_initialized: bool = False  # Flag pour savoir si la séquence a été initialisée (POST vs PATCH)
+        self.lfo_last_pan_update_time: Optional[float] = None  # Timestamp de la dernière mise à jour de la base pan
+        
+        # Références aux faders du workspace 2
+        self.workspace_2_zoom_fader: Optional[QSlider] = None
+        self.workspace_2_slide_fader: Optional[QSlider] = None
+        self.workspace_2_joystick_2d: Optional[Joystick2DWidget] = None
+        
+        # Vitesse des flèches pour le contrôle joystick (par défaut 0.2)
+        self.arrow_keys_speed: float = 0.2
+        # Ensemble des touches actuellement pressées pour gérer les répétitions
+        self.active_arrow_keys: set = set()
+        # Ensemble des axes qui ont été utilisés récemment (pour envoyer 0.0 au relâchement)
+        self.recently_used_axes: set = set()  # Peut contenir 'pan', 'tilt', 'zoom', 'slide'
         
         # Charger la configuration des caméras
         self.load_cameras_config()
@@ -1256,9 +1298,9 @@ class MainWindow(QMainWindow):
         workspace_2_page = self.create_workspace_2_page()
         self.workspace_stack.addWidget(workspace_2_page)
         
-        # Connecter les signaux du panneau joystick
+        # Connecter les signaux du panneau joystick et LFO
         if hasattr(workspace_2_page, 'layout') and workspace_2_page.layout():
-            # Trouver le panneau joystick dans la page
+            # Trouver les panneaux dans la page
             for i in range(workspace_2_page.layout().count()):
                 item = workspace_2_page.layout().itemAt(i)
                 if item and item.widget():
@@ -1268,12 +1310,22 @@ class MainWindow(QMainWindow):
                         widget.joystick_2d.positionChanged.connect(self.on_joystick_pan_tilt_changed)
                     if hasattr(widget, 'zoom_fader'):
                         # Fader zoom motor (slider) - revient à 0 au relâchement
+                        self.workspace_2_zoom_fader = widget.zoom_fader
                         widget.zoom_fader.valueChanged.connect(self.on_joystick_zoom_fader_changed)
-                        widget.zoom_fader.sliderReleased.connect(lambda: widget.zoom_fader.setValue(0))
+                        widget.zoom_fader.sliderReleased.connect(self.on_joystick_zoom_fader_released)
                     if hasattr(widget, 'slide_fader'):
                         # Fader slide
+                        self.workspace_2_slide_fader = widget.slide_fader
                         widget.slide_fader.valueChanged.connect(self.on_joystick_slide_fader_changed)
-                        widget.slide_fader.sliderReleased.connect(lambda: widget.slide_fader.setValue(0))
+                        widget.slide_fader.sliderReleased.connect(self.on_joystick_slide_fader_released)
+                    if hasattr(widget, 'amplitude_slider'):
+                        # LFO controls
+                        widget.amplitude_slider.valueChanged.connect(self.on_lfo_amplitude_changed)
+                        widget.speed_slider.valueChanged.connect(self.on_lfo_speed_changed)
+                        widget.distance_slider.valueChanged.connect(self.on_lfo_distance_changed)
+                        widget.lfo_toggle_btn.clicked.connect(self.toggle_lfo)
+                        # Stocker la référence du panneau LFO
+                        self.lfo_panel = widget
         
         # Définir la page active (Workspace 1)
         self.workspace_stack.setCurrentIndex(0)
@@ -1351,6 +1403,9 @@ class MainWindow(QMainWindow):
         if workspace_id < 1 or workspace_id > 2:
             logger.warning(f"ID de workspace invalide: {workspace_id}")
             return
+        
+        # Le LFO continue de fonctionner en arrière-plan même quand on change d'onglet
+        # pour permettre un fonctionnement simultané des deux workspaces
         
         self.active_workspace_id = workspace_id
         
@@ -1530,26 +1585,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'pan_tilt_panel') and self.pan_tilt_panel and hasattr(self, 'slider_container') and self.slider_container:
             # Obtenir la largeur réelle du conteneur slider (qui s'étire avec le stretch factor)
             slider_container_width = self.slider_container.width()
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A",
-                        "location": "focus_ui_pyside6_standalone.py:1052",
-                        "message": "update_slider_widths",
-                        "data": {
-                            "slider_container_width": slider_container_width,
-                            "window_width": self.width(),
-                            "has_slider_container": hasattr(self, 'slider_container'),
-                            "timestamp": time.time()
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
             if slider_container_width > 0:
                 # Utiliser toute la largeur du conteneur moins une petite marge pour l'espacement interne
                 slider_panel_width = max(self._scale_value(300), slider_container_width - self._scale_value(10))
@@ -1564,53 +1599,12 @@ class MainWindow(QMainWindow):
                 available_width = base_width - fixed_columns_width - spacing_width - margins_width
                 # Utiliser 95% de l'espace disponible pour maximiser l'utilisation
                 slider_panel_width = max(self._scale_value(300), int(available_width * 0.95))
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "A",
-                            "location": "focus_ui_pyside6_standalone.py:1066",
-                            "message": "update_slider_widths_fallback",
-                            "data": {
-                                "base_width": base_width,
-                                "available_width": available_width,
-                                "slider_panel_width": slider_panel_width,
-                                "timestamp": time.time()
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }) + "\n")
-                except: pass
-                # #endregion
             
             slider_panels = [self.pan_tilt_panel, self.slide_panel, self.zoom_motor_panel]
             for slider_panel in slider_panels:
                 if slider_panel:
                     slider_panel.setMinimumWidth(slider_panel_width)
                     slider_panel.setMaximumWidth(slider_panel_width)
-                    # #region agent log
-                    try:
-                        with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "A",
-                                "location": "focus_ui_pyside6_standalone.py:1071",
-                                "message": "slider_panel_width_set",
-                                "data": {
-                                    "panel": slider_panel.axis_name if hasattr(slider_panel, 'axis_name') else "unknown",
-                                    "width": slider_panel_width,
-                                    "actual_width": slider_panel.width(),
-                                    "is_visible": slider_panel.isVisible(),
-                                    "timestamp": time.time()
-                                },
-                                "timestamp": int(time.time() * 1000)
-                            }) + "\n")
-                    except: pass
-                    # #endregion
         
         # Mettre à jour les boutons de caméra
         if hasattr(self, 'camera_buttons'):
@@ -3614,33 +3608,6 @@ class MainWindow(QMainWindow):
             # Debug: vérifier si les steps sont présents dans les données
             logger.debug(f"WebSocket data reçue - pan steps: {pan_data.get('steps')}, tilt steps: {tilt_data.get('steps')}, zoom steps: {zoom_data.get('steps')}, slide steps: {slide_data.get('steps')}")
             
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    import json
-                    pan_norm = float(pan_data.get('normalized', 0.0))
-                    tilt_norm = float(tilt_data.get('normalized', 0.0))
-                    zoom_norm = float(zoom_data.get('normalized', 0.0))
-                    slide_norm = float(slide_data.get('normalized', 0.0))
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D",
-                        "location": "focus_ui_pyside6_standalone.py:3009",
-                        "message": "websocket_position_update",
-                        "data": {
-                            "pan": pan_norm, "tilt": tilt_norm, "zoom": zoom_norm, "slide": slide_norm,
-                            "pan_user_touching": self.slider_user_touching.get('pan', False),
-                            "tilt_user_touching": self.slider_user_touching.get('tilt', False),
-                            "zoom_user_touching": self.slider_user_touching.get('zoom', False),
-                            "slide_user_touching": self.slider_user_touching.get('slide', False),
-                            "timestamp": time.time()
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
-            
             # Mettre à jour CameraData avec les valeurs normalized
             cam_data.slider_pan_value = float(pan_data.get('normalized', 0.0))
             cam_data.slider_tilt_value = float(tilt_data.get('normalized', 0.0))
@@ -3740,14 +3707,14 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de la synchronisation des positions du slider: {e}")
     
     def create_workspace_2_page(self):
-        """Crée la page pour le Workspace 2 avec le panneau Joystick Control."""
+        """Crée la page pour le Workspace 2 avec le panneau Joystick Control et LFO."""
         page = QWidget()
         page.setStyleSheet("""
             QWidget {
                 background-color: #2a2a2a;
             }
         """)
-        layout = QVBoxLayout(page)
+        layout = QHBoxLayout(page)
         layout.setContentsMargins(self._scale_value(20), self._scale_value(20), 
                                  self._scale_value(20), self._scale_value(20))
         layout.setSpacing(self._scale_value(20))
@@ -3755,6 +3722,10 @@ class MainWindow(QMainWindow):
         # Créer le panneau Joystick Control
         joystick_panel = self.create_joystick_control_panel()
         layout.addWidget(joystick_panel)
+        
+        # Créer le panneau LFO
+        lfo_panel = self.create_lfo_panel()
+        layout.addWidget(lfo_panel)
         
         layout.addStretch()
         
@@ -3800,6 +3771,8 @@ class MainWindow(QMainWindow):
         
         # Stocker la référence pour les connexions
         panel.joystick_2d = joystick_2d
+        # Stocker la référence globale pour la mise à jour visuelle depuis le clavier
+        self.workspace_2_joystick_2d = joystick_2d
         
         # Container pour les faders (vertical, utilise toute la largeur)
         fader_container = QWidget()
@@ -3893,6 +3866,64 @@ class MainWindow(QMainWindow):
         fader_layout.addWidget(slide_container)
         panel.slide_fader = slide_fader
         
+        # Slider Vitesse flèches (après Slide)
+        speed_container = QWidget()
+        speed_container_layout = QVBoxLayout(speed_container)
+        speed_container_layout.setContentsMargins(0, 0, 0, 0)
+        speed_container_layout.setSpacing(self._scale_value(5))
+        
+        speed_label = QLabel("Vitesse flèches")
+        speed_label.setAlignment(Qt.AlignCenter)
+        speed_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        speed_container_layout.addWidget(speed_label)
+        
+        # Slider horizontal pour la vitesse (0-1000 représente 0.0-1.0)
+        speed_slider = QSlider(Qt.Horizontal)
+        speed_slider.setMinimum(0)
+        speed_slider.setMaximum(1000)
+        speed_slider.setValue(200)  # Valeur par défaut 0.2 (200/1000)
+        speed_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        speed_slider.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+            QSlider::handle:horizontal:pressed {
+                background: #0ff;
+            }
+        """))
+        speed_container_layout.addWidget(speed_slider)
+        
+        # Label pour afficher la valeur actuelle
+        speed_value_label = QLabel("0.20")
+        speed_value_label.setAlignment(Qt.AlignCenter)
+        speed_value_label.setStyleSheet(f"font-size: {self._scale_font(9)}; color: #888;")
+        speed_container_layout.addWidget(speed_value_label)
+        
+        fader_layout.addWidget(speed_container)
+        panel.speed_slider = speed_slider
+        panel.speed_value_label = speed_value_label
+        
+        # Stocker la référence globale
+        self.workspace_2_arrow_speed_slider = speed_slider
+        self.workspace_2_arrow_speed_label = speed_value_label
+        
+        # Connecter le slider à la méthode de gestion
+        speed_slider.valueChanged.connect(self.on_arrow_keys_speed_changed)
+        
         # Ajouter les faders au container principal
         main_container_layout.addWidget(fader_container)
         
@@ -3920,6 +3951,16 @@ class MainWindow(QMainWindow):
         if slider_controller and slider_controller.is_configured():
             slider_controller.send_joy_command(zoom=normalized_value, silent=True)
     
+    def on_joystick_zoom_fader_released(self):
+        """Gère le relâchement du fader zoom motor - remet à 0."""
+        if self.workspace_2_zoom_fader:
+            self.workspace_2_zoom_fader.setValue(0)
+            # Envoyer la commande joystick à 0.0
+            camera_id = self.active_camera_id
+            slider_controller = self.slider_controllers.get(camera_id)
+            if slider_controller and slider_controller.is_configured():
+                slider_controller.send_joy_command(zoom=0.0, silent=True)
+    
     def on_joystick_slide_fader_changed(self, value: int):
         """Gère le changement de valeur du fader slide."""
         # Convertir de -1000..1000 à -1.0..+1.0
@@ -3929,6 +3970,858 @@ class MainWindow(QMainWindow):
         
         if slider_controller and slider_controller.is_configured():
             slider_controller.send_joy_command(slide=normalized_value, silent=True)
+    
+    def on_joystick_slide_fader_released(self):
+        """Gère le relâchement du fader slide - remet à 0."""
+        if self.workspace_2_slide_fader:
+            self.workspace_2_slide_fader.setValue(0)
+            # Envoyer la commande joystick à 0.0
+            camera_id = self.active_camera_id
+            slider_controller = self.slider_controllers.get(camera_id)
+            if slider_controller and slider_controller.is_configured():
+                slider_controller.send_joy_command(slide=0.0, silent=True)
+    
+    def on_arrow_keys_speed_changed(self, value: int):
+        """Gère le changement de vitesse des flèches."""
+        # Convertir de 0-1000 à 0.0-1.0
+        speed = value / 1000.0
+        self.arrow_keys_speed = speed
+        # Mettre à jour le label d'affichage
+        if self.workspace_2_arrow_speed_label:
+            self.workspace_2_arrow_speed_label.setText(f"{speed:.2f}")
+    
+    def update_joystick_visual_position(self, pan: float, tilt: float):
+        """Met à jour visuellement la position du joystick 2D sans émettre de signal."""
+        if self.workspace_2_joystick_2d:
+            self.workspace_2_joystick_2d.setPosition(pan, tilt)
+    
+    def _calculate_lfo_sequence(self, base_slide: float, base_pan: float, base_tilt: float = None, base_zoom: float = None) -> tuple:
+        """
+        Calcule la séquence LFO à partir d'une position de base.
+        
+        Args:
+            base_slide: Position slide de base (0.0-1.0)
+            base_pan: Position pan de base (0.0-1.0)
+        
+        Returns:
+            tuple: (sequence_points, lfo_base_position, lfo_position_plus, lfo_position_minus)
+        """
+        # Calculer les positions + et - de manière symétrique
+        # L'amplitude est répartie : moitié en positif, moitié en négatif
+        half_amplitude = self.lfo_amplitude / 2.0
+        
+        # Calculer les positions idéales
+        slide_plus_ideal = base_slide + half_amplitude
+        slide_minus_ideal = base_slide - half_amplitude
+        
+        # Vérifier les limites et reporter le manque de l'autre côté si nécessaire
+        slide_plus = max(0.0, min(1.0, slide_plus_ideal))
+        slide_minus = max(0.0, min(1.0, slide_minus_ideal))
+        
+        # Si une limite est atteinte, reporter le manque de l'autre côté
+        if slide_plus_ideal > 1.0:
+            # On a atteint la limite supérieure, reporter le manque vers le bas
+            excess = slide_plus_ideal - 1.0
+            slide_minus = max(0.0, slide_minus_ideal - excess)
+        elif slide_minus_ideal < 0.0:
+            # On a atteint la limite inférieure, reporter le manque vers le haut
+            excess = abs(slide_minus_ideal)
+            slide_plus = min(1.0, slide_plus_ideal + excess)
+        
+        # S'assurer que les valeurs finales sont dans les limites
+        slide_plus = max(0.0, min(1.0, slide_plus))
+        slide_minus = max(0.0, min(1.0, slide_minus))
+        
+        # Calculer les décalages en mètres
+        # Le slider fait 147 cm = 1.47 mètres
+        slider_length = 1.47  # mètres
+        delta_slide_plus_meters = (slide_plus - base_slide) * slider_length
+        delta_slide_minus_meters = (slide_minus - base_slide) * slider_length
+        
+        # Calculer les compensations pan (triangulation)
+        # La compensation doit être multipliée par un facteur qui dépend de l'angle de départ
+        # Si pan = 0.5 (90° perpendiculaire), compensation maximale
+        # Si pan = 0.0 (+90°) ou pan = 1.0 (-90°), compensation nulle (le slide est perpendiculaire à l'axe de vision)
+        
+        # Convertir base_pan en angle en degrés
+        # pan 50% = 90° (perpendiculaire), pan 100% = -90°, pan 0% = +90°
+        base_pan_angle_deg = (base_pan - 0.5) * 180.0  # -90° à +90°
+        
+        # Calculer le facteur de compensation basé sur l'angle de départ
+        # Le facteur est maximum à 90° (pan = 0.5) et nul à 0° ou 180° (pan = 0.0 ou 1.0)
+        # On utilise cos(angle) pour avoir 1.0 à 90° et 0.0 à 0°/180°
+        base_pan_angle_rad = math.radians(base_pan_angle_deg)
+        compensation_factor = abs(math.cos(base_pan_angle_rad))
+        
+        # Calculer les angles de compensation bruts
+        # Formule: angle_pan_rad = -atan(delta_slide_meters / distance)
+        # Le signe est inversé car le slide a été inversé (erreur corrigée)
+        if abs(delta_slide_plus_meters) > 0.001 and self.lfo_distance > 0.1:
+            pan_angle_plus_rad_raw = -math.atan(delta_slide_plus_meters / self.lfo_distance)
+        else:
+            pan_angle_plus_rad_raw = 0.0
+        
+        if abs(delta_slide_minus_meters) > 0.001 and self.lfo_distance > 0.1:
+            pan_angle_minus_rad_raw = -math.atan(delta_slide_minus_meters / self.lfo_distance)
+        else:
+            pan_angle_minus_rad_raw = 0.0
+        
+        # Appliquer le facteur de compensation
+        pan_angle_plus_rad = pan_angle_plus_rad_raw * compensation_factor
+        pan_angle_minus_rad = pan_angle_minus_rad_raw * compensation_factor
+        
+        # Convertir les angles en valeurs normalisées pan
+        # pan 50% = 90° (perpendiculaire), pan 100% = -90°, pan 0% = +90°
+        # Formule: angle_deg = (pan_value - 0.5) * 180
+        # Donc pour convertir un angle en pan: pan_value = (angle_deg / 180.0) + 0.5
+        pan_angle_plus_deg = math.degrees(pan_angle_plus_rad)
+        pan_angle_minus_deg = math.degrees(pan_angle_minus_rad)
+        
+        # Calculer les valeurs pan compensées (ajoutées à la position de base)
+        # La compensation est un delta d'angle, donc on l'ajoute directement
+        pan_plus_before_clamp = base_pan + (pan_angle_plus_deg / 180.0)
+        pan_minus_before_clamp = base_pan + (pan_angle_minus_deg / 180.0)
+        
+        # Clamper les valeurs pan entre 0.0 et 1.0
+        pan_plus = max(0.0, min(1.0, pan_plus_before_clamp))
+        pan_minus = max(0.0, min(1.0, pan_minus_before_clamp))
+        
+        # Créer la séquence d'interpolation avec 4 points selon les spécifications :
+        # 0% : position de départ (actuelle)
+        # 25% : position actuelle + amplitude/2 sur slide avec pan compensé
+        # 75% : position de départ - amplitude/2 sur slide avec pan compensé dans l'autre sens
+        # 100% : position de départ
+        # Utiliser les valeurs de tilt et zoom passées en paramètres (ou valeurs par défaut)
+        if base_tilt is None:
+            base_tilt = 0.5  # Valeur par défaut
+        if base_zoom is None:
+            base_zoom = 0.0  # Valeur par défaut
+        
+        sequence_points = [
+            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 0.0},    # Position de départ (0%)
+            {"pan": pan_plus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_plus, "fraction": 0.25},   # Position +amplitude/2 (25%)
+            {"pan": pan_minus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_minus, "fraction": 0.75}, # Position -amplitude/2 (75%)
+            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 1.0}    # Position de départ (100%)
+        ]
+        
+        base_position = {"slide": base_slide, "pan": base_pan}
+        position_plus = {"slide": slide_plus, "pan": pan_plus}
+        position_minus = {"slide": slide_minus, "pan": pan_minus}
+        
+        return sequence_points, base_position, position_plus, position_minus
+    
+    def start_lfo(self):
+        """Démarre l'oscillation LFO basée sur la position actuelle du slider."""
+        if self.lfo_active:
+            return
+        
+        camera_id = self.active_camera_id
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data or not cam_data.connected:
+            logger.warning("Impossible de démarrer le LFO : caméra non connectée")
+            return
+        
+        # Récupérer le slider controller
+        slider_controller = self.slider_controllers.get(camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            logger.warning("Impossible de démarrer le LFO : slider non configuré")
+            if self.lfo_panel:
+                self.lfo_panel.state_label.setText("État: Slider non configuré")
+                self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
+            return
+        
+        # Récupérer la position actuelle du slider
+        current_status = slider_controller.get_status(silent=True)
+        if current_status is None:
+            logger.warning("Impossible de démarrer le LFO : impossible de récupérer la position du slider")
+            if self.lfo_panel:
+                self.lfo_panel.state_label.setText("État: Position inconnue")
+                self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
+            return
+        
+        # Utiliser la position actuelle comme position de base
+        base_slide = current_status.get('slide', 0.0)
+        base_pan = current_status.get('pan', 0.5)  # 0.5 = 90° (perpendiculaire à l'axe du slide)
+        base_tilt = current_status.get('tilt', 0.5)  # Récupérer aussi le tilt actuel
+        base_zoom = current_status.get('zoom', 0.0)  # Récupérer aussi le zoom actuel
+        
+        # Calculer la séquence LFO (passer tilt et zoom en paramètres)
+        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom)
+        
+        # Stocker les positions calculées (inclure tilt et zoom initiaux)
+        self.lfo_base_position = {
+            "slide": base_slide,
+            "pan": base_pan,
+            "tilt": base_tilt,  # Stocker le tilt initial
+            "zoom": base_zoom   # Stocker le zoom initial
+        }
+        self.lfo_position_plus = position_plus
+        self.lfo_position_minus = position_minus
+        
+        # Envoyer la séquence d'interpolation
+        if not slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=True):
+            logger.warning("Impossible d'envoyer la séquence d'interpolation")
+            if self.lfo_panel:
+                self.lfo_panel.state_label.setText("État: Erreur séquence")
+                self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
+            return
+        
+        # Activer l'interpolation automatique avec la durée du cycle
+        if not slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=True):
+            logger.warning("Impossible d'activer l'interpolation automatique")
+            if self.lfo_panel:
+                self.lfo_panel.state_label.setText("État: Erreur activation")
+                self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
+            return
+        
+        self.lfo_active = True
+        self.lfo_sequence_initialized = True  # La séquence a été initialisée avec POST
+        
+        # Initialiser les valeurs de référence pour la surveillance
+        self.lfo_last_pan_base = base_pan
+        self.lfo_last_amplitude = self.lfo_amplitude
+        self.lfo_last_distance = self.lfo_distance
+        self.lfo_last_speed = self.lfo_speed
+        
+        # Plus besoin du timer car l'interpolation automatique gère la boucle
+        if self.lfo_timer:
+            self.lfo_timer.stop()
+        
+        # Créer et démarrer le timer de surveillance (200ms)
+        if self.lfo_monitor_timer is None:
+            self.lfo_monitor_timer = QTimer()
+            self.lfo_monitor_timer.timeout.connect(self.monitor_lfo_changes)
+        self.lfo_monitor_timer.start(200)  # 200ms
+        logger.info("LFO: Timer de surveillance démarré (200ms)")
+        
+        # Mettre à jour l'UI
+        if self.lfo_panel:
+            self.lfo_panel.lfo_toggle_btn.setText("ON")
+            self.lfo_panel.lfo_toggle_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    border: 2px solid #0a5;
+                    border-radius: 8px;
+                    background-color: #0a5;
+                    color: #fff;
+                    margin-top: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #0c7;
+                }
+                QPushButton:pressed {
+                    background-color: #0e9;
+                }
+            """))
+            self.lfo_panel.state_label.setText("État: Actif")
+            self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #0f0;")
+            # Afficher la position de base
+            self.lfo_panel.preset_label.setText(f"Base: slide={base_slide:.3f}, pan={base_pan:.3f}")
+            # Afficher la compensation pan max (pour l'affichage)
+            pan_compensation_max = max(abs(position_plus["pan"] - base_pan), abs(position_minus["pan"] - base_pan))
+            self.lfo_panel.compensation_label.setText(f"Compensation: ±{pan_compensation_max:.3f}")
+        
+        logger.info(f"LFO démarré depuis position actuelle (slide={base_slide:.3f}, pan={base_pan:.3f}), amplitude {self.lfo_amplitude:.3f}, durée {self.lfo_speed}s")
+    
+    def stop_lfo(self):
+        """Arrête l'oscillation LFO en désactivant l'interpolation automatique."""
+        if not self.lfo_active:
+            return
+        
+        self.lfo_active = False
+        
+        # Arrêter le timer si encore actif
+        if self.lfo_timer:
+            self.lfo_timer.stop()
+        
+        # Arrêter le timer de surveillance
+        if self.lfo_monitor_timer:
+            self.lfo_monitor_timer.stop()
+        
+        # Arrêter le debounce timer si actif
+        if self.lfo_debounce_timer:
+            self.lfo_debounce_timer.stop()
+        
+        # Désactiver l'interpolation automatique
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        if slider_controller and slider_controller.is_configured():
+            slider_controller.set_auto_interpolation(enable=False, silent=True)
+        
+        # Réinitialiser les références
+        self.lfo_base_position = None
+        self.lfo_position_plus = None
+        self.lfo_position_minus = None
+        self.lfo_last_pan_base = None
+        self.lfo_update_pending = False
+        self.lfo_sequence_initialized = False
+        self.lfo_last_pan_update_time = None  # Réinitialiser le timestamp
+        
+        # Mettre à jour l'UI
+        if self.lfo_panel:
+            self.lfo_panel.lfo_toggle_btn.setText("OFF")
+            self.lfo_panel.lfo_toggle_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    border: 2px solid #555;
+                    border-radius: 8px;
+                    background-color: #333;
+                    color: #fff;
+                    margin-top: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #444;
+                    border-color: #777;
+                }
+                QPushButton:pressed {
+                    background-color: #555;
+                }
+            """))
+            self.lfo_panel.state_label.setText("État: Inactif")
+            self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+            self.lfo_panel.compensation_label.setText("Compensation: 0.00")
+            # Réinitialiser le label de position
+            self.lfo_panel.preset_label.setText("Base: -")
+        
+        logger.info("LFO arrêté")
+    
+    def update_lfo_sequence(self):
+        """Met à jour la séquence LFO en temps réel sans interrompre le mouvement."""
+        if not self.lfo_active:
+            logger.debug("LFO: update_lfo_sequence appelé mais LFO inactif")
+            return
+        
+        if self.lfo_update_pending:
+            logger.debug("LFO: update_lfo_sequence appelé mais mise à jour déjà en cours")
+            return
+        
+        if not self.lfo_base_position:
+            logger.warning("LFO: position de base non définie, impossible de mettre à jour")
+            return
+        
+        logger.info(f"LFO: Mise à jour de la séquence (amplitude={self.lfo_amplitude:.3f}, distance={self.lfo_distance:.1f}m, speed={self.lfo_speed:.1f}s)")
+        
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        # Recalculer la séquence avec les paramètres actuels
+        base_slide = self.lfo_base_position["slide"]
+        base_pan = self.lfo_base_position["pan"]
+        
+        # Utiliser les valeurs initiales de tilt et zoom stockées dans lfo_base_position
+        # Ne PAS récupérer les valeurs actuelles depuis le slider car elles peuvent avoir changé
+        # via le joystick pendant que le LFO est actif
+        base_tilt = self.lfo_base_position.get("tilt", 0.5)  # Valeur initiale stockée
+        base_zoom = self.lfo_base_position.get("zoom", 0.0)   # Valeur initiale stockée
+        
+        # Calculer la séquence LFO (utiliser les valeurs initiales de tilt et zoom)
+        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom)
+        
+        # Mettre à jour les positions stockées
+        self.lfo_position_plus = position_plus
+        self.lfo_position_minus = position_minus
+        
+        # Mettre à jour la séquence via PATCH (sans interruption)
+        if self.lfo_sequence_initialized:
+            # Utiliser PATCH pour mettre à jour sans interruption
+            logger.debug(f"LFO: Envoi PATCH avec {len(sequence_points)} points, durée={self.lfo_speed:.1f}s")
+            success = slider_controller.update_interpolation_sequence(
+                sequence_points,
+                recalculate_duration=True,
+                duration=self.lfo_speed,
+                silent=False  # Activer les logs pour déboguer
+            )
+            
+            if success:
+                logger.info(f"LFO: PATCH réussi, séquence mise à jour")
+            else:
+                # Si PATCH échoue (interpolation non active), utiliser POST et redémarrer
+                logger.warning("LFO: PATCH échoué, utilisation de POST pour réinitialiser")
+                if slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=False):
+                    slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=False)
+                    self.lfo_sequence_initialized = True
+                    logger.info("LFO: POST réussi, interpolation réinitialisée")
+        else:
+            # Première fois : utiliser POST
+            logger.debug(f"LFO: Première initialisation avec POST, {len(sequence_points)} points, durée={self.lfo_speed:.1f}s")
+            if slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=False):
+                slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=False)
+                self.lfo_sequence_initialized = True
+                logger.info("LFO: POST réussi, interpolation initialisée")
+        
+        # Mettre à jour les valeurs de référence
+        self.lfo_last_amplitude = self.lfo_amplitude
+        self.lfo_last_distance = self.lfo_distance
+        self.lfo_last_speed = self.lfo_speed
+        self.lfo_last_pan_base = base_pan
+        
+        # Mettre à jour l'UI
+        if self.lfo_panel:
+            pan_compensation_max = max(abs(position_plus["pan"] - base_pan), abs(position_minus["pan"] - base_pan))
+            self.lfo_panel.compensation_label.setText(f"Compensation: ±{pan_compensation_max:.3f}")
+        
+        self.lfo_update_pending = False
+        logger.debug(f"LFO séquence mise à jour: amplitude={self.lfo_amplitude:.3f}, distance={self.lfo_distance:.1f}m, speed={self.lfo_speed:.1f}s")
+    
+    def _trigger_lfo_update(self):
+        """Déclenche la mise à jour de la séquence LFO après le debounce."""
+        if self.lfo_active:
+            # Réinitialiser le flag avant d'appeler update_lfo_sequence
+            self.lfo_update_pending = False
+            self.update_lfo_sequence()
+    
+    def monitor_lfo_changes(self):
+        """Surveille les changements de pan (joystick) et des paramètres LFO toutes les 200ms."""
+        if not self.lfo_active:
+            return
+        
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        if not self.lfo_base_position:
+            logger.debug("LFO: monitor_lfo_changes appelé mais lfo_base_position est None")
+            return
+        
+        # Vérifier que les valeurs de référence sont initialisées
+        if self.lfo_last_pan_base is None:
+            self.lfo_last_pan_base = self.lfo_base_position["pan"]
+            logger.debug(f"LFO: Initialisation lfo_last_pan_base = {self.lfo_last_pan_base:.3f}")
+        
+        if self.lfo_last_amplitude == 0.0 and self.lfo_amplitude > 0.0:
+            self.lfo_last_amplitude = self.lfo_amplitude
+            logger.debug(f"LFO: Initialisation lfo_last_amplitude = {self.lfo_last_amplitude:.3f}")
+        
+        if self.lfo_last_distance == 1.0 and self.lfo_distance != 1.0:
+            self.lfo_last_distance = self.lfo_distance
+            logger.debug(f"LFO: Initialisation lfo_last_distance = {self.lfo_last_distance:.1f}")
+        
+        if self.lfo_last_speed == 1.0 and self.lfo_speed != 1.0:
+            self.lfo_last_speed = self.lfo_speed
+            logger.debug(f"LFO: Initialisation lfo_last_speed = {self.lfo_last_speed:.1f}")
+        
+        # Récupérer la position actuelle
+        current_status = slider_controller.get_status(silent=True)
+        if current_status is None:
+            return
+        
+        current_pan = current_status.get('pan', 0.5)
+        current_slide = current_status.get('slide', 0.0)
+        
+        # Détecter les changements de paramètres LFO
+        param_changed = False
+        amplitude_changed = abs(self.lfo_amplitude - self.lfo_last_amplitude) > 0.001
+        distance_changed = abs(self.lfo_distance - self.lfo_last_distance) > 0.01
+        speed_changed = abs(self.lfo_speed - self.lfo_last_speed) > 0.1
+        
+        if amplitude_changed:
+            param_changed = True
+            logger.info(f"LFO: Changement amplitude détecté: {self.lfo_last_amplitude:.3f} -> {self.lfo_amplitude:.3f}")
+        if distance_changed:
+            param_changed = True
+            logger.info(f"LFO: Changement distance détecté: {self.lfo_last_distance:.1f} -> {self.lfo_distance:.1f}")
+        if speed_changed:
+            param_changed = True
+            logger.info(f"LFO: Changement vitesse détecté: {self.lfo_last_speed:.1f} -> {self.lfo_speed:.1f}")
+        
+        # Détecter les changements de pan (joystick)
+        # DÉSACTIVÉ TEMPORAIREMENT : La détection de changement de pan pendant le LFO cause des problèmes
+        # car le pan bouge naturellement à cause de l'interpolation LFO, ce qui déclenche des fausses détections
+        # TODO: Implémenter une meilleure logique pour distinguer les mouvements dus à l'interpolation LFO
+        # des mouvements dus au joystick (par exemple, en vérifiant si le pan est dans la plage attendue
+        # de la séquence LFO avant de détecter un changement utilisateur)
+        pan_changed = False
+        # DÉSACTIVER LA DÉTECTION DE CHANGEMENT DE PAN PENDANT LE LFO
+        # Le pan bouge naturellement à cause de l'interpolation LFO, donc on ne peut pas distinguer
+        # les mouvements dus à l'interpolation des mouvements dus au joystick
+        # if self.lfo_last_pan_base is not None:
+        #     # Calculer la position pan attendue selon où on est dans la séquence
+        #     # Pour simplifier, on compare avec la base pan
+        #     # Si l'écart est significatif, c'est un changement utilisateur
+        #     pan_delta = abs(current_pan - self.lfo_last_pan_base)
+        #     
+        #     # Seuil de détection : 0.01 (~1.8°)
+        #     threshold = 0.01
+        #     
+        #     # Vérifier si le pan actuel est proche d'une position attendue de la séquence
+        #     # IMPORTANT: Utiliser lfo_last_pan_base (la dernière base pan connue) pour comparer,
+        #     # pas lfo_base_position["pan"] qui peut avoir été modifié récemment
+        #     expected_pan_base = self.lfo_last_pan_base
+        #     expected_pan_plus = self.lfo_position_plus["pan"] if self.lfo_position_plus else None
+        #     expected_pan_minus = self.lfo_position_minus["pan"] if self.lfo_position_minus else None
+        #     
+        #     # Si les positions attendues sont basées sur une ancienne base_pan, elles ne sont plus valides
+        #     # Il faut vérifier si le pan actuel est dans une plage acceptable autour de la base pan
+        #     # La plage acceptable est la base pan ± la compensation pan maximale
+        #     if expected_pan_plus is not None and expected_pan_minus is not None:
+        #         # Calculer la plage de pan attendue (entre min et max des positions attendues)
+        #         pan_min_expected = min(expected_pan_base, expected_pan_plus, expected_pan_minus)
+        #         pan_max_expected = max(expected_pan_base, expected_pan_plus, expected_pan_minus)
+        #         # Ajouter un seuil de tolérance pour les erreurs d'interpolation
+        #         # Augmenter la tolérance pour tenir compte des changements récents de base pan
+        #         pan_range_tolerance = 0.05  # 5% de tolérance (augmenté de 2% à 5%)
+        #         pan_min_expected -= pan_range_tolerance
+        #         pan_max_expected += pan_range_tolerance
+        #         
+        #         # Vérifier si le pan actuel est dans la plage attendue
+        #         close_to_expected = pan_min_expected <= current_pan <= pan_max_expected
+        #     else:
+        #         # Fallback: vérifier la distance à la base pan
+        #         dist_to_base = abs(current_pan - expected_pan_base)
+        #         close_to_expected = dist_to_base < threshold * 5  # Seuil plus large si pas de positions attendues (augmenté de 2x à 5x)
+        #     
+        #     if pan_delta > threshold and not close_to_expected:
+        #         # Changement de pan utilisateur détecté
+        #         # Vérifier si le pan est en train de bouger à cause d'une mise à jour récente de la séquence
+        #         # Si une mise à jour est en cours (debounce actif), ne pas mettre à jour la base pan
+        #         # car cela pourrait créer une boucle où chaque mouvement déclenche une nouvelle mise à jour
+        #         if self.lfo_debounce_timer and self.lfo_debounce_timer.isActive():
+        #             # Une mise à jour est déjà en cours, ignorer ce changement pour éviter les boucles
+        #             logger.debug(f"LFO: Changement pan détecté mais debounce actif, ignoré (pan={current_pan:.3f})")
+        #             # #region agent log
+        #             import json, time
+        #             try:
+        #                 with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+        #                     f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"focus_ui_pyside6_standalone.py:4418","message":"Pan changement ignoré (debounce actif)","data":{"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_delta":pan_delta,"close_to_expected":close_to_expected},"timestamp":int(time.time()*1000)})+'\n')
+        #             except: pass
+        #             # #endregion
+        #             return  # Sortir de la fonction pour éviter de déclencher un nouveau debounce
+        #         
+        #         # Vérifier si une mise à jour de la base pan a eu lieu récemment (cooldown de 1.5s)
+        #         # Cela évite de détecter des changements pendant que le slider se déplace vers la nouvelle position
+        #         # Le cooldown est plus long pour éviter les mises à jour en cascade pendant les mouvements continus du joystick
+        #         import time
+        #         current_time = time.time()
+        #         if self.lfo_last_pan_update_time is not None:
+        #             time_since_last_update = current_time - self.lfo_last_pan_update_time
+        #             if time_since_last_update < 1.5:  # 1.5s de cooldown (augmenté de 500ms à 1.5s)
+        #                 logger.debug(f"LFO: Changement pan détecté mais cooldown actif ({time_since_last_update*1000:.0f}ms), ignoré (pan={current_pan:.3f})")
+        #                 # #region agent log
+        #                 try:
+        #                     with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+        #                         f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4448","message":"Pan changement ignoré (cooldown actif)","data":{"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_delta":pan_delta,"time_since_last_update":time_since_last_update},"timestamp":int(time.time()*1000)})+'\n')
+        #                 except: pass
+        #                 # #endregion
+        #                 return  # Ignorer ce changement pendant le cooldown
+        #         
+        #         pan_changed = True
+        #         # Mettre à jour uniquement la position pan de base (pas le slide)
+        #         old_pan = self.lfo_base_position["pan"] if self.lfo_base_position else None
+        #         self.lfo_base_position["pan"] = current_pan
+        #         self.lfo_last_pan_base = current_pan
+        #         self.lfo_last_pan_update_time = current_time  # Enregistrer le timestamp de la mise à jour
+        #         
+        #         # Recalculer immédiatement les positions attendues (plus/minus) pour que la plage attendue
+        #         # soit basée sur la nouvelle base pan, évitant ainsi les fausses détections
+        #         if self.lfo_base_position:
+        #             base_slide = self.lfo_base_position["slide"]
+        #             base_tilt = self.lfo_base_position.get("tilt", 0.5)
+        #             base_zoom = self.lfo_base_position.get("zoom", 0.0)
+        #             _, _, position_plus, position_minus = self._calculate_lfo_sequence(
+        #                 base_slide, current_pan, base_tilt, base_zoom
+        #             )
+        #             self.lfo_position_plus = position_plus
+        #             self.lfo_position_minus = position_minus
+        #         
+        #         logger.info(f"Changement pan utilisateur détecté: {current_pan:.3f}")
+        #         
+        #         # #region agent log
+        #         import json, time
+        #         try:
+        #             with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+        #                 f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"focus_ui_pyside6_standalone.py:4435","message":"Pan joystick détecté, mise à jour base","data":{"old_pan":old_pan,"new_pan":current_pan,"lfo_base_position":self.lfo_base_position},"timestamp":int(time.time()*1000)})+'\n')
+        #         except: pass
+        #         # #endregion
+        
+        # Si un changement est détecté, déclencher le debounce
+        if param_changed or pan_changed:
+            logger.info(f"LFO: Changement détecté (param={param_changed}, pan={pan_changed}), déclenchement debounce...")
+            
+            # Si un debounce est déjà en cours, ne pas le réinitialiser
+            # Cela évite que le debounce soit réinitialisé en continu si les changements sont détectés à chaque cycle
+            if self.lfo_debounce_timer and self.lfo_debounce_timer.isActive():
+                # Le debounce est déjà en cours, ne pas le réinitialiser
+                logger.debug("LFO: Debounce déjà en cours, pas de réinitialisation")
+                return
+            
+            # Arrêter le debounce timer précédent s'il existe (ne devrait pas arriver ici)
+            if self.lfo_debounce_timer:
+                self.lfo_debounce_timer.stop()
+            
+            # Créer un nouveau debounce timer (300ms)
+            if self.lfo_debounce_timer is None:
+                self.lfo_debounce_timer = QTimer()
+                self.lfo_debounce_timer.setSingleShot(True)
+                self.lfo_debounce_timer.timeout.connect(self._trigger_lfo_update)
+            
+            self.lfo_update_pending = True
+            self.lfo_debounce_timer.start(300)  # 300ms debounce
+            logger.debug(f"LFO: Debounce démarré (300ms)")
+    
+    def update_lfo_oscillation(self):
+        """
+        Ancienne fonction de mise à jour de l'oscillation LFO.
+        Plus utilisée car l'interpolation automatique gère maintenant la boucle.
+        Conservée pour compatibilité mais ne fait rien.
+        """
+        # L'interpolation automatique gère maintenant la boucle
+        # Cette fonction n'est plus nécessaire mais conservée pour compatibilité
+        pass
+    
+    def on_lfo_amplitude_changed(self, value: int):
+        """Gère le changement de l'amplitude LFO."""
+        # Convertir de 0-1000 à 0.0-1.0
+        self.lfo_amplitude = value / 1000.0
+        if self.lfo_panel:
+            self.lfo_panel.amplitude_value_label.setText(f"{self.lfo_amplitude:.3f}")
+        
+        # La surveillance détectera automatiquement le changement et mettra à jour la séquence
+    
+    def on_lfo_speed_changed(self, value: int):
+        """Gère le changement de la vitesse LFO."""
+        # Convertir de 10-600 (0.1s steps) à 1.0-60.0 secondes
+        self.lfo_speed = value / 10.0
+        if self.lfo_panel:
+            self.lfo_panel.speed_value_label.setText(f"{self.lfo_speed:.1f} s/cycle")
+        
+        # La surveillance détectera automatiquement le changement et mettra à jour la séquence
+    
+    def on_lfo_distance_changed(self, value: int):
+        """Gère le changement de la distance LFO."""
+        # Convertir de 5-200 (0.1m steps) à 0.5-20.0 mètres
+        self.lfo_distance = value / 10.0
+        if self.lfo_panel:
+            self.lfo_panel.distance_value_label.setText(f"{self.lfo_distance:.1f} m")
+        
+        # La surveillance détectera automatiquement le changement et mettra à jour la séquence
+    
+    def toggle_lfo(self):
+        """Bascule l'état du LFO (ON/OFF)."""
+        if self.lfo_active:
+            self.stop_lfo()
+        else:
+            self.start_lfo()
+    
+    def create_lfo_panel(self):
+        """Crée le panneau de contrôle LFO (Low Frequency Oscillator)."""
+        panel = QWidget()
+        panel_width = self._scale_value(170)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        spacing = self._scale_value(15)
+        margin = self._scale_value(30)
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        
+        # Titre du panneau
+        title = QLabel("L.F.O.")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; color: #fff;")
+        layout.addWidget(title)
+        
+        # Afficher le preset de base utilisé
+        preset_label = QLabel("Base: -")
+        preset_label.setAlignment(Qt.AlignCenter)
+        preset_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        layout.addWidget(preset_label)
+        panel.preset_label = preset_label
+        
+        # Container pour les contrôles
+        controls_container = QWidget()
+        controls_layout = QVBoxLayout(controls_container)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(self._scale_value(20))
+        
+        # Contrôle Amplitude
+        amplitude_container = QWidget()
+        amplitude_layout = QVBoxLayout(amplitude_container)
+        amplitude_layout.setContentsMargins(0, 0, 0, 0)
+        amplitude_layout.setSpacing(self._scale_value(5))
+        
+        amplitude_label = QLabel("Amplitude")
+        amplitude_label.setAlignment(Qt.AlignCenter)
+        amplitude_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        amplitude_layout.addWidget(amplitude_label)
+        
+        amplitude_value_label = QLabel("0.000")
+        amplitude_value_label.setAlignment(Qt.AlignCenter)
+        amplitude_value_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        amplitude_layout.addWidget(amplitude_value_label)
+        
+        amplitude_slider = QSlider(Qt.Horizontal)
+        amplitude_slider.setMinimum(0)
+        amplitude_slider.setMaximum(1000)  # 0-1000 pour avoir 0.000-1.000 avec 3 décimales
+        amplitude_slider.setValue(0)
+        amplitude_slider.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+        """))
+        amplitude_layout.addWidget(amplitude_slider)
+        controls_layout.addWidget(amplitude_container)
+        panel.amplitude_slider = amplitude_slider
+        panel.amplitude_value_label = amplitude_value_label
+        
+        # Contrôle Vitesse
+        speed_container = QWidget()
+        speed_layout = QVBoxLayout(speed_container)
+        speed_layout.setContentsMargins(0, 0, 0, 0)
+        speed_layout.setSpacing(self._scale_value(5))
+        
+        speed_label = QLabel("Vitesse")
+        speed_label.setAlignment(Qt.AlignCenter)
+        speed_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        speed_layout.addWidget(speed_label)
+        
+        speed_value_label = QLabel("1.0 s/cycle")
+        speed_value_label.setAlignment(Qt.AlignCenter)
+        speed_value_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        speed_layout.addWidget(speed_value_label)
+        
+        speed_slider = QSlider(Qt.Horizontal)
+        speed_slider.setMinimum(10)  # 1.0 secondes (10 * 0.1)
+        speed_slider.setMaximum(600)  # 60.0 secondes (600 * 0.1)
+        speed_slider.setValue(10)  # 1.0 secondes par défaut
+        speed_slider.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+        """))
+        speed_layout.addWidget(speed_slider)
+        controls_layout.addWidget(speed_container)
+        panel.speed_slider = speed_slider
+        panel.speed_value_label = speed_value_label
+        
+        # Contrôle Distance
+        distance_container = QWidget()
+        distance_layout = QVBoxLayout(distance_container)
+        distance_layout.setContentsMargins(0, 0, 0, 0)
+        distance_layout.setSpacing(self._scale_value(5))
+        
+        distance_label = QLabel("Distance")
+        distance_label.setAlignment(Qt.AlignCenter)
+        distance_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        distance_layout.addWidget(distance_label)
+        
+        distance_value_label = QLabel("1.0 m")
+        distance_value_label.setAlignment(Qt.AlignCenter)
+        distance_value_label.setStyleSheet(f"font-size: {self._scale_font(11)}; font-weight: bold; color: #ff0; font-family: 'Courier New';")
+        distance_layout.addWidget(distance_value_label)
+        
+        distance_slider = QSlider(Qt.Horizontal)
+        distance_slider.setMinimum(5)  # 0.5 mètres (5 * 0.1)
+        distance_slider.setMaximum(200)  # 20.0 mètres (200 * 0.1)
+        distance_slider.setValue(10)  # 1.0 mètre par défaut
+        distance_slider.setStyleSheet(self._scale_style("""
+            QSlider::groove:horizontal {
+                background: #333;
+                height: 8px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #666;
+                border: 1px solid #888;
+                border-radius: 8px;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #777;
+            }
+        """))
+        distance_layout.addWidget(distance_slider)
+        controls_layout.addWidget(distance_container)
+        panel.distance_slider = distance_slider
+        panel.distance_value_label = distance_value_label
+        
+        # Bouton ON/OFF
+        self.lfo_toggle_btn = QPushButton("OFF")
+        self.lfo_toggle_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px;
+                font-size: 14px;
+                font-weight: bold;
+                border: 2px solid #555;
+                border-radius: 8px;
+                background-color: #333;
+                color: #fff;
+                margin-top: 10px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
+        """))
+        controls_layout.addWidget(self.lfo_toggle_btn)
+        panel.lfo_toggle_btn = self.lfo_toggle_btn
+        
+        # Affichage de l'état
+        state_label = QLabel("État: Inactif")
+        state_label.setAlignment(Qt.AlignCenter)
+        state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #aaa;")
+        controls_layout.addWidget(state_label)
+        panel.state_label = state_label
+        
+        # Affichage de la compensation
+        compensation_label = QLabel("Compensation: 0.00")
+        compensation_label.setAlignment(Qt.AlignCenter)
+        compensation_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #0ff;")
+        controls_layout.addWidget(compensation_label)
+        panel.compensation_label = compensation_label
+        
+        layout.addWidget(controls_container)
+        layout.addStretch()
+        
+        return panel
     
     def create_pan_tilt_matrix_panel(self):
         """Crée le panneau de contrôle Pan/Tilt avec une matrice XY."""
@@ -4708,6 +5601,10 @@ class MainWindow(QMainWindow):
         cam_data = self.cameras[camera_id]
         
         try:
+            # Si c'est la caméra active, arrêter le LFO
+            if camera_id == self.active_camera_id:
+                self.stop_lfo()
+            
             # Arrêter le WebSocket de la caméra
             if cam_data.websocket_client:
                 cam_data.websocket_client.stop()
@@ -4737,40 +5634,233 @@ class MainWindow(QMainWindow):
             logger.error(f"Erreur lors de la déconnexion de la caméra {camera_id}: {e}")
     
     def keyPressEvent(self, event: QKeyEvent):
-        """Gère les événements clavier pour ajuster le focus avec les flèches."""
+        """Gère les événements clavier pour contrôler pan/tilt, focus, zoom et slide."""
         cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        
+        # Flèches pour pan/tilt
+        if event.key() == Qt.Key_Up:
+            # Tilt positif (haut)
+            self.active_arrow_keys.add('up')
+            event.accept()
+        elif event.key() == Qt.Key_Down:
+            # Tilt négatif (bas)
+            self.active_arrow_keys.add('down')
+            event.accept()
+        elif event.key() == Qt.Key_Right:
+            # Pan positif (droite)
+            self.active_arrow_keys.add('right')
+            event.accept()
+        elif event.key() == Qt.Key_Left:
+            # Pan négatif (gauche)
+            self.active_arrow_keys.add('left')
+            event.accept()
+        # R et T pour focus
+        elif event.key() == Qt.Key_R:
+            # Focus diminuer
+            if cam_data.connected and cam_data.controller:
+                self._stop_key_repeat()
+                self._adjust_focus_precise_increment(-0.001)
+                self._start_key_repeat('down')
+            event.accept()
+        elif event.key() == Qt.Key_T:
+            # Focus augmenter
+            if cam_data.connected and cam_data.controller:
+                self._stop_key_repeat()
+                self._adjust_focus_precise_increment(0.001)
+                self._start_key_repeat('up')
+            event.accept()
+        # M et P pour zoom
+        elif event.key() == Qt.Key_M:
+            # Zoom augmenter
+            self.active_arrow_keys.add('m')
+            event.accept()
+        elif event.key() == Qt.Key_P:
+            # Zoom diminuer
+            self.active_arrow_keys.add('p')
+            event.accept()
+        # B et N pour slide
+        elif event.key() == Qt.Key_B:
+            # Slide augmenter
+            self.active_arrow_keys.add('b')
+            event.accept()
+        elif event.key() == Qt.Key_N:
+            # Slide diminuer
+            self.active_arrow_keys.add('n')
+            event.accept()
+        else:
+            self._stop_key_repeat()
             super().keyPressEvent(event)
             return
         
-        # Ajustement très précis du focus avec les flèches haut/bas
-        if event.key() == Qt.Key_Up:
-            # Arrêter toute répétition en cours
-            self._stop_key_repeat()
-            # Incrémenter immédiatement
-            self._adjust_focus_precise_increment(0.001)
-            # Démarrer la répétition
-            self._start_key_repeat('up')
-            event.accept()
-        elif event.key() == Qt.Key_Down:
-            # Arrêter toute répétition en cours
-            self._stop_key_repeat()
-            # Décrémenter immédiatement
-            self._adjust_focus_precise_increment(-0.001)
-            # Démarrer la répétition
-            self._start_key_repeat('down')
-            event.accept()
-        else:
-            self._stop_key_repeat()
-            super().keyPressEvent(event)
+        # Calculer et envoyer les valeurs pour pan/tilt/zoom/slide
+        self._send_joystick_keyboard_commands()
+        
+        # Démarrer la répétition pour les touches joystick
+        if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right, Qt.Key_M, Qt.Key_P, Qt.Key_B, Qt.Key_N):
+            self._start_joystick_key_repeat()
     
     def keyReleaseEvent(self, event: QKeyEvent):
         """Arrête la répétition quand la touche est relâchée."""
-        if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+        # Gérer le relâchement des flèches pan/tilt
+        if event.key() == Qt.Key_Up:
+            self.active_arrow_keys.discard('up')
+            event.accept()
+        elif event.key() == Qt.Key_Down:
+            self.active_arrow_keys.discard('down')
+            event.accept()
+        elif event.key() == Qt.Key_Right:
+            self.active_arrow_keys.discard('right')
+            event.accept()
+        elif event.key() == Qt.Key_Left:
+            self.active_arrow_keys.discard('left')
+            event.accept()
+        # Gérer le relâchement de R et T (focus)
+        elif event.key() == Qt.Key_R or event.key() == Qt.Key_T:
             self._stop_key_repeat()
+            event.accept()
+        # Gérer le relâchement de M et P (zoom)
+        elif event.key() == Qt.Key_M:
+            self.active_arrow_keys.discard('m')
+            event.accept()
+        elif event.key() == Qt.Key_P:
+            self.active_arrow_keys.discard('p')
+            event.accept()
+        # Gérer le relâchement de B et N (slide)
+        elif event.key() == Qt.Key_B:
+            self.active_arrow_keys.discard('b')
+            event.accept()
+        elif event.key() == Qt.Key_N:
+            self.active_arrow_keys.discard('n')
             event.accept()
         else:
             super().keyReleaseEvent(event)
+            return
+        
+        # Recalculer et envoyer les commandes après relâchement
+        self._send_joystick_keyboard_commands()
+        
+        # Arrêter la répétition si toutes les touches sont relâchées
+        if not self.active_arrow_keys:
+            self._stop_joystick_key_repeat()
+        else:
+            # Continuer la répétition avec les nouvelles valeurs
+            self._start_joystick_key_repeat()
+    
+    def _send_joystick_keyboard_commands(self):
+        """Calcule et envoie les commandes joystick basées sur les touches actuellement pressées."""
+        camera_id = self.active_camera_id
+        slider_controller = self.slider_controllers.get(camera_id)
+        
+        if not slider_controller or not slider_controller.is_configured():
+            return
+        
+        # Calculer les valeurs pan/tilt
+        if 'up' in self.active_arrow_keys:
+            tilt_value = self.arrow_keys_speed
+        elif 'down' in self.active_arrow_keys:
+            tilt_value = -self.arrow_keys_speed
+        else:
+            tilt_value = 0.0
+        
+        if 'right' in self.active_arrow_keys:
+            pan_value = self.arrow_keys_speed
+        elif 'left' in self.active_arrow_keys:
+            pan_value = -self.arrow_keys_speed
+        else:
+            pan_value = 0.0
+        
+        # Calculer les valeurs zoom/slide
+        if 'm' in self.active_arrow_keys:
+            zoom_value = -self.arrow_keys_speed  # M = zoom diminuer
+        elif 'p' in self.active_arrow_keys:
+            zoom_value = self.arrow_keys_speed  # P = zoom augmenter
+        else:
+            zoom_value = 0.0
+        
+        if 'b' in self.active_arrow_keys:
+            slide_value = -self.arrow_keys_speed  # B = slide diminuer
+        elif 'n' in self.active_arrow_keys:
+            slide_value = self.arrow_keys_speed  # N = slide augmenter
+        else:
+            slide_value = 0.0
+        
+        # Mettre à jour les axes récemment utilisés
+        if 'left' in self.active_arrow_keys or 'right' in self.active_arrow_keys or pan_value != 0.0:
+            self.recently_used_axes.add('pan')
+        if 'up' in self.active_arrow_keys or 'down' in self.active_arrow_keys or tilt_value != 0.0:
+            self.recently_used_axes.add('tilt')
+        if 'm' in self.active_arrow_keys or 'p' in self.active_arrow_keys or zoom_value != 0.0:
+            self.recently_used_axes.add('zoom')
+        if 'b' in self.active_arrow_keys or 'n' in self.active_arrow_keys or slide_value != 0.0:
+            self.recently_used_axes.add('slide')
+        
+        # Envoyer les commandes joystick
+        # Toujours envoyer 0.0 pour les axes récemment utilisés, même si toutes les touches sont relâchées
+        pan_to_send = pan_value if ('left' in self.active_arrow_keys or 'right' in self.active_arrow_keys or 'pan' in self.recently_used_axes) else None
+        tilt_to_send = tilt_value if ('up' in self.active_arrow_keys or 'down' in self.active_arrow_keys or 'tilt' in self.recently_used_axes) else None
+        zoom_to_send = zoom_value if ('m' in self.active_arrow_keys or 'p' in self.active_arrow_keys or 'zoom' in self.recently_used_axes) else None
+        slide_to_send = slide_value if ('b' in self.active_arrow_keys or 'n' in self.active_arrow_keys or 'slide' in self.recently_used_axes) else None
+        
+        # Retirer les axes de recently_used_axes si toutes les touches correspondantes sont relâchées ET la valeur est 0.0
+        # (pour éviter d'envoyer 0.0 indéfiniment)
+        if pan_to_send == 0.0 and 'left' not in self.active_arrow_keys and 'right' not in self.active_arrow_keys:
+            self.recently_used_axes.discard('pan')
+        if tilt_to_send == 0.0 and 'up' not in self.active_arrow_keys and 'down' not in self.active_arrow_keys:
+            self.recently_used_axes.discard('tilt')
+        if zoom_to_send == 0.0 and 'm' not in self.active_arrow_keys and 'p' not in self.active_arrow_keys:
+            self.recently_used_axes.discard('zoom')
+        if slide_to_send == 0.0 and 'b' not in self.active_arrow_keys and 'n' not in self.active_arrow_keys:
+            self.recently_used_axes.discard('slide')
+        
+        slider_controller.send_joy_command(
+            pan=pan_to_send,
+            tilt=tilt_to_send,
+            zoom=zoom_to_send,
+            slide=slide_to_send,
+            silent=True
+        )
+        
+        # Mettre à jour visuellement le joystick pour pan/tilt
+        self.update_joystick_visual_position(pan_value, tilt_value)
+    
+    def _start_joystick_key_repeat(self):
+        """Démarre la répétition automatique des commandes joystick."""
+        # Arrêter toute répétition en cours
+        self._stop_joystick_key_repeat()
+        
+        # Délai initial de 300ms, puis répétition toutes les 50ms
+        def repeat_action():
+            if self.active_arrow_keys:  # Vérifier qu'il y a encore des touches pressées
+                self._send_joystick_keyboard_commands()
+        
+        # Premier délai plus long (300ms), puis répétition rapide (50ms)
+        QTimer.singleShot(300, lambda: self._continue_joystick_key_repeat(repeat_action))
+    
+    def _continue_joystick_key_repeat(self, action):
+        """Continue la répétition avec un timer récurrent."""
+        if not self.active_arrow_keys:
+            return
+        
+        # Exécuter l'action immédiatement
+        action()
+        
+        # Créer le timer s'il n'existe pas
+        if not hasattr(self, 'joystick_key_repeat_timer') or self.joystick_key_repeat_timer is None:
+            self.joystick_key_repeat_timer = QTimer()
+            self.joystick_key_repeat_timer.setSingleShot(False)  # Timer récurrent
+            self.joystick_key_repeat_timer.timeout.connect(action)
+        
+        # Démarrer ou redémarrer le timer
+        if not self.joystick_key_repeat_timer.isActive():
+            self.joystick_key_repeat_timer.start(50)  # Répéter toutes les 50ms
+    
+    def _stop_joystick_key_repeat(self):
+        """Arrête la répétition automatique des commandes joystick."""
+        if hasattr(self, 'joystick_key_repeat_timer') and self.joystick_key_repeat_timer:
+            self.joystick_key_repeat_timer.stop()
+            self.joystick_key_repeat_timer = None
     
     def _start_key_repeat(self, direction: str):
         """Démarre la répétition automatique de l'ajustement du focus."""
@@ -5435,42 +6525,11 @@ class MainWindow(QMainWindow):
     
     def on_slider_pressed(self, axis_name: str):
         """Appelé quand on appuie sur un slider (pan, tilt, slide, zoom)."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "focus_ui_pyside6_standalone.py:4415",
-                    "message": "slider_pressed",
-                    "data": {"axis_name": axis_name, "timestamp": time.time()},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except: pass
-        # #endregion
         self.slider_user_touching[axis_name] = True
         self.slider_command_sent[axis_name] = False  # Réinitialiser le flag pour cette interaction
     
     def on_slider_released(self, axis_name: str):
         """Appelé quand on relâche un slider (pan, tilt, slide, zoom)."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "focus_ui_pyside6_standalone.py:4419",
-                    "message": "slider_released",
-                    "data": {"axis_name": axis_name, "command_sent": self.slider_command_sent.get(axis_name, False), "timestamp": time.time()},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except: pass
-        # #endregion
-        
         # Si aucune commande n'a été envoyée pendant l'interaction (clic court/jump),
         # envoyer la valeur actuelle du slider
         if not self.slider_command_sent.get(axis_name, False):
@@ -5500,21 +6559,6 @@ class MainWindow(QMainWindow):
                     cam_data.slider_slide_value = normalized_value
                 
                 # Envoyer la commande
-                # #region agent log
-                try:
-                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "E",
-                            "location": "focus_ui_pyside6_standalone.py:4503",
-                            "message": "slider_released_send_jump",
-                            "data": {"axis_name": axis_name, "value": normalized_value, "timestamp": time.time()},
-                            "timestamp": int(time.time() * 1000)
-                        }) + "\n")
-                except: pass
-                # #endregion
                 self._send_slider_command(axis_name, normalized_value)
         
         self.slider_user_touching[axis_name] = False
@@ -5522,38 +6566,8 @@ class MainWindow(QMainWindow):
     
     def on_slider_value_changed(self, axis_name: str, value: int):
         """Appelé quand la valeur d'un slider change (pan, tilt, slide, zoom)."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "focus_ui_pyside6_standalone.py:4423",
-                    "message": "slider_value_changed",
-                    "data": {"axis_name": axis_name, "value": value, "user_touching": self.slider_user_touching.get(axis_name, False), "timestamp": time.time()},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except: pass
-        # #endregion
         # Envoyer SEULEMENT si l'utilisateur touche physiquement le slider
         if not self.slider_user_touching[axis_name]:
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "focus_ui_pyside6_standalone.py:4426",
-                        "message": "slider_value_changed_ignored",
-                        "data": {"axis_name": axis_name, "reason": "user_not_touching", "timestamp": time.time()},
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
             return
         
         # Convertir la valeur du slider (0-1000) en valeur normalisée (0.0-1.0)
@@ -5590,40 +6604,10 @@ class MainWindow(QMainWindow):
     
     def _send_slider_command(self, axis_name: str, value: float):
         """Envoie une commande au slider pour déplacer un axe."""
-        # #region agent log
-        try:
-            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C",
-                    "location": "focus_ui_pyside6_standalone.py:4446",
-                    "message": "send_slider_command_start",
-                    "data": {"axis_name": axis_name, "value": value, "timestamp": time.time()},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except: pass
-        # #endregion
         cam_data = self.get_active_camera_data()
         slider_controller = self.slider_controllers.get(self.active_camera_id)
         
         if not slider_controller or not slider_controller.is_configured():
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "focus_ui_pyside6_standalone.py:4451",
-                        "message": "send_slider_command_aborted",
-                        "data": {"axis_name": axis_name, "reason": "not_configured", "timestamp": time.time()},
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
             return  # Slider non configuré
         
         # Mapper les noms d'axes aux méthodes du SliderController
@@ -5636,22 +6620,7 @@ class MainWindow(QMainWindow):
         
         if axis_name in axis_map:
             method = getattr(slider_controller, axis_map[axis_name])
-            result = method(value, silent=True)
-            # #region agent log
-            try:
-                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "focus_ui_pyside6_standalone.py:4464",
-                        "message": "send_slider_command_complete",
-                        "data": {"axis_name": axis_name, "value": value, "success": result, "timestamp": time.time()},
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
+            method(value, silent=True)
     
     def increment_slider_pan(self, camera_id: Optional[int] = None):
         """Incrémente le pan du slider de 1% (0.01) pour la caméra spécifiée ou active."""
@@ -6204,6 +7173,8 @@ class MainWindow(QMainWindow):
         
         # Marquer ce preset comme actif
         cam_data.active_preset = preset_number
+        
+        # Mettre à jour le label du preset dans le panneau LFO si présent
         self.save_cameras_config()
         self.update_preset_highlight()
         
@@ -6258,6 +7229,8 @@ class MainWindow(QMainWindow):
         
         # Marquer ce preset comme actif immédiatement
         cam_data.active_preset = preset_number
+        
+        # Mettre à jour le label du preset dans le panneau LFO si présent
         self.save_cameras_config()
         self.update_preset_highlight()
         
