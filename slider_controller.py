@@ -147,14 +147,38 @@ class SliderController:
         if not payload:
             return False
         
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K,N","location":"slider_controller.py:150","message":"move_axes: avant envoi","data":{"payload":payload,"url":f"{self.base_url}{self.endpoint}"},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         try:
             url = f"{self.base_url}{self.endpoint}"
+            send_time = time.time() * 1000
             response = self.session.post(
                 url,
                 json=payload,
                 timeout=self.timeout,
                 headers={'Content-Type': 'application/json'}
             )
+            
+            receive_time = time.time() * 1000
+            # #region agent log
+            try:
+                import json, time
+                response_data = None
+                if response.text:
+                    try:
+                        response_data = json.loads(response.text)
+                    except:
+                        response_data = response.text[:200]
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K,N","location":"slider_controller.py:160","message":"move_axes: réponse reçue","data":{"status_code":response.status_code,"response_data":response_data,"latency_ms":receive_time - send_time,"payload":payload},"timestamp":int(receive_time)})+'\n')
+            except: pass
+            # #endregion
             
             if response.status_code in [200, 204]:
                 return True
@@ -228,14 +252,32 @@ class SliderController:
         if not payload:
             return False
         
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"O","location":"slider_controller.py:232","message":"send_joy_command: avant envoi","data":{"payload":payload,"url":f"{self.base_url}/api/v1/joy"},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         try:
             url = f"{self.base_url}/api/v1/joy"
+            send_time = time.time() * 1000
             response = self.session.post(
                 url,
                 json=payload,
                 timeout=self.timeout,
                 headers={'Content-Type': 'application/json'}
             )
+            
+            # #region agent log
+            try:
+                import json, time
+                receive_time = time.time() * 1000
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"O","location":"slider_controller.py:245","message":"send_joy_command: réponse reçue","data":{"status_code":response.status_code,"latency_ms":receive_time - send_time,"payload":payload},"timestamp":int(receive_time)})+'\n')
+            except: pass
+            # #endregion
             
             if response.status_code in [200, 204]:
                 return True
@@ -255,5 +297,325 @@ class SliderController:
         except Exception as e:
             if not silent:
                 logger.error(f"Erreur slider: {e}")
+            return False
+    
+    def send_interpolation_sequence(self, points: list, duration: float, silent: bool = False) -> bool:
+        """
+        Envoie une séquence d'interpolation directe au slider.
+        
+        Args:
+            points: Liste de dictionnaires avec les points de la séquence.
+                   Chaque point doit contenir 'fraction' (0.0-1.0) et optionnellement
+                   'pan', 'tilt', 'zoom', 'slide' (0.0-1.0)
+            duration: Durée totale en secondes pour parcourir toute la séquence
+            silent: Si True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        # Construire le payload
+        payload = {
+            "points": points,
+            "duration": duration
+        }
+        
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"N","location":"slider_controller.py:280","message":"send_interpolation_sequence: payload construit","data":{"points":points,"duration":duration,"payload_keys":list(payload.keys())},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        try:
+            url = f"{self.base_url}/api/v1/interp/setpoints/direct"
+            response = self.session.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            # #region agent log
+            try:
+                import json, time
+                response_data = None
+                response_text_full = response.text
+                if response.text:
+                    try:
+                        response_data = json.loads(response.text)
+                    except:
+                        response_data = response.text[:500]
+                # Extraire les valeurs de tilt de tous les points pour vérifier
+                tilt_values_in_points = [p.get("tilt") for p in points if "tilt" in p]
+                tilt_all_same = len(set(tilt_values_in_points)) <= 1 if tilt_values_in_points else False
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"V,W,X,Y","location":"slider_controller.py:295","message":"send_interpolation_sequence: réponse reçue","data":{"status_code":response.status_code,"response_data":response_data,"response_text_full":response_text_full[:1000],"payload_sent":payload,"tilt_values_in_points":tilt_values_in_points,"tilt_all_same":tilt_all_same,"tilt_count":len(tilt_values_in_points)},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            if response.status_code == 200:
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                logger.debug(f"Slider non accessible à {self.base_url}")
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider: {e}")
+            return False
+    
+    def set_auto_interpolation(self, enable: bool, duration: Optional[float] = None, silent: bool = False) -> bool:
+        """
+        Active ou désactive l'interpolation automatique du slider.
+        
+        Args:
+            enable: True pour activer, False pour désactiver
+            duration: Durée optionnelle en secondes (utilise celle de setpoints/direct si None)
+            silent: If True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        # Construire le payload
+        payload = {"enable": enable}
+        if duration is not None:
+            payload["duration"] = duration
+        
+        # #region agent log
+        try:
+            import json, time
+            status_before = self.get_status(silent=True)
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"L,M","location":"slider_controller.py:354","message":"set_auto_interpolation: avant envoi","data":{"enable":enable,"duration":duration,"payload":payload,"status_before":status_before},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        try:
+            url = f"{self.base_url}/api/v1/interp/auto"
+            send_time = time.time() * 1000
+            response = self.session.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            receive_time = time.time() * 1000
+            # #region agent log
+            try:
+                import json, time
+                response_data = None
+                response_text_full = response.text
+                if response.text:
+                    try:
+                        response_data = json.loads(response.text)
+                    except:
+                        response_data = response.text[:200]
+                status_after = self.get_status(silent=True)
+                position_changes = {
+                    "pan": status_after.get("pan", 0) - status_before.get("pan", 0) if (status_after and status_before and "pan" in status_after and "pan" in status_before) else None,
+                    "tilt": status_after.get("tilt", 0) - status_before.get("tilt", 0) if (status_after and status_before and "tilt" in status_after and "tilt" in status_before) else None,
+                    "zoom": status_after.get("zoom", 0) - status_before.get("zoom", 0) if (status_after and status_before and "zoom" in status_after and "zoom" in status_before) else None,
+                    "slide": status_after.get("slide", 0) - status_before.get("slide", 0) if (status_after and status_before and "slide" in status_after and "slide" in status_before) else None
+                }
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Z,AA,AB,AC","location":"slider_controller.py:377","message":"set_auto_interpolation: réponse reçue","data":{"status_code":response.status_code,"response_data":response_data,"response_text_full":response_text_full[:1000],"latency_ms":receive_time - send_time,"status_before":status_before,"status_after":status_after,"position_changes":position_changes,"enable":enable,"duration":duration},"timestamp":int(receive_time)})+'\n')
+            except: pass
+            # #endregion
+            
+            if response.status_code == 200:
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                logger.debug(f"Slider non accessible à {self.base_url}")
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider: {e}")
+            return False
+    
+    def goto_interpolation_fraction(self, fraction: float, silent: bool = False) -> bool:
+        """
+        Va à une position interpolée immédiatement.
+        
+        Args:
+            fraction: Fraction de l'interpolation (0.0-1.0)
+            silent: Si True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        if not 0.0 <= fraction <= 1.0:
+            if not silent:
+                logger.warning(f"Fraction doit être entre 0.0 et 1.0, reçu: {fraction}")
+            return False
+        
+        payload = {"fraction": fraction}
+        
+        try:
+            url = f"{self.base_url}/api/v1/interp/goto"
+            response = self.session.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code == 200:
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                logger.debug(f"Slider non accessible à {self.base_url}")
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider: {e}")
+            return False
+    
+    def update_interpolation_sequence(self, points: list, recalculate_duration: bool = False, 
+                                     duration: Optional[float] = None, silent: bool = False) -> bool:
+        """
+        Met à jour une séquence d'interpolation en temps réel sans interrompre le mouvement.
+        
+        Args:
+            points: Liste de dictionnaires avec les points de la séquence à mettre à jour.
+                   Chaque point doit contenir 'fraction' (0.0-1.0) et optionnellement
+                   'pan', 'tilt', 'zoom', 'slide' (0.0-1.0)
+            recalculate_duration: Si True, recalcule la durée (nécessite duration)
+            duration: Durée optionnelle en secondes (si recalculate_duration=True)
+            silent: Si True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        # Construire le payload
+        payload = {"points": points}
+        if recalculate_duration:
+            payload["recalculate_duration"] = True
+            if duration is not None:
+                payload["duration"] = duration
+        
+        try:
+            url = f"{self.base_url}/api/v1/interp/setpoints/direct/update"
+            response = self.session.patch(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code == 200:
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                logger.debug(f"Slider non accessible à {self.base_url}")
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider: {e}")
+            return False
+    
+    def bake_offsets(self, silent: bool = False) -> bool:
+        """
+        Intègre les offsets actuels dans le mouvement en cours et les réinitialise.
+        Cela "bake" (intègre) les offsets joystick dans la position de base actuelle.
+        
+        Args:
+            silent: Si True, n'affiche pas de message d'erreur
+            
+        Returns:
+            True si la requête a réussi, False sinon
+        """
+        if not self.is_configured():
+            if not silent:
+                logger.debug("Slider non configuré (IP vide)")
+            return False
+        
+        try:
+            url = f"{self.base_url}/api/v1/offsets/bake"
+            response = self.session.post(
+                url,
+                json={},  # Body vide selon la doc
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code == 200:
+                if not silent:
+                    logger.debug("Offsets 'bakeés' avec succès")
+                return True
+            else:
+                if not silent:
+                    logger.warning(f"Slider erreur HTTP {response.status_code} lors du bake: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                logger.debug(f"Slider non accessible à {self.base_url}")
+            return False
+        except requests.exceptions.Timeout:
+            if not silent:
+                logger.debug(f"Slider timeout à {self.base_url}")
+            return False
+        except Exception as e:
+            if not silent:
+                logger.error(f"Erreur slider lors du bake: {e}")
             return False
 

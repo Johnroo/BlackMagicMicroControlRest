@@ -211,3 +211,7 @@ class SliderWebSocketClient:
         except Exception as e:
             self.logger.error(f"Erreur lors du traitement du message WebSocket: {e}")
 
+
+
+
+

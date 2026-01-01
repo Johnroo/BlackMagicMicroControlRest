@@ -7,28 +7,28 @@
     "slider_ip": "192.168.1.37",
     "presets": {
       "preset_1": {
-        "focus": 0.8522020578384399,
+        "focus": 0.7600874900817871,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
-        "whitebalance": 5600,
+        "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.336002,
-        "tilt": 0.52,
-        "zoom_motor": 1.0,
-        "slide": 0.00399973
+        "pan": 0.3638947,
+        "tilt": 0.55,
+        "zoom_motor": 0.9993103999999999,
+        "slide": 0.9214327
       },
       "preset_2": {
-        "focus": 0.6975158452987671,
+        "focus": 0.8590179681777954,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
-        "whitebalance": 5600,
+        "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.2789994,
-        "tilt": 0.6929412,
-        "zoom_motor": 0.0,
-        "slide": 0.9980002
+        "pan": 0.08022800000000001,
+        "tilt": 0.6125,
+        "zoom_motor": 0.9993103999999999,
+        "slide": 0.9214327
       },
       "preset_4": {
         "focus": 0.8753483891487122,
@@ -43,16 +43,16 @@
         "slide": 0.00700807
       },
       "preset_3": {
-        "focus": 0.8261421322822571,
+        "focus": 0.8191735744476318,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
-        "whitebalance": 5600,
+        "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.5940083,
-        "tilt": 0.29,
-        "zoom_motor": 1.0,
-        "slide": 0.00700807
+        "pan": 0.6762193999999999,
+        "tilt": 0.39375,
+        "zoom_motor": 0.485,
+        "slide": 0.9214327
       },
       "preset_5": {
         "focus": 0.8807048201560974,
@@ -131,7 +131,7 @@
       "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 5.599999999999996
+    "crossfade_duration": 5.0
   },
   "camera_2": {
     "url": "http://Micro-Studio-Camera-4K-G2-2.local",

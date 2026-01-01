@@ -507,6 +507,12 @@ class CameraData:
     slider_tilt_steps: int = 0
     slider_zoom_steps: int = 0
     slider_slide_steps: int = 0
+    
+    # Offsets joystick actuels (normalized -1.0 à +1.0)
+    slider_joystick_pan_offset: float = 0.0
+    slider_joystick_tilt_offset: float = 0.0
+    slider_joystick_zoom_offset: float = 0.0
+    slider_joystick_slide_offset: float = 0.0
 
 
 class CameraSignals(QObject):
@@ -920,7 +926,7 @@ class MainWindow(QMainWindow):
         self.lfo_update_pending: bool = False  # Flag pour éviter les mises à jour simultanées
         self.lfo_debounce_timer: Optional[QTimer] = None  # Timer pour debounce des changements de paramètres
         self.lfo_sequence_initialized: bool = False  # Flag pour savoir si la séquence a été initialisée (POST vs PATCH)
-        self.lfo_last_pan_update_time: Optional[float] = None  # Timestamp de la dernière mise à jour de la base pan
+        self.lfo_initial_joystick_pan_offset: float = 0.0  # Offset joystick initial capturé au démarrage du LFO
         
         # Références aux faders du workspace 2
         self.workspace_2_zoom_fader: Optional[QSlider] = None
@@ -3636,6 +3642,13 @@ class MainWindow(QMainWindow):
                 cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
                 cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
                 
+                # Extraire et stocker les offsets joystick
+                joystick_offsets = data.get('joystick_offsets', {})
+                cam_data.slider_joystick_pan_offset = float(joystick_offsets.get('pan', 0.0))
+                cam_data.slider_joystick_tilt_offset = float(joystick_offsets.get('tilt', 0.0))
+                cam_data.slider_joystick_zoom_offset = float(joystick_offsets.get('zoom', 0.0))
+                cam_data.slider_joystick_slide_offset = float(joystick_offsets.get('slide', 0.0))
+                
                 # Mettre à jour le StateStore pour Companion (même si ce n'est pas la caméra active)
                 self.state_store.update_cam(
                     camera_id,
@@ -3669,6 +3682,20 @@ class MainWindow(QMainWindow):
             cam_data.slider_tilt_steps = int(tilt_data.get('steps', 0))
             cam_data.slider_zoom_steps = int(zoom_data.get('steps', 0))
             cam_data.slider_slide_steps = int(slide_data.get('steps', 0))
+            
+            # Extraire et stocker les offsets joystick
+            joystick_offsets = data.get('joystick_offsets', {})
+            # #region agent log
+            try:
+                import json, time
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"focus_ui_pyside6_standalone.py:3687","message":"on_slider_position_update: extraction joystick_offsets","data":{"has_joystick_offsets":"joystick_offsets" in data,"joystick_offsets_raw":joystick_offsets,"pan_offset":joystick_offsets.get('pan', 'missing')},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            cam_data.slider_joystick_pan_offset = float(joystick_offsets.get('pan', 0.0))
+            cam_data.slider_joystick_tilt_offset = float(joystick_offsets.get('tilt', 0.0))
+            cam_data.slider_joystick_zoom_offset = float(joystick_offsets.get('zoom', 0.0))
+            cam_data.slider_joystick_slide_offset = float(joystick_offsets.get('slide', 0.0))
             
             # Mettre à jour le StateStore pour Companion
             self.state_store.update_cam(
@@ -3984,11 +4011,53 @@ class MainWindow(QMainWindow):
     
     def on_joystick_pan_tilt_changed(self, pan: float, tilt: float):
         """Gère le changement de position du joystick pan/tilt."""
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"focus_ui_pyside6_standalone.py:4012","message":"on_joystick_pan_tilt_changed appelé","data":{"pan":pan,"tilt":tilt,"lfo_active":self.lfo_active},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
         camera_id = self.active_camera_id
         slider_controller = self.slider_controllers.get(camera_id)
         
         if slider_controller and slider_controller.is_configured():
             slider_controller.send_joy_command(pan=pan, tilt=tilt, silent=True)
+            # #region agent log
+            try:
+                import json, time
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"focus_ui_pyside6_standalone.py:4022","message":"send_joy_command appelé","data":{"pan":pan,"tilt":tilt,"lfo_active":self.lfo_active},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # Si le LFO est actif, mettre à jour l'offset pan du joystick pour adapter la compensation
+            # Le pan du joystick est une position absolue (0.0 à 1.0), on calcule l'offset par rapport à la base
+            if self.lfo_active and self.lfo_base_position:
+                # Calculer l'offset pan du joystick par rapport à la position de base
+                base_pan = self.lfo_base_position.get("pan", 0.5)
+                pan_offset = pan - base_pan
+                
+                # Stocker l'offset actuel pour l'utiliser dans le calcul de compensation
+                if not hasattr(self, 'lfo_current_joystick_pan_offset'):
+                    self.lfo_current_joystick_pan_offset = 0.0
+                self.lfo_current_joystick_pan_offset = pan_offset
+                
+                # Déclencher une mise à jour de la séquence LFO après debounce
+                if self.lfo_debounce_timer is None:
+                    self.lfo_debounce_timer = QTimer()
+                    self.lfo_debounce_timer.setSingleShot(True)
+                    self.lfo_debounce_timer.timeout.connect(self._trigger_lfo_update)
+                
+                self.lfo_debounce_timer.start(500)  # 500ms debounce
+                
+                # #region agent log
+                try:
+                    import json, time
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"focus_ui_pyside6_standalone.py:4037","message":"LFO: Joystick pan changé via UI","data":{"pan":pan,"base_pan":base_pan,"pan_offset":pan_offset,"lfo_current_joystick_pan_offset":self.lfo_current_joystick_pan_offset},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
     
     def on_joystick_zoom_fader_changed(self, value: int):
         """Gère le changement de valeur du fader zoom motor (slider)."""
@@ -4045,17 +4114,27 @@ class MainWindow(QMainWindow):
         if self.workspace_2_joystick_2d:
             self.workspace_2_joystick_2d.setPosition(pan, tilt)
     
-    def _calculate_lfo_sequence(self, base_slide: float, base_pan: float, base_tilt: float = None, base_zoom: float = None) -> tuple:
+    def _calculate_lfo_sequence(self, base_slide: float, base_pan: float, base_tilt: float = None, base_zoom: float = None, pan_offset: float = 0.0) -> tuple:
         """
         Calcule la séquence LFO à partir d'une position de base.
         
         Args:
             base_slide: Position slide de base (0.0-1.0)
-            base_pan: Position pan de base (0.0-1.0)
+            base_pan: Position pan de base (0.0-1.0) - pan de départ
+            pan_offset: Offset pan du joystick (-1.0 à +1.0) - commande utilisateur
+            base_tilt: Position tilt de base (0.0-1.0), optionnel
+            base_zoom: Position zoom de base (0.0-1.0), optionnel
         
         Returns:
             tuple: (sequence_points, lfo_base_position, lfo_position_plus, lfo_position_minus)
         """
+        # Calculer le pan réel (hors compensation) = pan de départ + pan offset
+        # Le pan offset est en -1.0 à +1.0, on doit le convertir en position absolue
+        # Pour simplifier, on considère que l'offset est une commande de vitesse qui modifie progressivement le pan
+        # On utilise donc directement base_pan + pan_offset comme pan réel
+        # Mais attention : pan_offset est en -1.0 à +1.0, donc on doit le convertir en delta de position
+        # Pour l'instant, on utilise base_pan directement et on ajustera avec pan_offset dans monitor_lfo_changes
+        
         # Calculer les positions + et - de manière symétrique
         # L'amplitude est répartie : moitié en positif, moitié en négatif
         half_amplitude = self.lfo_amplitude / 2.0
@@ -4088,16 +4167,39 @@ class MainWindow(QMainWindow):
         delta_slide_plus_meters = (slide_plus - base_slide) * slider_length
         delta_slide_minus_meters = (slide_minus - base_slide) * slider_length
         
-        # Calculer les compensations pan (triangulation)
-        # La compensation doit être multipliée par un facteur qui dépend de l'angle de départ
+        # Calculer le pan réel (hors compensation) = pan de départ + pan offset
+        # Le pan offset est en -1.0 à +1.0 (commande joystick), on doit le convertir en position absolue
+        # Le pan offset est une commande de vitesse, donc on l'ajoute directement à base_pan
+        # Mais attention : pan_offset est en -1.0 à +1.0, donc on doit le convertir en delta de position
+        # Pour simplifier, on considère que pan_offset modifie directement la position pan
+        # Pan réel = pan de départ + pan offset (converti en position absolue)
+        # Le pan offset est en -1.0 à +1.0, donc on le convertit en delta de position (0.0 à 1.0)
+        # Pour l'instant, on utilise directement base_pan + pan_offset comme approximation
+        # TODO: Convertir correctement pan_offset (-1.0 à +1.0) en delta de position
+        real_pan = base_pan + pan_offset  # Pan réel (hors compensation)
+        real_pan = max(0.0, min(1.0, real_pan))  # Clamper entre 0.0 et 1.0
+        
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"focus_ui_pyside6_standalone.py:4179","message":"_calculate_lfo_sequence: calcul real_pan","data":{"base_pan":base_pan,"pan_offset":pan_offset,"real_pan":real_pan,"real_pan_equals_base_pan":abs(real_pan - base_pan) < 0.0001},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        # Calculer les compensations pan (triangulation de la parallaxe)
+        # La compensation doit être multipliée par un facteur qui dépend de l'angle réel
         # Si pan = 0.5 (90° perpendiculaire), compensation maximale
-        # Si pan = 0.0 (+90°) ou pan = 1.0 (-90°), compensation nulle (le slide est perpendiculaire à l'axe de vision)
+        # Si pan = 0.0 (+90°) ou pan = 1.0 (-90°), compensation nulle (caméra dans le sens du rail)
+        # Le facteur cos(angle) gère naturellement la triangulation :
+        # - cos(90°) = 0 (pan = 0.0 ou 1.0) : pas de compensation
+        # - cos(0°) = 1 (pan = 0.5) : compensation maximale
         
-        # Convertir base_pan en angle en degrés
+        # Convertir real_pan en angle en degrés
         # pan 50% = 90° (perpendiculaire), pan 100% = -90°, pan 0% = +90°
-        base_pan_angle_deg = (base_pan - 0.5) * 180.0  # -90° à +90°
+        base_pan_angle_deg = (real_pan - 0.5) * 180.0  # -90° à +90°
         
-        # Calculer le facteur de compensation basé sur l'angle de départ
+        # Calculer le facteur de compensation basé sur l'angle réel (triangulation)
         # Le facteur est maximum à 90° (pan = 0.5) et nul à 0° ou 180° (pan = 0.0 ou 1.0)
         # On utilise cos(angle) pour avoir 1.0 à 90° et 0.0 à 0°/180°
         base_pan_angle_rad = math.radians(base_pan_angle_deg)
@@ -4127,17 +4229,25 @@ class MainWindow(QMainWindow):
         pan_angle_plus_deg = math.degrees(pan_angle_plus_rad)
         pan_angle_minus_deg = math.degrees(pan_angle_minus_rad)
         
-        # Calculer les valeurs pan compensées (ajoutées à la position de base)
-        # La compensation est un delta d'angle, donc on l'ajoute directement
-        pan_plus_before_clamp = base_pan + (pan_angle_plus_deg / 180.0)
-        pan_minus_before_clamp = base_pan + (pan_angle_minus_deg / 180.0)
+        # Calculer les valeurs pan compensées (ajoutées à la position réelle, pas la base)
+        # La compensation est un delta d'angle, donc on l'ajoute à real_pan (pan de départ + offset)
+        pan_plus_before_clamp = real_pan + (pan_angle_plus_deg / 180.0)
+        pan_minus_before_clamp = real_pan + (pan_angle_minus_deg / 180.0)
         
         # Clamper les valeurs pan entre 0.0 et 1.0
         pan_plus = max(0.0, min(1.0, pan_plus_before_clamp))
         pan_minus = max(0.0, min(1.0, pan_minus_before_clamp))
         
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"focus_ui_pyside6_standalone.py:4163","message":"Calcul pan compensation LFO","data":{"base_pan":base_pan,"pan_offset":pan_offset,"real_pan":real_pan,"base_pan_angle_deg":base_pan_angle_deg,"compensation_factor":compensation_factor,"pan_angle_plus_deg":pan_angle_plus_deg,"pan_angle_minus_deg":pan_angle_minus_deg,"pan_plus_before_clamp":pan_plus_before_clamp,"pan_minus_before_clamp":pan_minus_before_clamp,"pan_plus":pan_plus,"pan_minus":pan_minus,"delta_slide_plus_meters":delta_slide_plus_meters,"delta_slide_minus_meters":delta_slide_minus_meters,"lfo_distance":self.lfo_distance,"lfo_amplitude":self.lfo_amplitude},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         # Créer la séquence d'interpolation avec 4 points selon les spécifications :
-        # 0% : position de départ (actuelle)
+        # 0% : position de départ (actuelle) - DOIT être exactement la position actuelle
         # 25% : position actuelle + amplitude/2 sur slide avec pan compensé
         # 75% : position de départ - amplitude/2 sur slide avec pan compensé dans l'autre sens
         # 100% : position de départ
@@ -4147,12 +4257,26 @@ class MainWindow(QMainWindow):
         if base_zoom is None:
             base_zoom = 0.0  # Valeur par défaut
         
+        # HYPOTHÈSE J: L'API du slider nécessite tilt/zoom dans la séquence avec valeurs constantes
+        # Si tilt/zoom ne sont pas dans la séquence, l'API peut utiliser des valeurs par défaut ou les réinitialiser
+        # Solution: Inclure tilt et zoom dans la séquence avec des valeurs CONSTANTES (même valeur pour tous les points)
+        # CORRECTION: Le point 0% doit utiliser base_pan (position actuelle exacte) et non real_pan
+        # car real_pan = base_pan + pan_offset, et même si pan_offset=0.0, il peut y avoir des erreurs d'arrondi
+        # Pour le point 0%, on veut la position actuelle exacte, donc on utilise base_pan directement
         sequence_points = [
-            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 0.0},    # Position de départ (0%)
-            {"pan": pan_plus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_plus, "fraction": 0.25},   # Position +amplitude/2 (25%)
-            {"pan": pan_minus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_minus, "fraction": 0.75}, # Position -amplitude/2 (75%)
-            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 1.0}    # Position de départ (100%)
+            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 0.0},    # Position de départ (0%) - tilt/zoom constants
+            {"pan": pan_plus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_plus, "fraction": 0.25},   # Position +amplitude/2 (25%) - tilt/zoom constants
+            {"pan": pan_minus, "tilt": base_tilt, "zoom": base_zoom, "slide": slide_minus, "fraction": 0.75}, # Position -amplitude/2 (75%) - tilt/zoom constants
+            {"pan": base_pan, "tilt": base_tilt, "zoom": base_zoom, "slide": base_slide, "fraction": 1.0}    # Position de départ (100%) - tilt/zoom constants
         ]
+        
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E","location":"focus_ui_pyside6_standalone.py:4252","message":"_calculate_lfo_sequence: séquence créée","data":{"base_pan":base_pan,"real_pan":real_pan,"pan_offset":pan_offset,"point_0_pan":sequence_points[0]["pan"],"point_0_tilt":sequence_points[0]["tilt"],"point_0_zoom":sequence_points[0]["zoom"],"point_0_slide":sequence_points[0]["slide"],"base_tilt":base_tilt,"base_zoom":base_zoom,"sequence_points":sequence_points},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
         
         base_position = {"slide": base_slide, "pan": base_pan}
         position_plus = {"slide": slide_plus, "pan": pan_plus}
@@ -4162,19 +4286,45 @@ class MainWindow(QMainWindow):
     
     def start_lfo(self):
         """Démarre l'oscillation LFO basée sur la position actuelle du slider."""
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4190","message":"start_lfo appelé","data":{"lfo_active":self.lfo_active,"active_camera_id":self.active_camera_id,"lfo_amplitude":self.lfo_amplitude,"lfo_distance":self.lfo_distance,"lfo_speed":self.lfo_speed},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         if self.lfo_active:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4193","message":"LFO déjà actif, retour","data":{},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             return
         
         camera_id = self.active_camera_id
         cam_data = self.cameras.get(camera_id)
         if not cam_data or not cam_data.connected:
             logger.warning("Impossible de démarrer le LFO : caméra non connectée")
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4197","message":"Caméra non connectée","data":{"cam_data_exists":cam_data is not None,"cam_data_connected":cam_data.connected if cam_data else None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             return
         
         # Récupérer le slider controller
         slider_controller = self.slider_controllers.get(camera_id)
         if not slider_controller or not slider_controller.is_configured():
             logger.warning("Impossible de démarrer le LFO : slider non configuré")
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4202","message":"Slider non configuré","data":{"slider_controller_exists":slider_controller is not None,"slider_configured":slider_controller.is_configured() if slider_controller else None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             if self.lfo_panel:
                 self.lfo_panel.state_label.setText("État: Slider non configuré")
                 self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
@@ -4184,6 +4334,12 @@ class MainWindow(QMainWindow):
         current_status = slider_controller.get_status(silent=True)
         if current_status is None:
             logger.warning("Impossible de démarrer le LFO : impossible de récupérer la position du slider")
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4211","message":"Position slider inconnue","data":{},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             if self.lfo_panel:
                 self.lfo_panel.state_label.setText("État: Position inconnue")
                 self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
@@ -4195,8 +4351,26 @@ class MainWindow(QMainWindow):
         base_tilt = current_status.get('tilt', 0.5)  # Récupérer aussi le tilt actuel
         base_zoom = current_status.get('zoom', 0.0)  # Récupérer aussi le zoom actuel
         
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E","location":"focus_ui_pyside6_standalone.py:4327","message":"start_lfo: positions de base récupérées depuis current_status","data":{"base_slide":base_slide,"base_pan":base_pan,"base_tilt":base_tilt,"base_zoom":base_zoom,"current_status":current_status,"current_status_keys":list(current_status.keys()),"tilt_in_status":"tilt" in current_status,"zoom_in_status":"zoom" in current_status},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         # Calculer la séquence LFO (passer tilt et zoom en paramètres)
-        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom)
+        # Au démarrage, pan_offset = 0.0 car on utilise la position actuelle comme base
+        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom, pan_offset=0.0)
+        
+        # Récupérer la position actuelle juste avant l'envoi pour garantir que le point 0% est exactement la position actuelle
+        current_status = slider_controller.get_status(silent=True)
+        if current_status:
+            # Mettre à jour le point 0% avec la position actuelle exacte
+            sequence_points[0]["pan"] = current_status.get('pan', base_pan)
+            sequence_points[0]["tilt"] = current_status.get('tilt', base_tilt)
+            sequence_points[0]["zoom"] = current_status.get('zoom', base_zoom)
+            sequence_points[0]["slide"] = current_status.get('slide', base_slide)
         
         # Stocker les positions calculées (inclure tilt et zoom initiaux)
         self.lfo_base_position = {
@@ -4208,6 +4382,13 @@ class MainWindow(QMainWindow):
         self.lfo_position_plus = position_plus
         self.lfo_position_minus = position_minus
         
+        # BAKER: Intégrer les offsets actuels dans la position de base avant d'envoyer la séquence
+        # Cela évite que le joystick continue à modifier la position à chaque variation
+        if slider_controller.bake_offsets(silent=True):
+            logger.debug("LFO: Offsets 'bakeés' avec succès avant envoi séquence")
+        else:
+            logger.warning("LFO: Échec du bake des offsets (continuation quand même)")
+        
         # Envoyer la séquence d'interpolation
         if not slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=True):
             logger.warning("Impossible d'envoyer la séquence d'interpolation")
@@ -4216,7 +4397,8 @@ class MainWindow(QMainWindow):
                 self.lfo_panel.state_label.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #f00;")
             return
         
-        # Activer l'interpolation automatique avec la durée du cycle
+        # Activer l'interpolation automatique
+        # Le firmware démarre maintenant toujours depuis u0 = 0.0, donc pas besoin de repositionnement explicite
         if not slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=True):
             logger.warning("Impossible d'activer l'interpolation automatique")
             if self.lfo_panel:
@@ -4227,11 +4409,27 @@ class MainWindow(QMainWindow):
         self.lfo_active = True
         self.lfo_sequence_initialized = True  # La séquence a été initialisée avec POST
         
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4286","message":"LFO activé avec succès","data":{"lfo_active":self.lfo_active,"initial_joystick_pan_offset":self.lfo_initial_joystick_pan_offset},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         # Initialiser les valeurs de référence pour la surveillance
         self.lfo_last_pan_base = base_pan
         self.lfo_last_amplitude = self.lfo_amplitude
         self.lfo_last_distance = self.lfo_distance
         self.lfo_last_speed = self.lfo_speed
+        
+        # Capturer l'offset joystick initial pour éviter les fausses détections
+        # au démarrage (l'offset peut être non-nul si le joystick a été utilisé avant)
+        cam_data = self.cameras.get(camera_id)
+        if cam_data:
+            self.lfo_initial_joystick_pan_offset = cam_data.slider_joystick_pan_offset
+        else:
+            self.lfo_initial_joystick_pan_offset = 0.0
         
         # Plus besoin du timer car l'interpolation automatique gère la boucle
         if self.lfo_timer:
@@ -4307,7 +4505,7 @@ class MainWindow(QMainWindow):
         self.lfo_last_pan_base = None
         self.lfo_update_pending = False
         self.lfo_sequence_initialized = False
-        self.lfo_last_pan_update_time = None  # Réinitialiser le timestamp
+        self.lfo_initial_joystick_pan_offset = 0.0
         
         # Mettre à jour l'UI
         if self.lfo_panel:
@@ -4360,9 +4558,18 @@ class MainWindow(QMainWindow):
         if not slider_controller or not slider_controller.is_configured():
             return
         
+        # BAKER: Intégrer les offsets actuels dans la position de base avant de recalculer la séquence
+        # Cela évite que le joystick continue à modifier la position à chaque variation
+        if slider_controller.bake_offsets(silent=True):
+            logger.debug("LFO: Offsets 'bakeés' avec succès avant mise à jour séquence")
+        else:
+            logger.warning("LFO: Échec du bake des offsets (continuation quand même)")
+        
         # Recalculer la séquence avec les paramètres actuels
+        # IMPORTANT: Utiliser la position de base stockée, PAS la position actuelle du slider
+        # car la position actuelle inclut déjà la compensation LFO
         base_slide = self.lfo_base_position["slide"]
-        base_pan = self.lfo_base_position["pan"]
+        base_pan = self.lfo_base_position["pan"]  # Position de base originale (sans compensation)
         
         # Utiliser les valeurs initiales de tilt et zoom stockées dans lfo_base_position
         # Ne PAS récupérer les valeurs actuelles depuis le slider car elles peuvent avoir changé
@@ -4371,7 +4578,9 @@ class MainWindow(QMainWindow):
         base_zoom = self.lfo_base_position.get("zoom", 0.0)   # Valeur initiale stockée
         
         # Calculer la séquence LFO (utiliser les valeurs initiales de tilt et zoom)
-        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom)
+        # Récupérer le pan offset actuel depuis le joystick UI pour adapter la compensation en temps réel
+        pan_offset = getattr(self, 'lfo_current_joystick_pan_offset', 0.0)
+        sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(base_slide, base_pan, base_tilt, base_zoom, pan_offset=pan_offset)
         
         # Mettre à jour les positions stockées
         self.lfo_position_plus = position_plus
@@ -4428,6 +4637,14 @@ class MainWindow(QMainWindow):
     
     def monitor_lfo_changes(self):
         """Surveille les changements de pan (joystick) et des paramètres LFO toutes les 200ms."""
+        # #region agent log
+        import json, time
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"focus_ui_pyside6_standalone.py:4449","message":"monitor_lfo_changes appelé","data":{"lfo_active":self.lfo_active},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         if not self.lfo_active:
             return
         
@@ -4457,13 +4674,37 @@ class MainWindow(QMainWindow):
             self.lfo_last_speed = self.lfo_speed
             logger.debug(f"LFO: Initialisation lfo_last_speed = {self.lfo_last_speed:.1f}")
         
-        # Récupérer la position actuelle
-        current_status = slider_controller.get_status(silent=True)
-        if current_status is None:
+        # Récupérer la position actuelle depuis les données stockées (au lieu de get_status)
+        # pour avoir accès aux offsets joystick en temps réel
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data:
             return
         
-        current_pan = current_status.get('pan', 0.5)
-        current_slide = current_status.get('slide', 0.0)
+        current_pan = cam_data.slider_pan_value
+        current_tilt = cam_data.slider_tilt_value
+        current_slide = cam_data.slider_slide_value
+        joystick_pan_offset = cam_data.slider_joystick_pan_offset
+        
+        # #region agent log
+        try:
+            import json, time
+            base_tilt = self.lfo_base_position.get("tilt", 0.5)
+            base_zoom = self.lfo_base_position.get("zoom", 0.0)
+            current_zoom = getattr(cam_data, 'slider_zoom_value', 0.0)
+            tilt_drift = abs(current_tilt - base_tilt)
+            zoom_drift = abs(current_zoom - base_zoom)
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Q,R,S,T","location":"focus_ui_pyside6_standalone.py:4850","message":"monitor_lfo_changes: observation dérive tilt/zoom (correction désactivée)","data":{"current_tilt":current_tilt,"base_tilt":base_tilt,"tilt_drift":tilt_drift,"current_zoom":current_zoom,"base_zoom":base_zoom,"zoom_drift":zoom_drift},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"W","location":"focus_ui_pyside6_standalone.py:4654","message":"monitor_lfo_changes: positions actuelles","data":{"current_pan":current_pan,"current_tilt":current_tilt,"current_slide":current_slide,"lfo_base_position":self.lfo_base_position,"tilt_drift":tilt_drift,"zoom_drift":zoom_drift},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
         
         # Détecter les changements de paramètres LFO
         param_changed = False
@@ -4481,114 +4722,112 @@ class MainWindow(QMainWindow):
             param_changed = True
             logger.info(f"LFO: Changement vitesse détecté: {self.lfo_last_speed:.1f} -> {self.lfo_speed:.1f}")
         
-        # Détecter les changements de pan (joystick)
-        # DÉSACTIVÉ TEMPORAIREMENT : La détection de changement de pan pendant le LFO cause des problèmes
-        # car le pan bouge naturellement à cause de l'interpolation LFO, ce qui déclenche des fausses détections
-        # TODO: Implémenter une meilleure logique pour distinguer les mouvements dus à l'interpolation LFO
-        # des mouvements dus au joystick (par exemple, en vérifiant si le pan est dans la plage attendue
-        # de la séquence LFO avant de détecter un changement utilisateur)
+        # Détecter les changements de pan (joystick) en utilisant les offsets joystick
+        # Les offsets joystick permettent de distinguer les mouvements utilisateur
+        # (joystick actif) des mouvements automatiques (interpolation LFO)
+        # Si les offsets ne sont pas disponibles (toujours à 0), utiliser une détection
+        # basée sur la vitesse de changement de pan
         pan_changed = False
-        # DÉSACTIVER LA DÉTECTION DE CHANGEMENT DE PAN PENDANT LE LFO
-        # Le pan bouge naturellement à cause de l'interpolation LFO, donc on ne peut pas distinguer
-        # les mouvements dus à l'interpolation des mouvements dus au joystick
-        # if self.lfo_last_pan_base is not None:
-        #     # Calculer la position pan attendue selon où on est dans la séquence
-        #     # Pour simplifier, on compare avec la base pan
-        #     # Si l'écart est significatif, c'est un changement utilisateur
-        #     pan_delta = abs(current_pan - self.lfo_last_pan_base)
-        #     
-        #     # Seuil de détection : 0.01 (~1.8°)
-        #     threshold = 0.01
-        #     
-        #     # Vérifier si le pan actuel est proche d'une position attendue de la séquence
-        #     # IMPORTANT: Utiliser lfo_last_pan_base (la dernière base pan connue) pour comparer,
-        #     # pas lfo_base_position["pan"] qui peut avoir été modifié récemment
-        #     expected_pan_base = self.lfo_last_pan_base
-        #     expected_pan_plus = self.lfo_position_plus["pan"] if self.lfo_position_plus else None
-        #     expected_pan_minus = self.lfo_position_minus["pan"] if self.lfo_position_minus else None
-        #     
-        #     # Si les positions attendues sont basées sur une ancienne base_pan, elles ne sont plus valides
-        #     # Il faut vérifier si le pan actuel est dans une plage acceptable autour de la base pan
-        #     # La plage acceptable est la base pan ± la compensation pan maximale
-        #     if expected_pan_plus is not None and expected_pan_minus is not None:
-        #         # Calculer la plage de pan attendue (entre min et max des positions attendues)
-        #         pan_min_expected = min(expected_pan_base, expected_pan_plus, expected_pan_minus)
-        #         pan_max_expected = max(expected_pan_base, expected_pan_plus, expected_pan_minus)
-        #         # Ajouter un seuil de tolérance pour les erreurs d'interpolation
-        #         # Augmenter la tolérance pour tenir compte des changements récents de base pan
-        #         pan_range_tolerance = 0.05  # 5% de tolérance (augmenté de 2% à 5%)
-        #         pan_min_expected -= pan_range_tolerance
-        #         pan_max_expected += pan_range_tolerance
-        #         
-        #         # Vérifier si le pan actuel est dans la plage attendue
-        #         close_to_expected = pan_min_expected <= current_pan <= pan_max_expected
-        #     else:
-        #         # Fallback: vérifier la distance à la base pan
-        #         dist_to_base = abs(current_pan - expected_pan_base)
-        #         close_to_expected = dist_to_base < threshold * 5  # Seuil plus large si pas de positions attendues (augmenté de 2x à 5x)
-        #     
-        #     if pan_delta > threshold and not close_to_expected:
-        #         # Changement de pan utilisateur détecté
-        #         # Vérifier si le pan est en train de bouger à cause d'une mise à jour récente de la séquence
-        #         # Si une mise à jour est en cours (debounce actif), ne pas mettre à jour la base pan
-        #         # car cela pourrait créer une boucle où chaque mouvement déclenche une nouvelle mise à jour
-        #         if self.lfo_debounce_timer and self.lfo_debounce_timer.isActive():
-        #             # Une mise à jour est déjà en cours, ignorer ce changement pour éviter les boucles
-        #             logger.debug(f"LFO: Changement pan détecté mais debounce actif, ignoré (pan={current_pan:.3f})")
-        #             # #region agent log
-        #             import json, time
-        #             try:
-        #                 with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-        #                     f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"focus_ui_pyside6_standalone.py:4418","message":"Pan changement ignoré (debounce actif)","data":{"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_delta":pan_delta,"close_to_expected":close_to_expected},"timestamp":int(time.time()*1000)})+'\n')
-        #             except: pass
-        #             # #endregion
-        #             return  # Sortir de la fonction pour éviter de déclencher un nouveau debounce
-        #         
-        #         # Vérifier si une mise à jour de la base pan a eu lieu récemment (cooldown de 1.5s)
-        #         # Cela évite de détecter des changements pendant que le slider se déplace vers la nouvelle position
-        #         # Le cooldown est plus long pour éviter les mises à jour en cascade pendant les mouvements continus du joystick
-        #         import time
-        #         current_time = time.time()
-        #         if self.lfo_last_pan_update_time is not None:
-        #             time_since_last_update = current_time - self.lfo_last_pan_update_time
-        #             if time_since_last_update < 1.5:  # 1.5s de cooldown (augmenté de 500ms à 1.5s)
-        #                 logger.debug(f"LFO: Changement pan détecté mais cooldown actif ({time_since_last_update*1000:.0f}ms), ignoré (pan={current_pan:.3f})")
-        #                 # #region agent log
-        #                 try:
-        #                     with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-        #                         f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4448","message":"Pan changement ignoré (cooldown actif)","data":{"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_delta":pan_delta,"time_since_last_update":time_since_last_update},"timestamp":int(time.time()*1000)})+'\n')
-        #                 except: pass
-        #                 # #endregion
-        #                 return  # Ignorer ce changement pendant le cooldown
-        #         
-        #         pan_changed = True
-        #         # Mettre à jour uniquement la position pan de base (pas le slide)
-        #         old_pan = self.lfo_base_position["pan"] if self.lfo_base_position else None
-        #         self.lfo_base_position["pan"] = current_pan
-        #         self.lfo_last_pan_base = current_pan
-        #         self.lfo_last_pan_update_time = current_time  # Enregistrer le timestamp de la mise à jour
-        #         
-        #         # Recalculer immédiatement les positions attendues (plus/minus) pour que la plage attendue
-        #         # soit basée sur la nouvelle base pan, évitant ainsi les fausses détections
-        #         if self.lfo_base_position:
-        #             base_slide = self.lfo_base_position["slide"]
-        #             base_tilt = self.lfo_base_position.get("tilt", 0.5)
-        #             base_zoom = self.lfo_base_position.get("zoom", 0.0)
-        #             _, _, position_plus, position_minus = self._calculate_lfo_sequence(
-        #                 base_slide, current_pan, base_tilt, base_zoom
-        #             )
-        #             self.lfo_position_plus = position_plus
-        #             self.lfo_position_minus = position_minus
-        #         
-        #         logger.info(f"Changement pan utilisateur détecté: {current_pan:.3f}")
-        #         
-        #         # #region agent log
-        #         import json, time
-        #         try:
-        #             with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
-        #                 f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"focus_ui_pyside6_standalone.py:4435","message":"Pan joystick détecté, mise à jour base","data":{"old_pan":old_pan,"new_pan":current_pan,"lfo_base_position":self.lfo_base_position},"timestamp":int(time.time()*1000)})+'\n')
-        #         except: pass
-        #         # #endregion
+        JOYSTICK_THRESHOLD = 0.01  # Seuil de détection : 1% de mouvement
+        PAN_VELOCITY_THRESHOLD = 0.05  # Seuil de vitesse : 5% par cycle (200ms) = 25%/s
+        
+        # #region agent log
+        import json, time
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E","location":"focus_ui_pyside6_standalone.py:4513","message":"monitor_lfo_changes: vérification joystick","data":{"joystick_pan_offset":joystick_pan_offset,"abs_offset":abs(joystick_pan_offset),"threshold":JOYSTICK_THRESHOLD,"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"debounce_active":self.lfo_debounce_timer.isActive() if self.lfo_debounce_timer else False},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        # Vérifier si le joystick pan est actif (mouvement utilisateur)
+        # Méthode 1 : Utiliser les offsets joystick si disponibles
+        # Comparer avec l'offset initial capturé au démarrage du LFO
+        # pour éviter les fausses détections si l'offset était non-nul au démarrage
+        initial_offset = getattr(self, 'lfo_initial_joystick_pan_offset', 0.0)
+        offset_delta = abs(joystick_pan_offset - initial_offset)
+        # Utiliser un seuil plus strict pour éviter les fausses détections dues au bruit
+        # Le seuil de 0.01 (1%) est trop sensible, utiliser 0.05 (5%) pour plus de stabilité
+        STRICT_JOYSTICK_THRESHOLD = 0.05  # Seuil strict : 5% de mouvement
+        joystick_active_by_offset = offset_delta > STRICT_JOYSTICK_THRESHOLD
+        
+        # Méthode 2 : DÉSACTIVÉE - Ne pas utiliser current_pan car il change à cause de la compensation LFO
+        # Cela créerait une boucle de rétroaction (serpent qui se mord la queue)
+        # On se fie uniquement aux offsets joystick pour détecter les mouvements utilisateur
+        
+        # Le joystick est actif uniquement si les offsets joystick indiquent un mouvement
+        joystick_active = joystick_active_by_offset
+        
+        # #region agent log
+        try:
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"focus_ui_pyside6_standalone.py:4540","message":"Détection joystick","data":{"joystick_pan_offset":joystick_pan_offset,"initial_offset":initial_offset,"offset_delta":offset_delta,"abs_offset":abs(joystick_pan_offset),"threshold":JOYSTICK_THRESHOLD,"joystick_active_by_offset":joystick_active_by_offset,"joystick_active_by_pan":joystick_active_by_pan,"joystick_active":joystick_active,"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_change_from_base":pan_change_from_base},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        if joystick_active:
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,D","location":"focus_ui_pyside6_standalone.py:4580","message":"Joystick actif détecté","data":{"joystick_pan_offset":joystick_pan_offset,"initial_offset":initial_offset,"offset_delta":offset_delta,"current_pan":current_pan,"lfo_last_pan_base":self.lfo_last_pan_base,"pan_delta":abs(current_pan - self.lfo_last_pan_base) if self.lfo_last_pan_base else None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            # Le joystick est actif, c'est un mouvement utilisateur
+            # Vérifier que le changement de pan est significatif pour éviter les mises à jour continues
+            # dues au bruit ou aux petites variations
+            MIN_PAN_CHANGE = 0.02  # Seuil minimum de changement de pan (2%) pour déclencher une mise à jour
+            old_pan = self.lfo_base_position["pan"] if self.lfo_base_position else None
+            pan_change = abs(current_pan - old_pan) if old_pan is not None else 1.0  # Si pas de base, considérer comme changement significatif
+            
+            if pan_change < MIN_PAN_CHANGE:
+                # Le changement de pan est trop petit, ignorer pour éviter les mises à jour continues
+                # #region agent log
+                try:
+                    with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"focus_ui_pyside6_standalone.py:4643","message":"Changement pan trop petit, ignoré","data":{"pan_change":pan_change,"min_pan_change":MIN_PAN_CHANGE,"current_pan":current_pan,"old_pan":old_pan},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+                return  # Ne pas mettre à jour si le changement est trop petit
+            
+            # Mouvement utilisateur détecté - mise à jour immédiate
+            pan_changed = True
+            pan_delta = pan_change
+            
+            # CORRECTION: Ne pas utiliser current_pan qui inclut déjà la compensation LFO
+            # Utiliser plutôt la position de base originale + l'offset joystick UI
+            # pour calculer la nouvelle position de base
+            base_pan_original = self.lfo_base_position["pan"]
+            pan_offset_ui = getattr(self, 'lfo_current_joystick_pan_offset', 0.0)
+            
+            # La nouvelle base pan est l'ancienne base + l'offset joystick UI
+            # (pas current_pan qui inclut la compensation LFO)
+            new_base_pan = base_pan_original + pan_offset_ui
+            new_base_pan = max(0.0, min(1.0, new_base_pan))  # Clamper entre 0.0 et 1.0
+            
+            self.lfo_base_position["pan"] = new_base_pan
+            self.lfo_last_pan_base = new_base_pan
+            
+            # #region agent log
+            try:
+                with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,D","location":"focus_ui_pyside6_standalone.py:4625","message":"Mouvement utilisateur détecté, mise à jour pan","data":{"joystick_pan_offset":joystick_pan_offset,"old_base_pan":base_pan_original,"pan_offset_ui":pan_offset_ui,"new_base_pan":new_base_pan,"current_pan":current_pan},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # Recalculer immédiatement les positions attendues (plus/minus) pour que la plage attendue
+            # soit basée sur la nouvelle base pan
+            if self.lfo_base_position:
+                base_slide = self.lfo_base_position["slide"]
+                base_tilt = self.lfo_base_position.get("tilt", 0.5)
+                base_zoom = self.lfo_base_position.get("zoom", 0.0)
+                # Utiliser le pan offset actuel depuis le joystick UI pour adapter la compensation
+                pan_offset = getattr(self, 'lfo_current_joystick_pan_offset', 0.0)
+                _, _, position_plus, position_minus = self._calculate_lfo_sequence(
+                    base_slide, self.lfo_base_position["pan"], base_tilt, base_zoom, pan_offset=pan_offset
+                )
+                self.lfo_position_plus = position_plus
+                self.lfo_position_minus = position_minus
+            
+            logger.info(f"LFO: Changement pan utilisateur détecté (joystick offset: {joystick_pan_offset:.3f}, base pan: {new_base_pan:.3f})")
         
         # Si un changement est détecté, déclencher le debounce
         if param_changed or pan_changed:
@@ -4605,15 +4844,15 @@ class MainWindow(QMainWindow):
             if self.lfo_debounce_timer:
                 self.lfo_debounce_timer.stop()
             
-            # Créer un nouveau debounce timer (300ms)
+            # Créer un nouveau debounce timer (150ms, réduit pour plus de réactivité)
             if self.lfo_debounce_timer is None:
                 self.lfo_debounce_timer = QTimer()
                 self.lfo_debounce_timer.setSingleShot(True)
                 self.lfo_debounce_timer.timeout.connect(self._trigger_lfo_update)
             
             self.lfo_update_pending = True
-            self.lfo_debounce_timer.start(300)  # 300ms debounce
-            logger.debug(f"LFO: Debounce démarré (300ms)")
+            self.lfo_debounce_timer.start(150)  # 150ms debounce (réduit de 300ms pour plus de réactivité)
+            logger.debug(f"LFO: Debounce démarré (150ms)")
     
     def update_lfo_oscillation(self):
         """
@@ -4654,6 +4893,14 @@ class MainWindow(QMainWindow):
     
     def toggle_lfo(self):
         """Bascule l'état du LFO (ON/OFF)."""
+        # #region agent log
+        try:
+            import json, time
+            with open('/Users/laurenteyen/Documents/cursor/FocusBMrestAPI1/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"focus_ui_pyside6_standalone.py:4732","message":"toggle_lfo appelé","data":{"lfo_active":self.lfo_active,"lfo_panel_exists":self.lfo_panel is not None},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         if self.lfo_active:
             self.stop_lfo()
         else:
@@ -4662,7 +4909,7 @@ class MainWindow(QMainWindow):
     def create_lfo_panel(self):
         """Crée le panneau de contrôle LFO (Low Frequency Oscillator)."""
         panel = QWidget()
-        panel_width = self._scale_value(200)  # Élargi
+        panel_width = self._scale_value(300)  # Élargi pour workspace 2
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -4717,7 +4964,11 @@ class MainWindow(QMainWindow):
         amplitude_slider = QSlider(Qt.Horizontal)
         amplitude_slider.setMinimum(0)
         amplitude_slider.setMaximum(1000)  # 0-1000 pour avoir 0.000-1.000 avec 3 décimales
-        amplitude_slider.setValue(0)
+        # Initialiser avec une valeur par défaut raisonnable (20% = 0.2)
+        default_amplitude_value = int(self.lfo_amplitude * 1000) if self.lfo_amplitude > 0 else 200
+        amplitude_slider.setValue(default_amplitude_value)
+        # Mettre à jour lfo_amplitude avec la valeur initiale
+        self.lfo_amplitude = default_amplitude_value / 1000.0
         amplitude_slider.setStyleSheet(self._scale_style("""
             QSlider::groove:horizontal {
                 background: #333;
@@ -7187,6 +7438,84 @@ class MainWindow(QMainWindow):
                 not cam_data.recall_scope['slider']
             )
             
+            # NOUVEAU: Si LFO actif et preset contient des valeurs slider, recalculer la séquence LFO
+            if self.lfo_active and should_send_slider and slider_values:
+                slider_controller = self.slider_controllers.get(self.active_camera_id)
+                if slider_controller and slider_controller.is_configured():
+                    # 1. BAKER: Intégrer les offsets actuels dans la position de base
+                    if slider_controller.bake_offsets(silent=True):
+                        logger.debug(f"LFO: Offsets 'bakeés' avant activation preset {preset_number}")
+                    
+                    # 2. Extraire les valeurs slider du preset (déjà en 0.0-1.0)
+                    preset_pan = slider_values.get('pan')
+                    preset_tilt = slider_values.get('tilt')
+                    preset_zoom = slider_values.get('zoom_motor')  # zoom_motor dans preset -> zoom dans API
+                    preset_slide = slider_values.get('slide')
+                    
+                    # 3. Utiliser les valeurs du preset si présentes, sinon garder les valeurs actuelles
+                    if preset_pan is not None:
+                        base_pan = max(0.0, min(1.0, preset_pan))  # Clamp pour sécurité
+                    else:
+                        base_pan = self.lfo_base_position.get("pan", 0.5)
+                    
+                    if preset_tilt is not None:
+                        base_tilt = max(0.0, min(1.0, preset_tilt))
+                    else:
+                        base_tilt = self.lfo_base_position.get("tilt", 0.5)
+                    
+                    if preset_zoom is not None:
+                        base_zoom = max(0.0, min(1.0, preset_zoom))
+                    else:
+                        base_zoom = self.lfo_base_position.get("zoom", 0.0)
+                    
+                    if preset_slide is not None:
+                        base_slide = max(0.0, min(1.0, preset_slide))
+                    else:
+                        base_slide = self.lfo_base_position.get("slide", 0.5)
+                    
+                    # 4. Mettre à jour la position de base LFO avec les valeurs du preset
+                    self.lfo_base_position["pan"] = base_pan
+                    self.lfo_base_position["tilt"] = base_tilt
+                    self.lfo_base_position["zoom"] = base_zoom
+                    self.lfo_base_position["slide"] = base_slide
+                    
+                    # 5. Réinitialiser l'offset joystick car la position est maintenant "bakeée"
+                    self.lfo_current_joystick_pan_offset = 0.0
+                    
+                    # 6. Recalculer la séquence LFO avec la nouvelle base (preset)
+                    pan_offset = 0.0  # Pas d'offset car la position est "bakeée"
+                    sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(
+                        base_slide, base_pan, base_tilt, base_zoom, pan_offset=pan_offset
+                    )
+                    
+                    # 7. Mettre à jour les positions stockées
+                    self.lfo_position_plus = position_plus
+                    self.lfo_position_minus = position_minus
+                    
+                    # 8. Envoyer la nouvelle séquence
+                    if self.lfo_sequence_initialized:
+                        # Utiliser PATCH pour mettre à jour sans interruption
+                        success = slider_controller.update_interpolation_sequence(
+                            sequence_points,
+                            recalculate_duration=True,
+                            duration=self.lfo_speed,
+                            silent=True
+                        )
+                        if not success:
+                            # Si PATCH échoue, utiliser POST et redémarrer
+                            if slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=True):
+                                slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=True)
+                                self.lfo_sequence_initialized = True
+                    else:
+                        # Première fois : utiliser POST
+                        if slider_controller.send_interpolation_sequence(sequence_points, self.lfo_speed, silent=True):
+                            slider_controller.set_auto_interpolation(enable=True, duration=self.lfo_speed, silent=True)
+                            self.lfo_sequence_initialized = True
+                    
+                    logger.info(f"LFO: Séquence recalculée avec preset {preset_number} comme nouvelle base")
+                    # 9. Empêcher l'envoi normal de move_axes() car la séquence LFO gère déjà le mouvement
+                    should_send_slider = False
+            
             # Arrêter toute transition en cours
             if self.preset_transition_timer:
                 self.preset_transition_timer.stop()
@@ -7207,8 +7536,7 @@ class MainWindow(QMainWindow):
             if should_send_slider:
                 slider_controller = self.slider_controllers.get(self.active_camera_id)
                 if slider_controller and slider_controller.is_configured():
-                    # Les valeurs pan/tilt dans les presets sont en -1.0 à +1.0
-                    # move_axes() les convertira automatiquement en 0.0-1.0 pour l'API
+                    # Les valeurs pan/tilt dans les presets sont déjà en 0.0-1.0
                     pan = slider_values.get('pan')
                     tilt = slider_values.get('tilt')
                     zoom = slider_values.get('zoom_motor')  # zoom_motor dans preset -> zoom dans API

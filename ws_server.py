@@ -212,3 +212,7 @@ class CompanionWsServer(QObject):
         logger.debug(f"Ack envoyé à {client.peerAddress().toString()}: ok={ok}, error={error}")
 
 
+
+
+
+
