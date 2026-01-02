@@ -16,10 +16,11 @@ from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
-    QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget
+    QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
-from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent
+from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent, QDoubleValidator
 
 from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSocketClient
 from state_store import StateStore
@@ -27,6 +28,8 @@ from ws_server import CompanionWsServer
 from command_handler import CommandHandler
 from slider_controller import SliderController
 from slider_websocket_client import SliderWebSocketClient
+from focus_lut import FocusLUT
+from zoom_lut import ZoomLUT
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -474,6 +477,9 @@ class CameraData:
     supported_shutter_speeds: list = field(default_factory=list)
     initial_values_received: bool = False  # True si les valeurs initiales ont été reçues du WebSocket
     
+    # Sequences
+    sequences: list = field(default_factory=list)  # Liste des séquences sauvegardées
+    
     # Presets
     presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     active_preset: Optional[int] = None  # Numéro du preset actuellement actif (1-10)
@@ -888,6 +894,18 @@ class MainWindow(QMainWindow):
         # Recall scope checkboxes (initialisé dans create_presets_panel)
         self.recall_scope_checkboxes = {}
         
+        # Champs distance pour les presets (initialisé dans create_presets_panel)
+        self.preset_distance_inputs: list = []
+        
+        # Sequences data (20 séquences)
+        self.sequences_data: list = [{
+            "name": "",
+            "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+            "duration": 5.0,
+            "baked": False
+        } for _ in range(20)]
+        self.sequences_table: Optional[QTableWidget] = None
+        
         # Slider controllers pour chaque caméra (initialisés après chargement de la config)
         self.slider_controllers: Dict[int, Optional[SliderController]] = {}
         
@@ -927,6 +945,15 @@ class MainWindow(QMainWindow):
         self.lfo_debounce_timer: Optional[QTimer] = None  # Timer pour debounce des changements de paramètres
         self.lfo_sequence_initialized: bool = False  # Flag pour savoir si la séquence a été initialisée (POST vs PATCH)
         self.lfo_initial_joystick_pan_offset: float = 0.0  # Offset joystick initial capturé au démarrage du LFO
+        
+        # LUT Focus pour synchronisation automatique du D du LFO
+        self.focus_lut = FocusLUT("focuslut.json")
+        self.lfo_auto_sync_distance: bool = True  # Synchronisation automatique activée par défaut
+        self.last_synced_focus_value: Optional[float] = None  # Pour éviter les mises à jour continues
+        
+        # LUT Zoom pour synchronisation automatique du D du LFO
+        self.zoom_lut = ZoomLUT("zoomlut.json")
+        self.last_synced_zoom_value: Optional[float] = None  # Pour éviter les mises à jour continues
         
         # Références aux faders du workspace 2
         self.workspace_2_zoom_fader: Optional[QSlider] = None
@@ -1025,6 +1052,10 @@ class MainWindow(QMainWindow):
                     if "presets" not in cam_config:
                         cam_config["presets"] = {}
                     
+                    # Initialiser les séquences vides si absentes
+                    if "sequences" not in cam_config:
+                        cam_config["sequences"] = []
+                    
                     # Charger recall_scope avec valeurs par défaut si absent
                     default_recall_scope = {
                         'focus': False,
@@ -1049,6 +1080,7 @@ class MainWindow(QMainWindow):
                         password=cam_config.get("password", ""),
                         slider_ip=cam_config.get("slider_ip", ""),
                         presets=cam_config.get("presets", {}),
+                        sequences=cam_config.get("sequences", []),
                         recall_scope=recall_scope,
                         crossfade_duration=float(crossfade_duration)
                     )
@@ -1083,6 +1115,7 @@ class MainWindow(QMainWindow):
                     "password": cam_data.password,
                     "slider_ip": cam_data.slider_ip,
                     "presets": cam_data.presets,
+                    "sequences": cam_data.sequences,
                     "recall_scope": cam_data.recall_scope,
                     "crossfade_duration": cam_data.crossfade_duration
                 }
@@ -1560,6 +1593,14 @@ class MainWindow(QMainWindow):
             self.cleanfeed_toggle.setText(f"Cleanfeed\n{'ON' if cam_data.cleanfeed_enabled else 'OFF'}")
             self.cleanfeed_toggle.blockSignals(False)
             self.cleanfeed_enabled = cam_data.cleanfeed_enabled
+        
+        # Mettre à jour les champs distance des presets
+        if hasattr(self, 'preset_distance_inputs') and len(self.preset_distance_inputs) > 0:
+            self._update_preset_distance_inputs()
+        
+        # Mettre à jour les séquences
+        if hasattr(self, 'sequences_table') and self.sequences_table:
+            self.load_sequences_from_config()
     
     def _scale_value(self, value: float) -> int:
         """Helper pour obtenir une valeur scaled."""
@@ -2172,6 +2213,19 @@ class MainWindow(QMainWindow):
         """))
         self.autofocus_btn.clicked.connect(lambda: self.do_autofocus())
         layout.addWidget(self.autofocus_btn)
+        
+        # Label pour afficher la distance convertie en mètres (via LUT)
+        self.focus_distance_label = QLabel("Distance: -- m")
+        self.focus_distance_label.setAlignment(Qt.AlignCenter)
+        self.focus_distance_label.setStyleSheet(self._scale_style("""
+            QLabel {
+                color: #aaa;
+                font-size: 10px;
+                margin-top: 5px;
+                padding: 5px;
+            }
+        """))
+        layout.addWidget(self.focus_distance_label)
         
         # Stocker slider_container pour pouvoir le forcer à une hauteur
         panel.slider_container = slider_container
@@ -3804,6 +3858,10 @@ class MainWindow(QMainWindow):
         lfo_panel = self.create_lfo_panel()
         layout.addWidget(lfo_panel)
         
+        # Créer le panneau Sequences
+        sequences_panel = self.create_sequences_panel()
+        layout.addWidget(sequences_panel)
+        
         layout.addStretch()
         
         return page
@@ -4864,6 +4922,16 @@ class MainWindow(QMainWindow):
         # Cette fonction n'est plus nécessaire mais conservée pour compatibilité
         pass
     
+    def on_lfo_sync_toggle_changed(self, checked: bool):
+        """Gère le changement du toggle de synchronisation automatique D ↔ Focus."""
+        self.lfo_auto_sync_distance = checked
+        
+        # Mettre à jour le texte du bouton
+        if hasattr(self, 'lfo_panel') and self.lfo_panel and hasattr(self.lfo_panel, 'sync_toggle_btn'):
+            self.lfo_panel.sync_toggle_btn.setText(f"Sync D↔Focus: {'ON' if checked else 'OFF'}")
+        
+        logger.info(f"LFO: Synchronisation automatique D ↔ Focus {'activée' if checked else 'désactivée'}")
+    
     def on_lfo_amplitude_changed(self, value: int):
         """Gère le changement de l'amplitude LFO."""
         # Convertir de 0-1000 à 0.0-1.0
@@ -4890,6 +4958,63 @@ class MainWindow(QMainWindow):
             self.lfo_panel.distance_value_label.setText(f"{self.lfo_distance:.1f} m")
         
         # La surveillance détectera automatiquement le changement et mettra à jour la séquence
+    
+    def sync_lfo_distance_from_focus(self, focus_normalised: float):
+        """
+        Synchronise automatiquement le D du LFO avec le focus.
+        
+        Args:
+            focus_normalised: Valeur normalisée du focus (0.0-1.0)
+        """
+        if not self.lfo_auto_sync_distance:
+            return
+        
+        # Éviter les mises à jour continues si la valeur n'a pas changé significativement (seuil 0.001 = 0.1%)
+        if self.last_synced_focus_value is not None:
+            if abs(focus_normalised - self.last_synced_focus_value) < 0.001:
+                return
+        
+        # Obtenir le zoom actuel pour la conversion
+        zoom_normalised = None
+        cam_data = self.get_active_camera_data()
+        if cam_data and hasattr(cam_data, 'zoom_actual_value') and cam_data.zoom_actual_value is not None:
+            zoom_normalised = cam_data.zoom_actual_value
+        
+        # Convertir normalised → distance en mètres via la LUT (avec zoom si disponible)
+        distance_meters = self.focus_lut.normalised_to_distance_with_zoom(focus_normalised, zoom_normalised)
+        if distance_meters is None:
+            logger.debug("LFO: Impossible de convertir focus en distance (LUT non disponible)")
+            # Mettre à jour le label même si la conversion échoue
+            if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
+                self.focus_distance_label.setText("Distance: -- m")
+            return
+        
+        # Mettre à jour le label d'affichage de la distance
+        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
+            self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
+        
+        # Clamper la distance entre 0.5 et 20.0 mètres (plage du LFO)
+        new_distance = max(0.5, min(20.0, distance_meters))
+        
+        # Mettre à jour seulement si le changement est significatif (> 0.01m)
+        if abs(new_distance - self.lfo_distance) > 0.01:
+            self.lfo_distance = new_distance
+            self.last_synced_focus_value = focus_normalised
+            
+            # Mettre à jour le slider UI (valeur slider = distance * 10, plage 5-200)
+            if self.lfo_panel:
+                distance_slider_value = int(self.lfo_distance * 10)
+                distance_slider_value = max(5, min(200, distance_slider_value))
+                self.lfo_panel.distance_slider.blockSignals(True)
+                self.lfo_panel.distance_slider.setValue(distance_slider_value)
+                self.lfo_panel.distance_slider.blockSignals(False)
+                self.lfo_panel.distance_value_label.setText(f"{self.lfo_distance:.1f} m")
+            
+            logger.info(f"LFO: Distance synchronisée avec focus: {self.lfo_distance:.1f}m (focus={focus_normalised:.3f})")
+            
+            # Si LFO actif, mettre à jour la séquence
+            if self.lfo_active:
+                self.update_lfo_sequence()
     
     def toggle_lfo(self):
         """Bascule l'état du LFO (ON/OFF)."""
@@ -5081,6 +5206,39 @@ class MainWindow(QMainWindow):
         panel.distance_slider = distance_slider
         panel.distance_value_label = distance_value_label
         
+        # Bouton toggle pour activer/désactiver la synchronisation automatique D ↔ Focus
+        sync_toggle_btn = QPushButton("Sync D↔Focus: ON")
+        sync_toggle_btn.setCheckable(True)
+        sync_toggle_btn.setChecked(self.lfo_auto_sync_distance)
+        sync_toggle_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 2px solid #555;
+                border-radius: 6px;
+                background-color: #2a5a2a;
+                color: #fff;
+            }
+            QPushButton:checked {
+                background-color: #2a5a2a;
+                border-color: #4a8a4a;
+            }
+            QPushButton:!checked {
+                background-color: #5a2a2a;
+                border-color: #8a4a4a;
+            }
+            QPushButton:hover {
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #3a3a3a;
+            }
+        """))
+        sync_toggle_btn.toggled.connect(self.on_lfo_sync_toggle_changed)
+        controls_layout.addWidget(sync_toggle_btn)
+        panel.sync_toggle_btn = sync_toggle_btn
+        
         # Bouton ON/OFF
         self.lfo_toggle_btn = QPushButton("OFF")
         self.lfo_toggle_btn.setStyleSheet(self._scale_style("""
@@ -5123,6 +5281,661 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         
         return panel
+    
+    def create_sequences_panel(self):
+        """Crée le panneau Sequences avec un tableau de 20 séquences."""
+        panel = QWidget()
+        # Doubler la largeur du panneau
+        panel_width = self._scale_value(600)  # Doublé (était ~300)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(self._scale_value(15), self._scale_value(15), 
+                                 self._scale_value(15), self._scale_value(15))
+        layout.setSpacing(self._scale_value(10))
+        
+        # Titre
+        title = QLabel("Sequences")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
+        layout.addWidget(title)
+        
+        # Tableau
+        table = QTableWidget(20, 8)
+        table.setHorizontalHeaderLabels(["Name", "0%", "25%", "50%", "75%", "100%", "Duration", "Bake"])
+        table.horizontalHeader().setStretchLastSection(False)
+        table.verticalHeader().setVisible(True)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        # Rendre l'en-tête vertical cliquable
+        table.verticalHeader().setSectionsClickable(True)
+        table.setAlternatingRowColors(True)
+        # Activer le menu contextuel
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+        table.customContextMenuRequested.connect(self.on_sequence_context_menu)
+        table.setStyleSheet(self._scale_style("""
+            QTableWidget {
+                background-color: #2a2a2a;
+                border: 1px solid #555;
+                gridline-color: #444;
+                color: #fff;
+            }
+            QTableWidget::item {
+                padding: 4px;
+            }
+            QTableWidget::item:selected {
+                background-color: #4a4a4a;
+            }
+            QHeaderView::section {
+                background-color: #333;
+                color: #fff;
+                padding: 6px;
+                border: 1px solid #555;
+                font-weight: bold;
+            }
+        """))
+        
+        # Configurer les colonnes (largeurs doublées)
+        table.setColumnWidth(0, self._scale_value(200))  # Name (doublé)
+        for i in range(1, 6):  # 0%, 25%, 50%, 75%, 100%
+            table.setColumnWidth(i, self._scale_value(120))  # Doublé
+        table.setColumnWidth(6, self._scale_value(160))  # Duration (doublé)
+        table.setColumnWidth(7, self._scale_value(100))  # Bake
+        
+        # Connecter le clic sur l'en-tête vertical (numéro de ligne)
+        table.verticalHeader().sectionClicked.connect(self.on_sequence_row_clicked)
+        
+        # Connecter le double-clic sur la colonne Name
+        table.cellDoubleClicked.connect(self.on_sequence_cell_double_clicked)
+        
+        # Créer les widgets pour chaque cellule
+        for row in range(20):
+            # Colonne Name - rendre cliquable pour envoyer
+            name_edit = QLineEdit()
+            name_edit.setPlaceholderText(f"Seq {row + 1}")
+            name_edit.setStyleSheet(self._scale_style("""
+                QLineEdit {
+                    background-color: #2a2a2a;
+                    border: 1px solid #555;
+                    color: #fff;
+                    padding: 4px;
+                    cursor: pointer;
+                }
+                QLineEdit:hover {
+                    border: 1px solid #0a5;
+                    background-color: #3a3a3a;
+                }
+            """))
+            table.setCellWidget(row, 0, name_edit)
+            name_edit.textChanged.connect(lambda text, r=row: self.on_sequence_name_changed(r, text))
+            
+            # Colonnes 0%, 25%, 50%, 75%, 100%
+            fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
+            for col_idx, fraction in enumerate(fractions, start=1):
+                preset_edit = QLineEdit()
+                preset_edit.setPlaceholderText("Preset")
+                preset_edit.setStyleSheet(self._scale_style("""
+                    QLineEdit {
+                        background-color: #2a2a2a;
+                        border: 1px solid #555;
+                        color: #fff;
+                        padding: 4px;
+                        text-align: center;
+                    }
+                    QLineEdit:focus {
+                        border: 1px solid #0a5;
+                    }
+                """))
+                table.setCellWidget(row, col_idx, preset_edit)
+                preset_edit.editingFinished.connect(lambda r=row, f=fraction: self.on_sequence_preset_changed(r, f))
+            
+            # Colonne Duration
+            duration_edit = QLineEdit()
+            duration_edit.setPlaceholderText("5.0")
+            duration_edit.setText("5.0")
+            validator = QDoubleValidator(0.1, 600.0, 1)
+            validator.setNotation(QDoubleValidator.StandardNotation)
+            duration_edit.setValidator(validator)
+            duration_edit.setStyleSheet(self._scale_style("""
+                QLineEdit {
+                    background-color: #2a2a2a;
+                    border: 1px solid #555;
+                    color: #fff;
+                    padding: 4px;
+                    text-align: center;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #0a5;
+                }
+            """))
+            table.setCellWidget(row, 6, duration_edit)
+            duration_edit.editingFinished.connect(lambda r=row: self.on_sequence_duration_changed(r))
+            
+            # Colonne Bake - bouton qui devient rouge quand bakeé
+            bake_btn = QPushButton("Bake")
+            bake_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 6px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    background-color: #5a2a;
+                    color: #fff;
+                }
+                QPushButton:hover {
+                    background-color: #7a4a;
+                }
+                QPushButton:pressed {
+                    background-color: #4a2a;
+                }
+            """))
+            bake_btn.clicked.connect(lambda checked, r=row: self.bake_sequence(r))
+            table.setCellWidget(row, 7, bake_btn)
+            # Stocker la référence au bouton pour pouvoir changer sa couleur
+            bake_btn.setProperty("row_index", row)
+        
+        layout.addWidget(table)
+        self.sequences_table = table
+        
+        # Bouton Stop global
+        stop_btn = QPushButton("STOP")
+        stop_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 12px;
+                font-size: 14px;
+                font-weight: bold;
+                border: 2px solid #f00;
+                border-radius: 6px;
+                background-color: #f00;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #f22;
+                border-color: #f22;
+            }
+            QPushButton:pressed {
+                background-color: #d00;
+                border-color: #d00;
+            }
+        """))
+        stop_btn.clicked.connect(self.stop_sequence)
+        layout.addWidget(stop_btn)
+        
+        # Charger les séquences depuis la config
+        self.load_sequences_from_config()
+        
+        return panel
+    
+    def on_sequence_row_clicked(self, row: int):
+        """Appelé quand on clique sur le numéro de ligne (en-tête vertical)."""
+        if 0 <= row < 20:
+            self.send_sequence(row)
+    
+    def on_sequence_cell_double_clicked(self, row: int, col: int):
+        """Appelé quand on double-clique sur une cellule."""
+        # Si c'est la colonne Name (col 0), envoyer la séquence
+        if col == 0 and 0 <= row < 20:
+            self.send_sequence(row)
+    
+    def on_sequence_context_menu(self, position):
+        """Affiche le menu contextuel pour les séquences."""
+        if not self.sequences_table:
+            return
+        
+        item = self.sequences_table.itemAt(position)
+        if item is None:
+            # Si on clique dans une zone sans item, utiliser la ligne de l'en-tête vertical
+            row = self.sequences_table.rowAt(position.y())
+        else:
+            row = item.row()
+        
+        if row < 0 or row >= 20:
+            return
+        
+        menu = QMenu(self)
+        bake_action = menu.addAction("Bake")
+        bake_action.triggered.connect(lambda checked, r=row: self.bake_sequence(r))
+        
+        menu.exec_(self.sequences_table.viewport().mapToGlobal(position))
+    
+    def on_sequence_name_changed(self, row: int, text: str):
+        """Appelé quand le nom d'une séquence change."""
+        if 0 <= row < len(self.sequences_data):
+            self.sequences_data[row]["name"] = text
+            self.save_sequences_to_config()
+    
+    def on_sequence_preset_changed(self, row: int, fraction: float):
+        """Appelé quand un preset d'une séquence change."""
+        if not self.sequences_table or row < 0 or row >= 20:
+            return
+        
+        # Trouver la colonne correspondant à la fraction
+        fraction_to_col = {0.0: 1, 0.25: 2, 0.5: 3, 0.75: 4, 1.0: 5}
+        col = fraction_to_col.get(fraction)
+        if col is None:
+            return
+        
+        widget = self.sequences_table.cellWidget(row, col)
+        if not isinstance(widget, QLineEdit):
+            return
+        
+        text = widget.text().strip()
+        
+        if 0 <= row < len(self.sequences_data):
+            if text:
+                # Vérifier si c'est un numéro de preset (1-10)
+                try:
+                    preset_num = int(text)
+                    if 1 <= preset_num <= 10:
+                        self.sequences_data[row]["points"][fraction] = {"type": "preset", "value": preset_num}
+                        # Mettre à jour l'affichage
+                        widget.setStyleSheet(self._scale_style("""
+                            QLineEdit {
+                                background-color: #2a2a2a;
+                                border: 1px solid #555;
+                                color: #fff;
+                                padding: 4px;
+                                text-align: center;
+                            }
+                            QLineEdit:focus {
+                                border: 1px solid #0a5;
+                            }
+                        """))
+                    else:
+                        # Valeur invalide
+                        widget.clear()
+                        self.sequences_data[row]["points"][fraction] = None
+                except ValueError:
+                    # Ce n'est pas un nombre, peut-être une valeur bakeée (✗)
+                    if text == "✗" or text == "B":
+                        # C'est déjà bakeé, ne rien faire
+                        pass
+                    else:
+                        widget.clear()
+                        self.sequences_data[row]["points"][fraction] = None
+            else:
+                self.sequences_data[row]["points"][fraction] = None
+            
+            self.save_sequences_to_config()
+    
+    def on_sequence_duration_changed(self, row: int):
+        """Appelé quand la durée d'une séquence change."""
+        if not self.sequences_table or row < 0 or row >= 20:
+            return
+        
+        widget = self.sequences_table.cellWidget(row, 6)
+        if not isinstance(widget, QLineEdit):
+            return
+        
+        text = widget.text().strip()
+        
+        if 0 <= row < len(self.sequences_data):
+            try:
+                duration = float(text.replace(',', '.'))
+                if 0.1 <= duration <= 600.0:
+                    self.sequences_data[row]["duration"] = duration
+                else:
+                    # Valeur invalide, remettre la valeur précédente
+                    widget.setText(f"{self.sequences_data[row]['duration']:.1f}")
+            except ValueError:
+                # Valeur invalide, remettre la valeur précédente
+                widget.setText(f"{self.sequences_data[row]['duration']:.1f}")
+            
+            self.save_sequences_to_config()
+    
+    def send_sequence(self, row_index: int):
+        """Envoie une séquence au slider."""
+        if row_index < 0 or row_index >= len(self.sequences_data):
+            return
+        
+        cam_data = self.get_active_camera_data()
+        if not cam_data.connected:
+            logger.warning("Impossible d'envoyer la séquence : caméra non connectée")
+            return
+        
+        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        if not slider_controller or not slider_controller.is_configured():
+            logger.warning("Impossible d'envoyer la séquence : slider non configuré")
+            return
+        
+        sequence = self.sequences_data[row_index]
+        points = []
+        
+        # Construire les points de la séquence
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            point_data = sequence["points"].get(fraction)
+            if point_data is None:
+                continue  # Case vide, on ignore
+            
+            if point_data["type"] == "preset":
+                # Récupérer les valeurs du preset
+                preset_num = point_data["value"]
+                preset_key = f"preset_{preset_num}"
+                if preset_key not in cam_data.presets:
+                    logger.warning(f"Preset {preset_num} introuvable pour la séquence {row_index + 1}")
+                    continue
+                
+                preset_data = cam_data.presets[preset_key]
+                point = {
+                    "fraction": fraction,
+                    "pan": preset_data.get("pan", 0.5),
+                    "tilt": preset_data.get("tilt", 0.5),
+                    "zoom": preset_data.get("zoom_motor", 0.0),
+                    "slide": preset_data.get("slide", 0.5)
+                }
+            elif point_data["type"] == "baked":
+                # Utiliser directement les valeurs bakeées
+                baked_values = point_data["value"]
+                point = {
+                    "fraction": fraction,
+                    "pan": baked_values.get("pan", 0.5),
+                    "tilt": baked_values.get("tilt", 0.5),
+                    "zoom": baked_values.get("zoom", 0.0),
+                    "slide": baked_values.get("slide", 0.5)
+                }
+            else:
+                continue
+            
+            points.append(point)
+        
+        if not points:
+            logger.warning(f"Séquence {row_index + 1} vide, rien à envoyer")
+            return
+        
+        # Trier les points par fraction
+        points.sort(key=lambda p: p["fraction"])
+        
+        # Envoyer la séquence
+        duration = sequence.get("duration", 5.0)
+        if slider_controller.send_interpolation_sequence(points, duration, silent=False):
+            # Activer l'interpolation automatique
+            slider_controller.set_auto_interpolation(enable=True, duration=duration, silent=False)
+            logger.info(f"Séquence {row_index + 1} ({sequence.get('name', 'Sans nom')}) envoyée avec {len(points)} points, durée {duration}s")
+        else:
+            logger.error(f"Échec de l'envoi de la séquence {row_index + 1}")
+    
+    def bake_sequence(self, row_index: int):
+        """Bake une séquence en remplaçant les références aux presets par les valeurs réelles."""
+        if row_index < 0 or row_index >= len(self.sequences_data):
+            return
+        
+        cam_data = self.get_active_camera_data()
+        sequence = self.sequences_data[row_index]
+        baked_count = 0
+        
+        # Pour chaque point de la séquence
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            point_data = sequence["points"].get(fraction)
+            if point_data is None:
+                continue
+            
+            if point_data["type"] == "preset":
+                # Récupérer les valeurs du preset
+                preset_num = point_data["value"]
+                preset_key = f"preset_{preset_num}"
+                if preset_key not in cam_data.presets:
+                    logger.warning(f"Preset {preset_num} introuvable pour le bake de la séquence {row_index + 1}")
+                    continue
+                
+                preset_data = cam_data.presets[preset_key]
+                # Remplacer par une valeur bakeée
+                sequence["points"][fraction] = {
+                    "type": "baked",
+                    "value": {
+                        "pan": preset_data.get("pan", 0.5),
+                        "tilt": preset_data.get("tilt", 0.5),
+                        "zoom": preset_data.get("zoom_motor", 0.0),
+                        "slide": preset_data.get("slide", 0.5)
+                    }
+                }
+                baked_count += 1
+                
+                # Mettre à jour l'affichage dans le tableau
+                fraction_to_col = {0.0: 1, 0.25: 2, 0.5: 3, 0.75: 4, 1.0: 5}
+                col = fraction_to_col.get(fraction)
+                if col is not None and self.sequences_table:
+                    widget = self.sequences_table.cellWidget(row_index, col)
+                    if isinstance(widget, QLineEdit):
+                        widget.setText("✗")
+                        widget.setStyleSheet(self._scale_style("""
+                            QLineEdit {
+                                background-color: #3a2a2a;
+                                border: 1px solid #8a4a4a;
+                                color: #faa;
+                                padding: 4px;
+                                text-align: center;
+                            }
+                            QLineEdit:focus {
+                                border: 1px solid #faa;
+                            }
+                        """))
+        
+        if baked_count > 0:
+            # Vérifier si tous les points sont bakeés
+            all_baked = all(
+                p is None or (isinstance(p, dict) and p.get("type") == "baked")
+                for p in sequence["points"].values()
+            )
+            sequence["baked"] = all_baked
+            
+            # Mettre à jour la couleur du bouton Bake (rouge si bakeé)
+            if self.sequences_table:
+                bake_btn = self.sequences_table.cellWidget(row_index, 7)
+                if isinstance(bake_btn, QPushButton):
+                    if sequence["baked"]:
+                        # Bouton rouge quand bakeé
+                        bake_btn.setStyleSheet(self._scale_style("""
+                            QPushButton {
+                                padding: 6px;
+                                font-size: 10px;
+                                font-weight: bold;
+                                border: 1px solid #f00;
+                                border-radius: 4px;
+                                background-color: #f00;
+                                color: #fff;
+                            }
+                            QPushButton:hover {
+                                background-color: #f22;
+                            }
+                            QPushButton:pressed {
+                                background-color: #d00;
+                            }
+                        """))
+                    else:
+                        # Bouton normal quand pas complètement bakeé
+                        bake_btn.setStyleSheet(self._scale_style("""
+                            QPushButton {
+                                padding: 6px;
+                                font-size: 10px;
+                                font-weight: bold;
+                                border: 1px solid #555;
+                                border-radius: 4px;
+                                background-color: #5a2a;
+                                color: #fff;
+                            }
+                            QPushButton:hover {
+                                background-color: #7a4a;
+                            }
+                            QPushButton:pressed {
+                                background-color: #4a2a;
+                            }
+                        """))
+            
+            self.save_sequences_to_config()
+            logger.info(f"Séquence {row_index + 1} bakeée : {baked_count} point(s) converti(s)")
+        else:
+            logger.info(f"Séquence {row_index + 1} : aucun preset à baker")
+    
+    def load_sequences_from_config(self):
+        """Charge les séquences depuis la config et met à jour le tableau."""
+        cam_data = self.get_active_camera_data()
+        if not self.sequences_table:
+            return
+        
+        # Charger depuis cam_data.sequences si disponible
+        if hasattr(cam_data, 'sequences') and cam_data.sequences:
+            # S'assurer qu'on a 20 séquences
+            while len(cam_data.sequences) < 20:
+                cam_data.sequences.append({
+                    "name": "",
+                    "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                    "duration": 5.0,
+                    "baked": False
+                })
+            
+            # Copier les séquences (on prend les 20 premières)
+            self.sequences_data = []
+            for i in range(20):
+                if i < len(cam_data.sequences):
+                    # Faire une copie profonde pour éviter les références partagées
+                    seq = cam_data.sequences[i].copy()
+                    seq["points"] = seq["points"].copy()
+                    self.sequences_data.append(seq)
+                else:
+                    self.sequences_data.append({
+                        "name": "",
+                        "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                        "duration": 5.0,
+                        "baked": False
+                    })
+        else:
+            # Initialiser avec des séquences vides si pas de données
+            if not hasattr(cam_data, 'sequences'):
+                cam_data.sequences = []
+            while len(cam_data.sequences) < 20:
+                cam_data.sequences.append({
+                    "name": "",
+                    "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                    "duration": 5.0,
+                    "baked": False
+                })
+            # Copier dans self.sequences_data
+            self.sequences_data = []
+            for seq in cam_data.sequences[:20]:
+                seq_copy = seq.copy()
+                seq_copy["points"] = seq["points"].copy()
+                self.sequences_data.append(seq_copy)
+        
+        # Mettre à jour le tableau
+        for row in range(20):
+            if row >= len(self.sequences_data):
+                break
+            
+            sequence = self.sequences_data[row]
+            
+            # Nom
+            name_widget = self.sequences_table.cellWidget(row, 0)
+            if isinstance(name_widget, QLineEdit):
+                name_widget.setText(sequence.get("name", ""))
+            
+            # Points (0%, 25%, 50%, 75%, 100%)
+            fraction_to_col = {0.0: 1, 0.25: 2, 0.5: 3, 0.75: 4, 1.0: 5}
+            for fraction, col in fraction_to_col.items():
+                widget = self.sequences_table.cellWidget(row, col)
+                if isinstance(widget, QLineEdit):
+                    point_data = sequence["points"].get(fraction)
+                    if point_data is None:
+                        widget.clear()
+                    elif point_data["type"] == "preset":
+                        widget.setText(str(point_data["value"]))
+                        widget.setStyleSheet(self._scale_style("""
+                            QLineEdit {
+                                background-color: #2a2a2a;
+                                border: 1px solid #555;
+                                color: #fff;
+                                padding: 4px;
+                                text-align: center;
+                            }
+                            QLineEdit:focus {
+                                border: 1px solid #0a5;
+                            }
+                        """))
+                    elif point_data["type"] == "baked":
+                        widget.setText("✗")
+                        widget.setStyleSheet(self._scale_style("""
+                            QLineEdit {
+                                background-color: #3a2a2a;
+                                border: 1px solid #8a4a4a;
+                                color: #faa;
+                                padding: 4px;
+                                text-align: center;
+                            }
+                            QLineEdit:focus {
+                                border: 1px solid #faa;
+                            }
+                        """))
+            
+            # Durée
+            duration_widget = self.sequences_table.cellWidget(row, 6)
+            if isinstance(duration_widget, QLineEdit):
+                duration_widget.setText(f"{sequence.get('duration', 5.0):.1f}")
+            
+            # Bouton Bake - mettre à jour la couleur selon l'état
+            bake_btn = self.sequences_table.cellWidget(row, 7)
+            if isinstance(bake_btn, QPushButton):
+                if sequence.get("baked", False):
+                    # Bouton rouge quand bakeé
+                    bake_btn.setStyleSheet(self._scale_style("""
+                        QPushButton {
+                            padding: 6px;
+                            font-size: 10px;
+                            font-weight: bold;
+                            border: 1px solid #f00;
+                            border-radius: 4px;
+                            background-color: #f00;
+                            color: #fff;
+                        }
+                        QPushButton:hover {
+                            background-color: #f22;
+                        }
+                        QPushButton:pressed {
+                            background-color: #d00;
+                        }
+                    """))
+                else:
+                    # Bouton normal quand pas bakeé
+                    bake_btn.setStyleSheet(self._scale_style("""
+                        QPushButton {
+                            padding: 6px;
+                            font-size: 10px;
+                            font-weight: bold;
+                            border: 1px solid #555;
+                            border-radius: 4px;
+                            background-color: #5a2a;
+                            color: #fff;
+                        }
+                        QPushButton:hover {
+                            background-color: #7a4a;
+                        }
+                        QPushButton:pressed {
+                            background-color: #4a2a;
+                        }
+                    """))
+    
+    def save_sequences_to_config(self):
+        """Sauvegarde les séquences dans la config."""
+        cam_data = self.get_active_camera_data()
+        cam_data.sequences = self.sequences_data.copy()
+        self.save_cameras_config()
+    
+    def stop_sequence(self):
+        """Arrête l'interpolation automatique du slider."""
+        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        if slider_controller and slider_controller.is_configured():
+            if slider_controller.set_auto_interpolation(enable=False, silent=False):
+                logger.info("Interpolation automatique arrêtée")
+            else:
+                logger.warning("Échec de l'arrêt de l'interpolation automatique")
+        else:
+            logger.warning("Impossible d'arrêter la séquence : slider non configuré")
     
     def create_pan_tilt_matrix_panel(self):
         """Crée le panneau de contrôle Pan/Tilt avec une matrice XY."""
@@ -5244,7 +6057,7 @@ class MainWindow(QMainWindow):
     def create_presets_panel(self):
         """Crée le panneau de presets."""
         panel = QWidget()
-        panel_width = self._scale_value(170)  # Réduit pour optimiser l'espace pour les sliders
+        panel_width = self._scale_value(250)  # Augmenté pour accommoder la colonne distance
         panel.setMinimumWidth(panel_width)
         panel.setMaximumWidth(panel_width)
         panel.setStyleSheet(self._scale_style("""
@@ -5265,7 +6078,7 @@ class MainWindow(QMainWindow):
         presets_label.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
         layout.addWidget(presets_label)
         
-        # Conteneur pour les deux colonnes
+        # Conteneur pour les trois colonnes (Save, Recall, Distance)
         presets_container = QHBoxLayout()
         presets_container.setSpacing(self._scale_value(10))
         
@@ -5341,9 +6154,47 @@ class MainWindow(QMainWindow):
             recall_column.addWidget(recall_btn)
             self.preset_recall_buttons.append(recall_btn)
         
-        # Ajouter les deux colonnes au conteneur
+        # Colonne Distance (D)
+        distance_column = QVBoxLayout()
+        distance_column.setSpacing(self._scale_value(3))
+        distance_column.setContentsMargins(0, 0, 0, 0)
+        distance_label = QLabel("D")
+        distance_label.setAlignment(Qt.AlignCenter)
+        distance_label.setFixedHeight(self._scale_value(20))
+        distance_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
+        distance_column.addWidget(distance_label)
+        
+        self.preset_distance_inputs = []
+        distance_input_style = self._scale_style("""
+            QLineEdit {
+                padding: 4px;
+                font-size: 10px;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #2a2a2a;
+                color: #fff;
+                text-align: center;
+            }
+            QLineEdit:focus {
+                border: 1px solid #0a5;
+                background-color: #333;
+            }
+        """)
+        for i in range(1, 11):
+            distance_input = QLineEdit()
+            distance_input.setStyleSheet(distance_input_style)
+            distance_input.setFixedHeight(self._scale_value(28))
+            distance_input.setPlaceholderText("m")
+            # Pas de validator strict - on gère la validation manuellement pour accepter . et ,
+            # Connecter le signal pour sauvegarder la valeur
+            distance_input.editingFinished.connect(lambda n=i: self.on_preset_distance_changed(n))
+            distance_column.addWidget(distance_input)
+            self.preset_distance_inputs.append(distance_input)
+        
+        # Ajouter les trois colonnes au conteneur
         presets_container.addLayout(save_column)
         presets_container.addLayout(recall_column)
+        presets_container.addLayout(distance_column)
         
         layout.addLayout(presets_container)
         
@@ -5670,6 +6521,22 @@ class MainWindow(QMainWindow):
                             self.focus_slider.blockSignals(True)
                             self.focus_slider.setValue(slider_value)
                             self.focus_slider.blockSignals(False)
+                        
+                        # Synchroniser automatiquement le D du LFO avec le focus
+                        self.sync_lfo_distance_from_focus(focus_value)
+                        
+                        # Mettre à jour l'affichage de la distance même si la synchronisation LFO est désactivée
+                        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
+                            # Obtenir le zoom actuel pour la conversion
+                            zoom_normalised = None
+                            if cam_data and hasattr(cam_data, 'zoom_actual_value') and cam_data.zoom_actual_value is not None:
+                                zoom_normalised = cam_data.zoom_actual_value
+                            
+                            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(focus_value, zoom_normalised)
+                            if distance_meters is not None:
+                                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
+                            else:
+                                self.focus_distance_label.setText("Distance: -- m")
                 else:
                     logger.warning("Aucune valeur de focus récupérée après l'autofocus")
         except Exception as e:
@@ -5941,6 +6808,10 @@ class MainWindow(QMainWindow):
         camera_id = self.active_camera_id
         slider_controller = self.slider_controllers.get(camera_id)
         
+        # Préparer les variables pour les raccourcis presets (compatible AZERTY/QWERTY)
+        text = event.text()
+        has_shift = bool(event.modifiers() & Qt.ShiftModifier)
+        
         # Flèches pour pan/tilt
         if event.key() == Qt.Key_Up:
             # Tilt positif (haut)
@@ -5990,6 +6861,70 @@ class MainWindow(QMainWindow):
         elif event.key() == Qt.Key_N:
             # Slide diminuer
             self.active_arrow_keys.add('n')
+            event.accept()
+        # Raccourcis pour les presets
+        # Sur AZERTY : &é"'(§è!çà sont SANS Shift, 1234567890 sont AVEC Shift
+        # Sans Shift : &é"'(§è!çà pour rappeler les presets 1-10
+        elif text == '&' and not has_shift:
+            self.recall_preset(1)
+            event.accept()
+        elif text == 'é' and not has_shift:
+            self.recall_preset(2)
+            event.accept()
+        elif text == '"' and not has_shift:
+            self.recall_preset(3)
+            event.accept()
+        elif text == "'" and not has_shift:
+            self.recall_preset(4)
+            event.accept()
+        elif text == '(' and not has_shift:
+            self.recall_preset(5)
+            event.accept()
+        elif text == '§' and not has_shift:
+            self.recall_preset(6)
+            event.accept()
+        elif text == 'è' and not has_shift:
+            self.recall_preset(7)
+            event.accept()
+        elif text == '!' and not has_shift:
+            self.recall_preset(8)
+            event.accept()
+        elif text == 'ç' and not has_shift:
+            self.recall_preset(9)
+            event.accept()
+        elif text == 'à' and not has_shift:
+            self.recall_preset(10)
+            event.accept()
+        # Avec Shift : 1234567890 pour sauvegarder les presets 1-10
+        elif text == '1' and has_shift:
+            self.save_preset(1)
+            event.accept()
+        elif text == '2' and has_shift:
+            self.save_preset(2)
+            event.accept()
+        elif text == '3' and has_shift:
+            self.save_preset(3)
+            event.accept()
+        elif text == '4' and has_shift:
+            self.save_preset(4)
+            event.accept()
+        elif text == '5' and has_shift:
+            self.save_preset(5)
+            event.accept()
+        elif text == '6' and has_shift:
+            self.save_preset(6)
+            event.accept()
+        elif text == '7' and has_shift:
+            self.save_preset(7)
+            event.accept()
+        elif text == '8' and has_shift:
+            self.save_preset(8)
+            event.accept()
+        elif text == '9' and has_shift:
+            self.save_preset(9)
+            event.accept()
+        elif text == '0' and has_shift:
+            self.save_preset(10)
             event.accept()
         else:
             self._stop_key_repeat()
@@ -6584,6 +7519,20 @@ class MainWindow(QMainWindow):
                         self.focus_slider.blockSignals(True)
                         self.focus_slider.setValue(slider_value)
                         self.focus_slider.blockSignals(False)
+                        
+                        # Mettre à jour l'affichage de la distance
+                        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
+                            # Obtenir le zoom actuel pour la conversion
+                            zoom_normalised = None
+                            cam_data = self.get_active_camera_data()
+                            if cam_data and hasattr(cam_data, 'zoom_actual_value') and cam_data.zoom_actual_value is not None:
+                                zoom_normalised = cam_data.zoom_actual_value
+                            
+                            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(value, zoom_normalised)
+                            if distance_meters is not None:
+                                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
+                            else:
+                                self.focus_distance_label.setText("Distance: -- m")
             
             # Iris
             iris_data = cam_data.controller.get_iris()
@@ -6761,6 +7710,23 @@ class MainWindow(QMainWindow):
             self.focus_slider.blockSignals(True)
             self.focus_slider.setValue(slider_value)
             self.focus_slider.blockSignals(False)
+        
+        # Synchroniser automatiquement le D du LFO avec le focus
+        self.sync_lfo_distance_from_focus(value_rounded)
+        
+        # Mettre à jour l'affichage de la distance même si la synchronisation LFO est désactivée
+        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
+            # Obtenir le zoom actuel pour la conversion
+            zoom_normalised = None
+            cam_data = self.get_active_camera_data()
+            if cam_data and hasattr(cam_data, 'zoom_actual_value') and cam_data.zoom_actual_value is not None:
+                zoom_normalised = cam_data.zoom_actual_value
+            
+            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(value_rounded, zoom_normalised)
+            if distance_meters is not None:
+                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
+            else:
+                self.focus_distance_label.setText("Distance: -- m")
     
     def on_focus_slider_pressed(self):
         """Appelé quand on appuie sur le slider."""
@@ -7249,6 +8215,9 @@ class MainWindow(QMainWindow):
             # Mettre à jour la valeur dans CameraData
             cam_data.zoom_actual_value = zoom_value
             cam_data.zoom_sent_value = zoom_value
+            
+            # Synchroniser automatiquement le D du LFO avec le zoom
+            self.sync_lfo_distance_from_zoom(zoom_value)
     
     def on_zebra_changed(self, enabled: bool):
         """Slot appelé quand le zebra change."""
@@ -7389,8 +8358,105 @@ class MainWindow(QMainWindow):
             self.save_cameras_config()
             
             logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} sauvegardé: {preset_data}")
+            
+            # Faire clignoter le bouton en rouge pour confirmer la sauvegarde
+            self._flash_preset_save_button(preset_number)
         except Exception as e:
             logger.error(f"Erreur lors de la sauvegarde du preset {preset_number}: {e}")
+    
+    def _flash_preset_save_button(self, preset_number: int):
+        """Fait clignoter le bouton de sauvegarde du preset en rouge pour confirmer l'action."""
+        if preset_number < 1 or preset_number > 10:
+            return
+        
+        if not hasattr(self, 'preset_save_buttons') or len(self.preset_save_buttons) < preset_number:
+            return
+        
+        save_btn = self.preset_save_buttons[preset_number - 1]
+        if not save_btn:
+            return
+        
+        # Sauvegarder le style original
+        original_style = save_btn.styleSheet()
+        
+        # Style rouge pour le clignotement
+        red_style = self._scale_style("""
+            QPushButton {
+                padding: 6px;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #f00;
+                border-radius: 4px;
+                background-color: #f00;
+                color: #fff;
+            }
+        """)
+        
+        # Appliquer le style rouge
+        save_btn.setStyleSheet(red_style)
+        
+        # Restaurer le style original après 200ms
+        QTimer.singleShot(200, lambda: save_btn.setStyleSheet(original_style))
+    
+    def on_preset_distance_changed(self, preset_number: int):
+        """Appelé quand la distance d'un preset est modifiée."""
+        cam_data = self.get_active_camera_data()
+        preset_key = f"preset_{preset_number}"
+        
+        # Récupérer la valeur du champ
+        distance_input = self.preset_distance_inputs[preset_number - 1]
+        text = distance_input.text().strip()
+        
+        if text:
+            try:
+                # Remplacer la virgule par un point pour la conversion
+                text_normalized = text.replace(',', '.')
+                distance_value = float(text_normalized)
+                if 0.1 <= distance_value <= 100.0:
+                    # Initialiser le preset s'il n'existe pas
+                    if preset_key not in cam_data.presets:
+                        cam_data.presets[preset_key] = {}
+                    
+                    # Sauvegarder la distance dans le preset
+                    cam_data.presets[preset_key]["lfo_distance"] = distance_value
+                    
+                    # Sauvegarder dans le fichier
+                    self.save_cameras_config()
+                    
+                    logger.debug(f"Preset {preset_number} - Distance mise à jour: {distance_value}m")
+                else:
+                    logger.warning(f"Distance invalide pour preset {preset_number}: {distance_value} (doit être entre 0.1 et 100.0)")
+                    # Réinitialiser le champ avec la valeur précédente
+                    if preset_key in cam_data.presets and "lfo_distance" in cam_data.presets[preset_key]:
+                        distance_input.setText(f"{cam_data.presets[preset_key]['lfo_distance']:.2f}")
+                    else:
+                        distance_input.clear()
+            except ValueError:
+                logger.warning(f"Valeur non numérique pour preset {preset_number}: {text}")
+                # Réinitialiser le champ
+                if preset_key in cam_data.presets and "lfo_distance" in cam_data.presets[preset_key]:
+                    distance_input.setText(f"{cam_data.presets[preset_key]['lfo_distance']:.2f}")
+                else:
+                    distance_input.clear()
+        else:
+            # Champ vide, supprimer la distance du preset
+            if preset_key in cam_data.presets and "lfo_distance" in cam_data.presets[preset_key]:
+                del cam_data.presets[preset_key]["lfo_distance"]
+                self.save_cameras_config()
+                logger.debug(f"Preset {preset_number} - Distance supprimée")
+    
+    def _update_preset_distance_inputs(self):
+        """Met à jour les champs distance avec les valeurs des presets."""
+        cam_data = self.get_active_camera_data()
+        for i in range(1, 11):
+            preset_key = f"preset_{i}"
+            distance_input = self.preset_distance_inputs[i - 1]
+            
+            if preset_key in cam_data.presets and "lfo_distance" in cam_data.presets[preset_key]:
+                distance_value = cam_data.presets[preset_key]["lfo_distance"]
+                distance_input.setText(f"{distance_value:.2f}")
+            else:
+                distance_input.clear()
     
     def toggle_smooth_transition(self):
         """Active/désactive la transition progressive entre presets."""
@@ -7484,9 +8550,34 @@ class MainWindow(QMainWindow):
                     
                     # 6. Recalculer la séquence LFO avec la nouvelle base (preset)
                     pan_offset = 0.0  # Pas d'offset car la position est "bakeée"
+                    
+                    # NOUVEAU: Utiliser la distance du preset si sync D focus est off
+                    distance_to_use = self.lfo_distance  # Par défaut, utiliser la distance actuelle
+                    original_distance = self.lfo_distance  # Sauvegarder pour restauration
+                    
+                    if not self.lfo_auto_sync_distance and "lfo_distance" in preset_data:
+                        # Utiliser la distance du preset
+                        distance_to_use = preset_data["lfo_distance"]
+                        # Mettre à jour self.lfo_distance pour le calcul
+                        self.lfo_distance = distance_to_use
+                        # Mettre à jour le slider distance dans l'UI LFO si nécessaire
+                        if hasattr(self, 'lfo_panel') and hasattr(self.lfo_panel, 'distance_slider'):
+                            # Convertir la distance en valeur slider (0.5-20 mètres -> 0-1000)
+                            slider_value = int((distance_to_use - 0.5) / 19.5 * 1000)
+                            slider_value = max(0, min(1000, slider_value))
+                            self.lfo_panel.distance_slider.setValue(slider_value)
+                            # Mettre à jour le label de distance
+                            if hasattr(self.lfo_panel, 'distance_value_label'):
+                                self.lfo_panel.distance_value_label.setText(f"{distance_to_use:.1f} m")
+                        logger.info(f"LFO: Utilisation de la distance du preset {preset_number}: {distance_to_use:.1f}m")
+                    
                     sequence_points, base_position, position_plus, position_minus = self._calculate_lfo_sequence(
                         base_slide, base_pan, base_tilt, base_zoom, pan_offset=pan_offset
                     )
+                    
+                    # Restaurer la distance originale si sync est activé (pour ne pas perturber l'affichage)
+                    if self.lfo_auto_sync_distance:
+                        self.lfo_distance = original_distance
                     
                     # 7. Mettre à jour les positions stockées
                     self.lfo_position_plus = position_plus

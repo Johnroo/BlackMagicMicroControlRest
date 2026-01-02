@@ -511,12 +511,13 @@ class BlackmagicFocusController:
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         
-    def get_focus(self) -> Optional[float]:
+    def get_focus(self) -> Optional[Dict[str, Any]]:
         """
         Récupère la valeur actuelle du focus.
         
         Returns:
-            La valeur normalisée du focus (0.0 à 1.0) ou None en cas d'erreur
+            Dictionnaire avec 'normalised' (float) et 'focusDistance' (int), ou None en cas d'erreur
+            Pour compatibilité, peut aussi retourner un float si seul normalised est disponible
         """
         try:
             if self.debug:
@@ -536,7 +537,12 @@ class BlackmagicFocusController:
             response.raise_for_status()
             data = response.json()
             self.current_value = data.get("normalised")
-            return self.current_value
+            
+            # Retourner un dictionnaire avec normalised et focusDistance
+            return {
+                'normalised': data.get("normalised"),
+                'focusDistance': data.get("focusDistance")
+            }
         except requests.exceptions.SSLError as e:
             print(f"Erreur SSL lors de la récupération du focus: {e}")
             return None

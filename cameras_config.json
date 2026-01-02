@@ -7,52 +7,53 @@
     "slider_ip": "192.168.1.37",
     "presets": {
       "preset_1": {
-        "focus": 0.7600874900817871,
+        "focus": 0.9193783402442932,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
         "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.3638947,
-        "tilt": 0.55,
-        "zoom_motor": 0.9993103999999999,
-        "slide": 0.9214327
+        "pan": 0.4985703,
+        "tilt": 0.35,
+        "zoom_motor": 1.0,
+        "slide": 0.5069995
       },
       "preset_2": {
-        "focus": 0.8590179681777954,
+        "focus": 0.9193783402442932,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
         "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.08022800000000001,
-        "tilt": 0.6125,
-        "zoom_motor": 0.9993103999999999,
-        "slide": 0.9214327
+        "pan": 0.3094562,
+        "tilt": 0.60625,
+        "zoom_motor": 1.0,
+        "slide": 0.2509999
       },
       "preset_4": {
-        "focus": 0.8753483891487122,
-        "iris": 0.0,
-        "gain": 8,
-        "shutter": 50,
-        "whitebalance": 4750,
-        "zoom": 0.0,
-        "pan": 0.05799882,
-        "tilt": 0.6379412,
-        "zoom_motor": 1.0,
-        "slide": 0.00700807
-      },
-      "preset_3": {
-        "focus": 0.8191735744476318,
+        "focus": 0.9190962314605713,
         "iris": 0.0,
         "gain": 14,
         "shutter": 50,
         "whitebalance": 3800,
         "zoom": 0.0,
-        "pan": 0.6762193999999999,
-        "tilt": 0.39375,
-        "zoom_motor": 0.485,
-        "slide": 0.9214327
+        "pan": 0.7163334,
+        "tilt": 0.2875,
+        "zoom_motor": 1.0,
+        "slide": 0.9780015,
+        "lfo_distance": 4.0
+      },
+      "preset_3": {
+        "focus": 0.9193783402442932,
+        "iris": 0.0,
+        "gain": 14,
+        "shutter": 50,
+        "whitebalance": 3800,
+        "zoom": 0.0,
+        "pan": 0.7535788,
+        "tilt": 0.74375,
+        "zoom_motor": 1.0,
+        "slide": 0.8150041
       },
       "preset_5": {
         "focus": 0.8807048201560974,
@@ -123,6 +124,288 @@
         "slide": 0.36999180000000004
       }
     },
+    "sequences": [
+      {
+        "name": "test1",
+        "points": {
+          "0.0": {
+            "type": "baked",
+            "value": {
+              "pan": 0.4985703,
+              "tilt": 0.35,
+              "zoom": 1.0,
+              "slide": 0.5069995
+            }
+          },
+          "0.25": {
+            "type": "baked",
+            "value": {
+              "pan": 0.3094562,
+              "tilt": 0.60625,
+              "zoom": 1.0,
+              "slide": 0.2509999
+            }
+          },
+          "0.5": {
+            "type": "baked",
+            "value": {
+              "pan": 0.4985703,
+              "tilt": 0.35,
+              "zoom": 1.0,
+              "slide": 0.5069995
+            }
+          },
+          "0.75": {
+            "type": "baked",
+            "value": {
+              "pan": 0.7535788,
+              "tilt": 0.74375,
+              "zoom": 1.0,
+              "slide": 0.8150041
+            }
+          },
+          "1.0": {
+            "type": "baked",
+            "value": {
+              "pan": 0.4985703,
+              "tilt": 0.35,
+              "zoom": 1.0,
+              "slide": 0.5069995
+            }
+          }
+        },
+        "duration": 15.0,
+        "baked": true
+      },
+      {
+        "name": "test2",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
     "recall_scope": {
       "focus": false,
       "iris": true,
@@ -131,7 +414,7 @@
       "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 5.0
+    "crossfade_duration": 4.0
   },
   "camera_2": {
     "url": "http://Micro-Studio-Camera-4K-G2-2.local",
@@ -156,6 +439,7 @@
         "zoom": 0.0
       }
     },
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": true,
@@ -172,6 +456,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -188,6 +473,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -204,6 +490,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -220,6 +507,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -236,6 +524,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -252,6 +541,7 @@
     "password": "",
     "slider_ip": "",
     "presets": {},
+    "sequences": [],
     "recall_scope": {
       "focus": false,
       "iris": false,
