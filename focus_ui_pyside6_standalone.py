@@ -7083,23 +7083,39 @@ class MainWindow(QMainWindow):
         text = event.text()
         has_shift = bool(event.modifiers() & Qt.ShiftModifier)
         
-        # Flèches pour pan/tilt
+        # Flèches pour pan/tilt - traiter en premier
         if event.key() == Qt.Key_Up:
             # Tilt positif (haut)
             self.active_arrow_keys.add('up')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         elif event.key() == Qt.Key_Down:
             # Tilt négatif (bas)
             self.active_arrow_keys.add('down')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         elif event.key() == Qt.Key_Right:
             # Pan positif (droite)
             self.active_arrow_keys.add('right')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         elif event.key() == Qt.Key_Left:
             # Pan négatif (gauche)
             self.active_arrow_keys.add('left')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         # R et T pour focus
         elif event.key() == Qt.Key_R:
             # Focus diminuer
@@ -7120,19 +7136,35 @@ class MainWindow(QMainWindow):
             # Zoom augmenter
             self.active_arrow_keys.add('m')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         elif event.key() == Qt.Key_P:
             # Zoom diminuer
             self.active_arrow_keys.add('p')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         # B et N pour slide
         elif event.key() == Qt.Key_B:
             # Slide augmenter
             self.active_arrow_keys.add('b')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         elif event.key() == Qt.Key_N:
             # Slide diminuer
             self.active_arrow_keys.add('n')
             event.accept()
+            # Envoyer immédiatement les commandes et démarrer la répétition
+            self._send_joystick_keyboard_commands()
+            self._start_joystick_key_repeat()
+            return
         # Préparer les variables pour les raccourcis
         has_command = bool(event.modifiers() & (Qt.MetaModifier | Qt.ControlModifier))
         
@@ -7271,17 +7303,11 @@ class MainWindow(QMainWindow):
         elif event.key() == Qt.Key_S:
             self.stop_sequence()
             event.accept()
+            return
         else:
             self._stop_key_repeat()
             super().keyPressEvent(event)
             return
-        
-        # Calculer et envoyer les valeurs pour pan/tilt/zoom/slide
-        self._send_joystick_keyboard_commands()
-        
-        # Démarrer la répétition pour les touches joystick
-        if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right, Qt.Key_M, Qt.Key_P, Qt.Key_B, Qt.Key_N):
-            self._start_joystick_key_repeat()
     
     def keyReleaseEvent(self, event: QKeyEvent):
         """Arrête la répétition quand la touche est relâchée."""
