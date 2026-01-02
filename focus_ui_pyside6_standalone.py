@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
     QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
 from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent, QDoubleValidator
@@ -885,7 +885,7 @@ class MainWindow(QMainWindow):
         self.keyboard_focus_processing = False
         
         # Transition progressive entre presets
-        self.smooth_preset_transition = False
+        self.smooth_preset_transition = True  # Activé par défaut
         self.preset_transition_timer = None
         self.preset_transition_start_time = None
         self.preset_transition_start_values = {}
@@ -905,6 +905,12 @@ class MainWindow(QMainWindow):
             "baked": False
         } for _ in range(20)]
         self.sequences_table: Optional[QTableWidget] = None
+        self.active_sequence_row: Optional[int] = None  # Ligne de la séquence active
+        self.focus_transition_timer: Optional[QTimer] = None  # Timer pour la transition de focus
+        self.focus_transition_start: Optional[float] = None  # Valeur de départ de la transition
+        self.focus_transition_end: Optional[float] = None  # Valeur d'arrivée de la transition
+        self.focus_transition_start_time: Optional[float] = None  # Temps de début de la transition
+        self.focus_transition_duration: float = 3.0  # Durée de la transition en secondes
         
         # Slider controllers pour chaque caméra (initialisés après chargement de la config)
         self.slider_controllers: Dict[int, Optional[SliderController]] = {}
@@ -1074,13 +1080,34 @@ class MainWindow(QMainWindow):
                     # Charger crossfade_duration avec valeur par défaut si absent
                     crossfade_duration = cam_config.get("crossfade_duration", 2.0)
                     
+                    # Normaliser les séquences : convertir les clés string en float pour les points
+                    sequences = cam_config.get("sequences", [])
+                    normalized_sequences = []
+                    for seq in sequences:
+                        seq_copy = seq.copy()
+                        if "points" in seq_copy:
+                            points_normalized = {}
+                            for key, value in seq_copy["points"].items():
+                                # Convertir la clé string en float si nécessaire
+                                if isinstance(key, str):
+                                    try:
+                                        float_key = float(key)
+                                        points_normalized[float_key] = value
+                                    except ValueError:
+                                        # Si la conversion échoue, garder la clé originale
+                                        points_normalized[key] = value
+                                else:
+                                    points_normalized[key] = value
+                            seq_copy["points"] = points_normalized
+                        normalized_sequences.append(seq_copy)
+                    
                     self.cameras[i] = CameraData(
                         url=cam_config.get("url", "").rstrip('/'),
                         username=cam_config.get("username", ""),
                         password=cam_config.get("password", ""),
                         slider_ip=cam_config.get("slider_ip", ""),
                         presets=cam_config.get("presets", {}),
-                        sequences=cam_config.get("sequences", []),
+                        sequences=normalized_sequences,
                         recall_scope=recall_scope,
                         crossfade_duration=float(crossfade_duration)
                     )
@@ -3466,9 +3493,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.cleanfeed_toggle)
         
         # Bouton pour activer/désactiver la transition progressive
-        self.smooth_transition_toggle = QPushButton("Transition\nProgressive\nOFF")
+        self.smooth_transition_toggle = QPushButton("Transition\nProgressive\nON")
         self.smooth_transition_toggle.setCheckable(True)
-        self.smooth_transition_toggle.setChecked(self.smooth_preset_transition)
+        self.smooth_transition_toggle.setChecked(True)  # Activé par défaut
         self.smooth_transition_toggle.setStyleSheet("""
             QPushButton {
                 width: 100%;
@@ -5341,6 +5368,8 @@ class MainWindow(QMainWindow):
                 font-weight: bold;
             }
         """))
+        # Permettre la coloration des lignes
+        table.setShowGrid(True)
         
         # Configurer les colonnes (largeurs doublées)
         table.setColumnWidth(0, self._scale_value(200))  # Name (doublé)
@@ -5612,6 +5641,10 @@ class MainWindow(QMainWindow):
         # Construire les points de la séquence
         for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
             point_data = sequence["points"].get(fraction)
+            # Debug: vérifier les clés disponibles si point_data est None
+            if point_data is None:
+                available_keys = list(sequence["points"].keys())
+                logger.debug(f"Séquence {row_index + 1}, fraction {fraction}: point_data=None, clés disponibles: {available_keys}")
             if point_data is None:
                 continue  # Case vide, on ignore
             
@@ -5653,11 +5686,67 @@ class MainWindow(QMainWindow):
         # Trier les points par fraction
         points.sort(key=lambda p: p["fraction"])
         
+        # Appliquer le focus du premier point (fraction 0.0)
+        first_point_focus = None
+        first_point_data = sequence["points"].get(0.0)
+        if first_point_data is not None:
+            if first_point_data["type"] == "preset":
+                # Récupérer le focus du preset
+                preset_num = first_point_data["value"]
+                preset_key = f"preset_{preset_num}"
+                if preset_key in cam_data.presets:
+                    preset_data = cam_data.presets[preset_key]
+                    if "focus" in preset_data:
+                        first_point_focus = float(preset_data["focus"])
+            elif first_point_data["type"] == "baked":
+                # Récupérer le focus bakeé
+                baked_values = first_point_data["value"]
+                if "focus" in baked_values:
+                    first_point_focus = float(baked_values["focus"])
+        
+        # Appliquer le focus à la caméra avec transition de 3 secondes
+        if first_point_focus is not None and cam_data.controller:
+            # Arrêter toute transition en cours
+            if self.focus_transition_timer and self.focus_transition_timer.isActive():
+                self.focus_transition_timer.stop()
+            
+            # Récupérer le focus actuel
+            current_focus_data = cam_data.controller.get_focus()
+            current_focus = current_focus_data.get("normalised") if current_focus_data else cam_data.focus_sent_value
+            
+            if current_focus is None:
+                current_focus = 0.5  # Valeur par défaut
+            
+            # Si le focus actuel est très proche du nouveau, pas besoin de transition
+            if abs(current_focus - first_point_focus) < 0.001:
+                cam_data.controller.set_focus(first_point_focus, silent=True)
+                cam_data.focus_sent_value = first_point_focus
+                self._update_focus_ui(first_point_focus)
+                logger.info(f"Séquence {row_index + 1} : Focus appliqué directement ({first_point_focus:.3f})")
+            elif self.smooth_preset_transition:
+                # Démarrer la transition si activée
+                self._start_focus_transition(current_focus, first_point_focus, cam_data)
+                logger.info(f"Séquence {row_index + 1} : Transition de focus de {current_focus:.3f} à {first_point_focus:.3f} sur 3 secondes")
+            else:
+                # Transition désactivée, appliquer directement
+                cam_data.controller.set_focus(first_point_focus, silent=True)
+                cam_data.focus_sent_value = first_point_focus
+                self._update_focus_ui(first_point_focus)
+                logger.info(f"Séquence {row_index + 1} : Focus appliqué directement (transition désactivée) ({first_point_focus:.3f})")
+        
+        # Réinitialiser la surbrillance de l'ancienne séquence active
+        if self.active_sequence_row is not None and self.sequences_table:
+            self._update_sequence_row_style(self.active_sequence_row, active=False)
+        
         # Envoyer la séquence
         duration = sequence.get("duration", 5.0)
         if slider_controller.send_interpolation_sequence(points, duration, silent=False):
             # Activer l'interpolation automatique
             slider_controller.set_auto_interpolation(enable=True, duration=duration, silent=False)
+            # Mettre en surbrillance la séquence active
+            self.active_sequence_row = row_index
+            if self.sequences_table:
+                self._update_sequence_row_style(row_index, active=True)
             logger.info(f"Séquence {row_index + 1} ({sequence.get('name', 'Sans nom')}) envoyée avec {len(points)} points, durée {duration}s")
         else:
             logger.error(f"Échec de l'envoi de la séquence {row_index + 1}")
@@ -5686,15 +5775,20 @@ class MainWindow(QMainWindow):
                     continue
                 
                 preset_data = cam_data.presets[preset_key]
-                # Remplacer par une valeur bakeée
+                # Remplacer par une valeur bakeée (inclure le focus)
+                baked_value = {
+                    "pan": preset_data.get("pan", 0.5),
+                    "tilt": preset_data.get("tilt", 0.5),
+                    "zoom": preset_data.get("zoom_motor", 0.0),
+                    "slide": preset_data.get("slide", 0.5)
+                }
+                # Ajouter le focus si présent dans le preset
+                if "focus" in preset_data:
+                    baked_value["focus"] = preset_data["focus"]
+                
                 sequence["points"][fraction] = {
                     "type": "baked",
-                    "value": {
-                        "pan": preset_data.get("pan", 0.5),
-                        "tilt": preset_data.get("tilt", 0.5),
-                        "zoom": preset_data.get("zoom_motor", 0.0),
-                        "slide": preset_data.get("slide", 0.5)
-                    }
+                    "value": baked_value
                 }
                 baked_count += 1
                 
@@ -5797,7 +5891,20 @@ class MainWindow(QMainWindow):
                 if i < len(cam_data.sequences):
                     # Faire une copie profonde pour éviter les références partagées
                     seq = cam_data.sequences[i].copy()
-                    seq["points"] = seq["points"].copy()
+                    # Normaliser les clés des points : convertir les strings en float
+                    points_normalized = {}
+                    for key, value in seq["points"].items():
+                        # Convertir la clé string en float si nécessaire
+                        if isinstance(key, str):
+                            try:
+                                float_key = float(key)
+                                points_normalized[float_key] = value
+                            except ValueError:
+                                # Si la conversion échoue, garder la clé originale
+                                points_normalized[key] = value
+                        else:
+                            points_normalized[key] = value
+                    seq["points"] = points_normalized
                     self.sequences_data.append(seq)
                 else:
                     self.sequences_data.append({
@@ -5821,7 +5928,20 @@ class MainWindow(QMainWindow):
             self.sequences_data = []
             for seq in cam_data.sequences[:20]:
                 seq_copy = seq.copy()
-                seq_copy["points"] = seq["points"].copy()
+                # Normaliser les clés des points : convertir les strings en float
+                points_normalized = {}
+                for key, value in seq["points"].items():
+                    # Convertir la clé string en float si nécessaire
+                    if isinstance(key, str):
+                        try:
+                            float_key = float(key)
+                            points_normalized[float_key] = value
+                        except ValueError:
+                            # Si la conversion échoue, garder la clé originale
+                            points_normalized[key] = value
+                    else:
+                        points_normalized[key] = value
+                seq_copy["points"] = points_normalized
                 self.sequences_data.append(seq_copy)
         
         # Mettre à jour le tableau
@@ -5932,10 +6052,161 @@ class MainWindow(QMainWindow):
         if slider_controller and slider_controller.is_configured():
             if slider_controller.set_auto_interpolation(enable=False, silent=False):
                 logger.info("Interpolation automatique arrêtée")
+                # Réinitialiser la surbrillance de la séquence active
+                if self.active_sequence_row is not None and self.sequences_table:
+                    self._update_sequence_row_style(self.active_sequence_row, active=False)
+                    self.active_sequence_row = None
             else:
                 logger.warning("Échec de l'arrêt de l'interpolation automatique")
         else:
             logger.warning("Impossible d'arrêter la séquence : slider non configuré")
+    
+    def _update_sequence_row_style(self, row: int, active: bool):
+        """Met à jour le style d'une ligne de séquence (surbrillance jaune si active)."""
+        if not self.sequences_table or row < 0 or row >= 20:
+            return
+        
+        # Couleur de fond pour la ligne
+        bg_color = "#ffaa00" if active else "#2a2a2a"
+        text_color = "#000" if active else "#fff"
+        
+        for col in range(8):  # 8 colonnes
+            # Mettre à jour le style des widgets dans les cellules
+            widget = self.sequences_table.cellWidget(row, col)
+            if widget:
+                if active:
+                    # Style actif : fond jaune
+                    if isinstance(widget, QLineEdit):
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QLineEdit {{
+                                background-color: {bg_color};
+                                color: {text_color};
+                                border: 1px solid #ff8800;
+                                padding: 4px;
+                            }}
+                        """))
+                    elif isinstance(widget, QPushButton):
+                        # Le bouton Bake garde son style mais avec fond jaune
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QPushButton {{
+                                padding: 6px;
+                                font-size: 10px;
+                                font-weight: bold;
+                                border: 1px solid #ff8800;
+                                border-radius: 4px;
+                                background-color: {bg_color};
+                                color: {text_color};
+                            }}
+                            QPushButton:hover {{
+                                background-color: #ffcc00;
+                            }}
+                            QPushButton:pressed {{
+                                background-color: #ff9900;
+                            }}
+                        """))
+                else:
+                    # Restaurer le style original selon le type de widget
+                    if isinstance(widget, QLineEdit):
+                        if col == 0:  # Name
+                            widget.setStyleSheet(self._scale_style("""
+                                QLineEdit {
+                                    background-color: #2a2a2a;
+                                    border: 1px solid #555;
+                                    color: #fff;
+                                    padding: 4px;
+                                    cursor: pointer;
+                                }
+                                QLineEdit:hover {
+                                    border: 1px solid #0a5;
+                                    background-color: #3a3a3a;
+                                }
+                            """))
+                        elif col in range(1, 6):  # 0%, 25%, 50%, 75%, 100%
+                            widget.setStyleSheet(self._scale_style("""
+                                QLineEdit {
+                                    background-color: #2a2a2a;
+                                    border: 1px solid #555;
+                                    color: #fff;
+                                    padding: 4px;
+                                    text-align: center;
+                                }
+                                QLineEdit:focus {
+                                    border: 1px solid #0a5;
+                                }
+                            """))
+                        elif col == 6:  # Duration
+                            widget.setStyleSheet(self._scale_style("""
+                                QLineEdit {
+                                    background-color: #2a2a2a;
+                                    border: 1px solid #555;
+                                    color: #fff;
+                                    padding: 4px;
+                                    text-align: center;
+                                }
+                                QLineEdit:focus {
+                                    border: 1px solid #0a5;
+                                }
+                            """))
+                    elif isinstance(widget, QPushButton):
+                        # Restaurer le style original du bouton Bake (sera géré par bake_sequence)
+                        pass
+    
+    def _start_focus_transition(self, start_value: float, end_value: float, cam_data: 'CameraData'):
+        """Démarre une transition progressive du focus sur 3 secondes."""
+        self.focus_transition_start = start_value
+        self.focus_transition_end = end_value
+        self.focus_transition_start_time = time.time()
+        
+        # Créer le timer s'il n'existe pas
+        if self.focus_transition_timer is None:
+            self.focus_transition_timer = QTimer()
+            self.focus_transition_timer.timeout.connect(self._update_focus_transition)
+        
+        # Mettre à jour toutes les 50ms pour une transition fluide
+        self.focus_transition_timer.start(50)
+    
+    def _update_focus_transition(self):
+        """Met à jour le focus pendant la transition."""
+        if (self.focus_transition_start is None or 
+            self.focus_transition_end is None or 
+            self.focus_transition_start_time is None):
+            if self.focus_transition_timer:
+                self.focus_transition_timer.stop()
+            return
+        
+        # Récupérer la caméra active
+        cam_data = self.get_active_camera_data()
+        if not cam_data or not cam_data.controller:
+            if self.focus_transition_timer:
+                self.focus_transition_timer.stop()
+            return
+        
+        elapsed = time.time() - self.focus_transition_start_time
+        progress = min(elapsed / self.focus_transition_duration, 1.0)
+        
+        # Interpolation linéaire
+        current_focus = self.focus_transition_start + (self.focus_transition_end - self.focus_transition_start) * progress
+        
+        # Appliquer le focus
+        cam_data.controller.set_focus(current_focus, silent=True)
+        cam_data.focus_sent_value = current_focus
+        self._update_focus_ui(current_focus)
+        
+        # Arrêter la transition si terminée
+        if progress >= 1.0:
+            if self.focus_transition_timer:
+                self.focus_transition_timer.stop()
+            logger.info(f"Transition de focus terminée : {self.focus_transition_end:.3f}")
+    
+    def _update_focus_ui(self, focus_value: float):
+        """Met à jour l'UI du focus."""
+        if hasattr(self, 'focus_value_sent'):
+            self.focus_value_sent.setText(f"{focus_value:.3f}")
+        if hasattr(self, 'focus_slider'):
+            slider_value = int(focus_value * 1000)
+            self.focus_slider.blockSignals(True)
+            self.focus_slider.setValue(slider_value)
+            self.focus_slider.blockSignals(False)
     
     def create_pan_tilt_matrix_panel(self):
         """Crée le panneau de contrôle Pan/Tilt avec une matrice XY."""
@@ -6862,69 +7133,143 @@ class MainWindow(QMainWindow):
             # Slide diminuer
             self.active_arrow_keys.add('n')
             event.accept()
+        # Préparer les variables pour les raccourcis
+        has_command = bool(event.modifiers() & (Qt.MetaModifier | Qt.ControlModifier))
+        
+        # Raccourcis pour les séquences (Command + &é"'(§è!çà) - PRIORITÉ 1
+        if has_command:
+            if text == '&':
+                self.send_sequence(0)  # Séquence 1 (index 0)
+                event.accept()
+            elif text == 'é':
+                self.send_sequence(1)  # Séquence 2 (index 1)
+                event.accept()
+            elif text == '"':
+                self.send_sequence(2)  # Séquence 3 (index 2)
+                event.accept()
+            elif text == "'":
+                self.send_sequence(3)  # Séquence 4 (index 3)
+                event.accept()
+            elif text == '(':
+                self.send_sequence(4)  # Séquence 5 (index 4)
+                event.accept()
+            elif text == '§':
+                self.send_sequence(5)  # Séquence 6 (index 5)
+                event.accept()
+            elif text == 'è':
+                self.send_sequence(6)  # Séquence 7 (index 6)
+                event.accept()
+            elif text == '!':
+                self.send_sequence(7)  # Séquence 8 (index 7)
+                event.accept()
+            elif text == 'ç':
+                self.send_sequence(8)  # Séquence 9 (index 8)
+                event.accept()
+            elif text == 'à':
+                self.send_sequence(9)  # Séquence 10 (index 9)
+                event.accept()
+            else:
+                # Command pressé mais pas une touche de séquence, on ne fait rien
+                event.accept()
         # Raccourcis pour les presets
         # Sur AZERTY : &é"'(§è!çà sont SANS Shift, 1234567890 sont AVEC Shift
+        # Avec Shift : &é"'(§è!çà pour sauvegarder les presets 1-10
+        elif has_shift:
+            if text == '&':
+                self.save_preset(1)
+                event.accept()
+            elif text == 'é':
+                self.save_preset(2)
+                event.accept()
+            elif text == '"':
+                self.save_preset(3)
+                event.accept()
+            elif text == "'":
+                self.save_preset(4)
+                event.accept()
+            elif text == '(':
+                self.save_preset(5)
+                event.accept()
+            elif text == '§':
+                self.save_preset(6)
+                event.accept()
+            elif text == 'è':
+                self.save_preset(7)
+                event.accept()
+            elif text == '!':
+                self.save_preset(8)
+                event.accept()
+            elif text == 'ç':
+                self.save_preset(9)
+                event.accept()
+            elif text == 'à':
+                self.save_preset(10)
+                event.accept()
+            # Avec Shift : 1234567890 pour sauvegarder les presets 1-10 (alternative)
+            elif text == '1':
+                self.save_preset(1)
+                event.accept()
+            elif text == '2':
+                self.save_preset(2)
+                event.accept()
+            elif text == '3':
+                self.save_preset(3)
+                event.accept()
+            elif text == '4':
+                self.save_preset(4)
+                event.accept()
+            elif text == '5':
+                self.save_preset(5)
+                event.accept()
+            elif text == '6':
+                self.save_preset(6)
+                event.accept()
+            elif text == '7':
+                self.save_preset(7)
+                event.accept()
+            elif text == '8':
+                self.save_preset(8)
+                event.accept()
+            elif text == '9':
+                self.save_preset(9)
+                event.accept()
+            elif text == '0':
+                self.save_preset(10)
+                event.accept()
         # Sans Shift : &é"'(§è!çà pour rappeler les presets 1-10
-        elif text == '&' and not has_shift:
+        elif text == '&':
             self.recall_preset(1)
             event.accept()
-        elif text == 'é' and not has_shift:
+        elif text == 'é':
             self.recall_preset(2)
             event.accept()
-        elif text == '"' and not has_shift:
+        elif text == '"':
             self.recall_preset(3)
             event.accept()
-        elif text == "'" and not has_shift:
+        elif text == "'":
             self.recall_preset(4)
             event.accept()
-        elif text == '(' and not has_shift:
+        elif text == '(':
             self.recall_preset(5)
             event.accept()
-        elif text == '§' and not has_shift:
+        elif text == '§':
             self.recall_preset(6)
             event.accept()
-        elif text == 'è' and not has_shift:
+        elif text == 'è':
             self.recall_preset(7)
             event.accept()
-        elif text == '!' and not has_shift:
+        elif text == '!':
             self.recall_preset(8)
             event.accept()
-        elif text == 'ç' and not has_shift:
+        elif text == 'ç':
             self.recall_preset(9)
             event.accept()
-        elif text == 'à' and not has_shift:
+        elif text == 'à':
             self.recall_preset(10)
             event.accept()
-        # Avec Shift : 1234567890 pour sauvegarder les presets 1-10
-        elif text == '1' and has_shift:
-            self.save_preset(1)
-            event.accept()
-        elif text == '2' and has_shift:
-            self.save_preset(2)
-            event.accept()
-        elif text == '3' and has_shift:
-            self.save_preset(3)
-            event.accept()
-        elif text == '4' and has_shift:
-            self.save_preset(4)
-            event.accept()
-        elif text == '5' and has_shift:
-            self.save_preset(5)
-            event.accept()
-        elif text == '6' and has_shift:
-            self.save_preset(6)
-            event.accept()
-        elif text == '7' and has_shift:
-            self.save_preset(7)
-            event.accept()
-        elif text == '8' and has_shift:
-            self.save_preset(8)
-            event.accept()
-        elif text == '9' and has_shift:
-            self.save_preset(9)
-            event.accept()
-        elif text == '0' and has_shift:
-            self.save_preset(10)
+        # Touche S pour arrêter la séquence
+        elif event.key() == Qt.Key_S:
+            self.stop_sequence()
             event.accept()
         else:
             self._stop_key_repeat()
