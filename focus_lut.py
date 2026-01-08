@@ -14,12 +14,12 @@ logger = logging.getLogger(__name__)
 class FocusLUT:
     """Look-Up Table pour la correspondance entre focus normalised et distance en mètres."""
     
-    def __init__(self, lut_file: str = "focuslut.json", lut_3d_file: Optional[str] = "focus_zoom_lut_3d.json"):
+    def __init__(self, lut_file: Optional[str] = None, lut_3d_file: Optional[str] = "focus_zoom_lut_3d.json"):
         """
         Initialise la LUT et charge le fichier JSON.
         
         Args:
-            lut_file: Chemin vers le fichier JSON contenant la LUT 2D (legacy)
+            lut_file: Chemin vers le fichier JSON contenant la LUT 2D (legacy, optionnel, non utilisé)
             lut_3d_file: Chemin vers le fichier JSON contenant la LUT 3D (zoom × focus → distance)
         """
         self.lut_file = lut_file
@@ -27,7 +27,7 @@ class FocusLUT:
         self.lut_data: List[Dict] = []
         self.lut_3d_data: List[Dict] = []
         self.lut_3d_index: Dict[Tuple[float, float], float] = {}  # Index: (zoom_normalised, focus_normalised) -> distance_cm
-        self.load_lut()
+        # Ne charger que la LUT 3D (la version 2D n'est plus utilisée)
         self.load_lut_3d()
     
     def load_lut(self) -> bool:
@@ -223,73 +223,31 @@ class FocusLUT:
         Convertit une valeur normalisée de focus (0.0-1.0) en distance en mètres,
         en tenant compte du zoom si fourni.
         
-        Utilise la table 3D si disponible, sinon utilise l'ancienne méthode avec zoomlut.
+        Utilise uniquement la table 3D (les anciennes LUT 2D ne sont plus utilisées).
         
         IMPORTANT: zoom_normalised doit être la valeur normalisée du SLIDER (0.0-1.0),
         et non la valeur de l'API caméra. La table 3D utilise les valeurs du slider.
         
         Args:
             normalised: Valeur normalisée du focus (0.0-1.0) depuis l'API caméra
-            zoom_normalised: Valeur normalisée du zoom (0.0-1.0) depuis l'API caméra (GET /lens/zoom), optionnel
+            zoom_normalised: Valeur normalisée du zoom du SLIDER (0.0-1.0), optionnel
             
         Returns:
             Distance en mètres (float) ou None si la conversion n'est pas possible
         """
-        # Si on a une LUT 3D et un zoom, utiliser la méthode 3D
+        # Utiliser uniquement la LUT 3D
         if zoom_normalised is not None and self.lut_3d_data:
             result = self.normalised_to_distance_with_zoom_3d(normalised, zoom_normalised)
             if result is not None:
                 return result
-            # Si la méthode 3D échoue, fallback sur l'ancienne méthode
-            logger.debug("LUT 3D n'a pas trouvé de correspondance, utilisation de la méthode legacy")
         
-        # Méthode legacy (ancienne logique)
-        # Obtenir la distance depuis la focuslut (basée sur zoom 0.13)
-        distance_base = self.normalised_to_distance(normalised)
-        if distance_base is None:
-            return None
+        # Si pas de zoom ou LUT 3D non disponible, retourner None
+        if zoom_normalised is None:
+            logger.warning("Zoom normalisé requis pour la conversion avec la LUT 3D")
+        elif not self.lut_3d_data:
+            logger.warning("LUT 3D non disponible")
         
-        # Si pas de zoom ou zoom = 0.13, retourner directement la valeur de la focuslut
-        if zoom_normalised is None or abs(zoom_normalised - 0.13) < 0.001:
-            return distance_base
-        
-        # Import pour la conversion croisée avec zoomlut
-        try:
-            from zoom_lut import ZoomLUT
-        except ImportError:
-            logger.warning("ZoomLUT non disponible, utilisation de la valeur de base (zoom 0.13)")
-            return distance_base
-        
-        # Charger la zoomlut
-        zoom_lut = ZoomLUT("zoomlut.json")
-        if not zoom_lut.lut_data:
-            logger.warning("ZoomLUT non disponible, utilisation de la valeur de base (zoom 0.13)")
-            return distance_base
-        
-        # Obtenir la distance pour zoom 0.13 (référence)
-        distance_zoom_ref = zoom_lut.zoom_to_distance(0.13)
-        if distance_zoom_ref is None:
-            logger.warning("Impossible d'obtenir la distance pour zoom 0.13, utilisation de la valeur de base")
-            return distance_base
-        
-        # Obtenir la distance pour le zoom actuel
-        distance_zoom_actual = zoom_lut.zoom_to_distance(zoom_normalised)
-        if distance_zoom_actual is None:
-            logger.warning(f"Impossible d'obtenir la distance pour zoom {zoom_normalised}, utilisation de la valeur de base")
-            return distance_base
-        
-        # Calculer le ratio : distance_zoom_0.13 / distance_zoom_actuel (inversé)
-        if distance_zoom_actual == 0.0:
-            logger.warning("Distance zoom actuel est nulle, utilisation de la valeur de base")
-            return distance_base
-        
-        # Ratio inversé : distance_zoom_0.13 / distance_zoom_actuel
-        ratio = distance_zoom_ref / distance_zoom_actual
-        
-        # Appliquer le ratio à la distance de base (focuslut)
-        adjusted_distance = distance_base * ratio
-        
-        return max(0.0, adjusted_distance)
+        return None
     
     def normalised_to_distance_with_zoom_3d(self, normalised: float, zoom_normalised: float) -> Optional[float]:
         """

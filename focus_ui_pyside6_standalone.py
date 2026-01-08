@@ -29,7 +29,7 @@ from command_handler import CommandHandler
 from slider_controller import SliderController
 from slider_websocket_client import SliderWebSocketClient
 from focus_lut import FocusLUT
-from zoom_lut import ZoomLUT
+# from zoom_lut import ZoomLUT  # Désactivé - seule la LUT 3D est utilisée
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -684,6 +684,7 @@ class ConnectionDialog(QDialog):
                 self.parent().disconnect_from_camera(self.camera_id)
         else:
             # Connecter
+            self.connected = True  # Mettre à jour l'état avant de se connecter
             if self.parent():
                 self.parent().connect_to_camera(
                     self.camera_id,
@@ -731,6 +732,9 @@ class ConnectionDialog(QDialog):
                     background-color: #0c7;
                 }
             """)
+        
+        # Note: Le statut du slider est vérifié par la fonction principale update_slider_status_indicator()
+        # Pas besoin de vérifier ici dans le dialogue
     
     def set_connected(self, connected: bool):
         """Met à jour l'état de connexion."""
@@ -954,14 +958,13 @@ class MainWindow(QMainWindow):
         self.lfo_initial_joystick_pan_offset: float = 0.0  # Offset joystick initial capturé au démarrage du LFO
         
         # LUT Focus pour synchronisation automatique du D du LFO
-        # Charger la LUT 2D (legacy) et la LUT 3D (zoom × focus → distance)
-        # La LUT 3D sera utilisée en priorité si disponible
-        self.focus_lut = FocusLUT("focuslut.json", "focus_zoom_lut_3d.json")
+        # Utilise uniquement la LUT 3D (zoom × focus → distance)
+        self.focus_lut = FocusLUT(None, "focus_zoom_lut_3d.json")
         self.lfo_auto_sync_distance: bool = True  # Synchronisation automatique activée par défaut
         self.last_synced_focus_value: Optional[float] = None  # Pour éviter les mises à jour continues
         
-        # LUT Zoom pour synchronisation automatique du D du LFO
-        self.zoom_lut = ZoomLUT("zoomlut.json")
+        # LUT Zoom n'est plus nécessaire (remplacée par la LUT 3D)
+        # self.zoom_lut = ZoomLUT("zoomlut.json")  # Désactivé - seule la LUT 3D est utilisée
         self.last_synced_zoom_value: Optional[float] = None  # Pour éviter les mises à jour continues
         
         # Références aux faders du workspace 2
@@ -1489,12 +1492,27 @@ class MainWindow(QMainWindow):
                 background-color: #444;
             }
         """))
-        settings_btn.clicked.connect(self.open_connection_dialog)
-        self.statusBar().addPermanentWidget(settings_btn)
-        
         # Status bar pour afficher l'état de connexion
         self.status_label = QLabel("Initialisation...")
         self.statusBar().addWidget(self.status_label)
+        
+        # Indicateur de statut du slider (à gauche de l'engrenage) - affiche le statut du slider de la caméra active
+        # Note: addPermanentWidget ajoute de gauche à droite, donc le slider doit être ajouté en premier
+        self.slider_status_label = QLabel("● Slider Cam1")
+        self.slider_status_label.setStyleSheet("font-size: 12px; color: #666; margin-right: 10px;")
+        self.statusBar().addPermanentWidget(self.slider_status_label)
+        
+        # Bouton engrenage pour ouvrir les paramètres de connexion (à droite du slider)
+        settings_btn.clicked.connect(self.open_connection_dialog)
+        self.statusBar().addPermanentWidget(settings_btn)
+        
+        # Timer pour vérifier périodiquement le statut du slider
+        self.slider_status_timer = QTimer()
+        self.slider_status_timer.timeout.connect(self.update_slider_status_indicator)
+        self.slider_status_timer.start(2000)  # Vérifier toutes les 2 secondes
+        # Mettre à jour immédiatement
+        QTimer.singleShot(500, self.update_slider_status_indicator)
+        
         self.statusBar().setStyleSheet("""
             QStatusBar {
                 background-color: #1a1a1a;
@@ -1564,6 +1582,9 @@ class MainWindow(QMainWindow):
             else:
                 self.status_label.setText(f"✗ Caméra {camera_id} - Non configurée")
             self.status_label.setStyleSheet("color: #f00;")
+        
+        # Mettre à jour l'indicateur de statut du slider pour cette caméra
+        self.update_slider_status_indicator()
         
         # Activer/désactiver les contrôles selon l'état de connexion
         self.set_controls_enabled(cam_data.connected)
@@ -3857,6 +3878,39 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour des positions du slider via WebSocket: {e}")
+    
+    def update_slider_status_indicator(self):
+        """Met à jour l'indicateur de statut du slider dans la barre de statut pour la caméra active."""
+        cam_data = self.get_active_camera_data()
+        slider_controller = self.slider_controllers.get(self.active_camera_id)
+        
+        # Vérifier si le slider est configuré
+        slider_configured = slider_controller is not None and (
+            slider_controller.is_configured() or 
+            (hasattr(slider_controller, 'slider_ip') and slider_controller.slider_ip)
+        )
+        
+        if not slider_configured or not cam_data.slider_ip:
+            # Slider non configuré pour cette caméra
+            self.slider_status_label.setText(f"● Slider Cam{self.active_camera_id}")
+            self.slider_status_label.setStyleSheet("font-size: 12px; color: #666; margin-left: 10px;")
+            return
+        
+        # Vérifier si le slider répond
+        try:
+            status = slider_controller.get_status(silent=True)
+            if status is not None:
+                # Slider répond correctement
+                self.slider_status_label.setText(f"● Slider Cam{self.active_camera_id}")
+                self.slider_status_label.setStyleSheet("font-size: 12px; color: #0f0; margin-left: 10px;")
+            else:
+                # Slider configuré mais ne répond pas
+                self.slider_status_label.setText(f"● Slider Cam{self.active_camera_id}")
+                self.slider_status_label.setStyleSheet("font-size: 12px; color: #f00; margin-left: 10px;")
+        except Exception:
+            # Erreur lors de la vérification
+            self.slider_status_label.setText(f"● Slider Cam{self.active_camera_id}")
+            self.slider_status_label.setStyleSheet("font-size: 12px; color: #f00; margin-left: 10px;")
     
     def sync_slider_positions_from_api(self, camera_id: Optional[int] = None):
         """Synchronise les positions des faders UI avec les positions réelles du slider via l'API HTTP (fallback)."""
@@ -7056,17 +7110,30 @@ class MainWindow(QMainWindow):
             
             # Mettre à jour le SliderController
             if cam_data.slider_ip:
-                self.slider_controllers[self.active_camera_id] = SliderController(cam_data.slider_ip)
+                slider_controller = SliderController(cam_data.slider_ip)
+                self.slider_controllers[self.active_camera_id] = slider_controller
+                # Vérifier que le slider répond
+                try:
+                    status = slider_controller.get_status(silent=True)
+                    if status is not None:
+                        logger.info(f"Slider {cam_data.slider_ip} répond correctement")
+                    else:
+                        logger.warning(f"Slider {cam_data.slider_ip} configuré mais ne répond pas")
+                except Exception as e:
+                    logger.warning(f"Erreur lors de la vérification du slider {cam_data.slider_ip}: {e}")
             else:
                 self.slider_controllers[self.active_camera_id] = None
             
             # Sauvegarder dans le fichier
             self.save_cameras_config()
             
-            # Optionnel: se connecter si demandé
-            if dialog.connected and dialog.connect_btn.text() == "Connecter":
-                self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
-            elif cam_data.connected and cam_data.slider_ip:
+            # Mettre à jour l'indicateur de statut du slider
+            QTimer.singleShot(100, self.update_slider_status_indicator)
+            
+            # Note: La connexion se fait directement dans toggle_connection() du dialogue
+            # Pas besoin de vérifier ici car toggle_connection() appelle déjà connect_to_camera()
+            # Si la caméra était déjà connectée et qu'on a juste changé le slider_ip, démarrer le WebSocket slider
+            if cam_data.connected and cam_data.slider_ip:
                 # Si déjà connecté, démarrer le nouveau WebSocket slider
                 try:
                     # Créer un callback qui passe le camera_id
@@ -8909,7 +8976,13 @@ class MainWindow(QMainWindow):
             
             # Récupérer les valeurs du slider
             slider_controller = self.slider_controllers.get(self.active_camera_id)
-            if slider_controller and slider_controller.is_configured():
+            # Vérifier si le slider est configuré (IP non vide) même si is_configured() retourne False
+            slider_configured = slider_controller is not None and (
+                slider_controller.is_configured() or 
+                (hasattr(slider_controller, 'slider_ip') and slider_controller.slider_ip)
+            )
+            
+            if slider_configured:
                 try:
                     slider_status = slider_controller.get_status(silent=True)
                     if slider_status:
@@ -8923,6 +8996,7 @@ class MainWindow(QMainWindow):
                         preset_data["tilt"] = cam_data.slider_tilt_value
                         preset_data["zoom_motor"] = cam_data.slider_zoom_value
                         preset_data["slide"] = cam_data.slider_slide_value
+                        logger.debug("Slider configuré mais get_status() retourne None, utilisation des valeurs UI")
                 except Exception as e:
                     logger.debug(f"Erreur lors de la lecture du statut du slider: {e}")
                     # Utiliser les valeurs actuelles des sliders UI en cas d'erreur
@@ -9215,7 +9289,13 @@ class MainWindow(QMainWindow):
             # Envoyer les valeurs slider si nécessaire
             if should_send_slider:
                 slider_controller = self.slider_controllers.get(self.active_camera_id)
-                if slider_controller and slider_controller.is_configured():
+                # Vérifier si le slider est configuré (IP non vide) même si is_configured() retourne False
+                slider_configured = slider_controller is not None and (
+                    slider_controller.is_configured() or 
+                    (hasattr(slider_controller, 'slider_ip') and slider_controller.slider_ip)
+                )
+                
+                if slider_configured:
                     # Les valeurs pan/tilt dans les presets sont déjà en 0.0-1.0
                     pan = slider_values.get('pan')
                     tilt = slider_values.get('tilt')
@@ -9223,14 +9303,20 @@ class MainWindow(QMainWindow):
                     slide = slider_values.get('slide')
                     
                     # Envoyer avec la durée de crossfade pour synchronisation
-                    slider_controller.move_axes(
-                        pan=pan,
-                        tilt=tilt,
-                        zoom=zoom,
-                        slide=slide,
-                        duration=cam_data.crossfade_duration,
-                        silent=True
-                    )
+                    try:
+                        slider_controller.move_axes(
+                            pan=pan,
+                            tilt=tilt,
+                            zoom=zoom,
+                            slide=slide,
+                            duration=cam_data.crossfade_duration,
+                            silent=True
+                        )
+                        logger.info(f"Preset {preset_number} - Valeurs slider envoyées: pan={pan}, tilt={tilt}, zoom={zoom}, slide={slide}")
+                    except Exception as e:
+                        logger.error(f"Erreur lors de l'envoi des valeurs slider du preset {preset_number}: {e}")
+                else:
+                    logger.warning(f"Preset {preset_number} - Slider non configuré, valeurs slider ignorées")
             
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")

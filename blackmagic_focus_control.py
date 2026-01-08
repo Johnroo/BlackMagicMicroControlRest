@@ -704,6 +704,62 @@ class BlackmagicFocusController:
                 print(f"Response: {e.response.text}")
             return False
     
+    def set_focus_distance(self, focus_distance_cm: int, silent: bool = False) -> bool:
+        """
+        Définit le focus en utilisant la distance en centimètres.
+        
+        Args:
+            focus_distance_cm: Distance de mise au point en centimètres (integer)
+            silent: Si True, n'affiche pas de message de confirmation
+            
+        Returns:
+            True si la mise à jour a réussi, False sinon
+        """
+        if focus_distance_cm < 0:
+            if not silent:
+                print(f"Erreur: La distance doit être positive, reçu: {focus_distance_cm}")
+            return False
+            
+        try:
+            payload = {"focusDistance": focus_distance_cm}
+            
+            if self.debug:
+                print(f"[DEBUG] PUT {self.focus_endpoint}")
+                print(f"[DEBUG] Payload: {payload}")
+                print(f"[DEBUG] Auth: {self.auth[0]}:{self.auth[1]}")
+            
+            response = self.session.put(
+                self.focus_endpoint,
+                json=payload,
+                timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+            )
+            
+            if self.debug:
+                print(f"[DEBUG] Status: {response.status_code}")
+                print(f"[DEBUG] Response: {response.text}")
+            
+            response.raise_for_status()
+            if not silent:
+                print(f"Focus mis à jour avec succès: {focus_distance_cm} cm")
+            return True
+        except requests.exceptions.SSLError as e:
+            if not silent:
+                print(f"Erreur SSL lors de la mise à jour du focus: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            if not silent:
+                print(f"Erreur de connexion lors de la mise à jour du focus: {e}")
+                print(f"Vérifiez que la caméra est accessible à: {self.focus_endpoint}")
+            return False
+        except requests.exceptions.RequestException as e:
+            if not silent:
+                print(f"Erreur lors de la mise à jour du focus: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Status code: {e.response.status_code}")
+                    print(f"Response: {e.response.text}")
+            return False
+    
     def do_autofocus(self, x: float = 0.5, y: float = 0.5, silent: bool = False) -> bool:
         """
         Déclenche l'autofocus à une position donnée.
