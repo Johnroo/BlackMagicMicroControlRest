@@ -19,12 +19,73 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 from base64 import b64encode
 import logging
-import os
+import socket
+from urllib.parse import urlparse
 
 # Configuration par défaut
 DEFAULT_POLLING_FREQUENCY = 4  # fois par seconde
 DEFAULT_TARGET_VALUE = None  # Aucune valeur cible par défaut
 CONFIG_FILE = "focus_config.json"
+
+
+def resolve_hostname_to_ip(url: str, max_retries: int = 3, retry_delay: float = 2.0) -> Optional[str]:
+    """
+    Résout un hostname (notamment .local/mDNS) en IP et retourne l'URL avec l'IP.
+    
+    Args:
+        url: URL originale (ex: http://Micro-Studio-Camera-4K-G2.local)
+        max_retries: Nombre maximum de tentatives de résolution
+        retry_delay: Délai entre les tentatives en secondes
+        
+    Returns:
+        URL avec l'IP à la place du hostname, ou None si la résolution échoue
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        
+        if not hostname:
+            return url
+        
+        # Si c'est déjà une IP, retourner l'URL telle quelle
+        try:
+            socket.inet_aton(hostname)
+            return url  # C'est déjà une IP
+        except socket.error:
+            pass  # Ce n'est pas une IP, continuer
+        
+        # Si ce n'est pas un .local, ne pas essayer de résoudre (garder le nom DNS normal)
+        if not hostname.endswith('.local'):
+            return url
+        
+        # Essayer de résoudre le .local avec retry
+        logger = logging.getLogger(__name__)
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Tentative {attempt + 1}/{max_retries} de résolution DNS pour {hostname}")
+                # Utiliser getaddrinfo qui fonctionne mieux avec mDNS
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+                if addr_info:
+                    ip_address = addr_info[0][4][0]
+                    logger.info(f"✓ Résolution DNS réussie: {hostname} -> {ip_address}")
+                    # Remplacer le hostname par l'IP dans l'URL
+                    new_url = url.replace(hostname, ip_address)
+                    return new_url
+            except (socket.gaierror, OSError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Résolution DNS échouée pour {hostname} (tentative {attempt + 1}/{max_retries}): {e}, réessai dans {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"Impossible de résoudre {hostname} après {max_retries} tentatives: {e}")
+        
+        # Si la résolution échoue, retourner l'URL originale (peut fonctionner quand même)
+        logger.warning(f"Retour à l'URL originale {url} (résolution DNS échouée)")
+        return url
+        
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Erreur lors de la résolution DNS de {url}: {e}")
+        return url  # Retourner l'URL originale en cas d'erreur
 
 
 class BlackmagicWebSocketClient:
@@ -42,8 +103,14 @@ class BlackmagicWebSocketClient:
             on_connection_status_callback: Fonction appelée quand l'état de connexion change (connected: bool, message: str)
         """
         self.base_url = base_url.rstrip('/')
+        
+        # Essayer de résoudre les noms .local en IP pour améliorer la stabilité
+        # On garde l'URL originale en backup si la résolution échoue
+        resolved_url = resolve_hostname_to_ip(self.base_url, max_retries=2, retry_delay=1.0)
+        self.resolved_base_url = resolved_url if resolved_url != self.base_url else None
+        
         # Convertir http:// en ws:// ou https:// en wss://
-        ws_base = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
+        ws_base = (self.resolved_base_url if self.resolved_base_url else self.base_url).replace('http://', 'ws://').replace('https://', 'wss://')
         # Endpoint WebSocket selon la documentation Blackmagic Design
         # Format: /control/api/v1/event/websocket
         self.ws_url = f"{ws_base}/control/api/v1/event/websocket"
@@ -54,6 +121,8 @@ class BlackmagicWebSocketClient:
         self.websocket: Optional[WebSocketClientProtocol] = None
         self.running = False
         self.reconnect_delay = 2  # Secondes avant reconnexion (réduit de 5s à 2s)
+        self.max_reconnect_delay = 30  # Délai maximum avec backoff exponentiel
+        self.reconnect_attempts = 0  # Compteur de tentatives de reconnexion
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.logger = logging.getLogger(__name__)
@@ -136,17 +205,33 @@ class BlackmagicWebSocketClient:
                             self.ws_url,
                             additional_headers=additional_headers,
                             ssl=None if 'ws://' in self.ws_url else ssl.create_default_context(),
-                            ping_interval=30,  # Ping toutes les 30 secondes pour détecter les connexions mortes
-                            ping_timeout=10  # Timeout de 10 secondes pour la réponse pong
+                            ping_interval=20,  # Ping toutes les 20 secondes pour détecter les connexions mortes plus rapidement
+                            ping_timeout=15,  # Timeout de 15 secondes pour la réponse pong (augmenté pour stabilité)
+                            close_timeout=10  # Timeout pour fermeture propre
                         ),
-                        timeout=10.0
+                        timeout=15.0  # Timeout de connexion augmenté à 15 secondes
                     )
                     
                 except asyncio.TimeoutError:
-                    raise
+                    # Timeout de connexion - réessayer avec backoff exponentiel
+                    if self.running:
+                        # Calculer le délai avec backoff exponentiel
+                        delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
+                        self.reconnect_attempts += 1
+                        error_msg = f"Timeout de connexion WebSocket (tentative {self.reconnect_attempts})"
+                        self.logger.warning(f"{error_msg} à {self.ws_url}, reconnexion dans {delay}s...")
+                        if self.on_connection_status_callback:
+                            try:
+                                self.on_connection_status_callback(False, error_msg)
+                            except Exception:
+                                pass
+                        await asyncio.sleep(delay)
+                        continue  # Réessayer la connexion
+                    break
                 
                 async with websocket:
                     self.websocket = websocket
+                    self.reconnect_attempts = 0  # Réinitialiser le compteur après connexion réussie
                     self.logger.info(f"✓ WebSocket connecté avec succès à {self.ws_url}")
                     
                     # Notifier la connexion réussie
@@ -193,35 +278,47 @@ class BlackmagicWebSocketClient:
                     await asyncio.sleep(self.reconnect_delay)
             except websockets.exceptions.ConnectionClosed as e:
                 if self.running:
-                    self.logger.warning(f"Connexion WebSocket fermée (code: {e.code}, raison: {e.reason}), reconnexion dans {self.reconnect_delay}s...")
+                    # Calculer le délai avec backoff exponentiel pour erreurs transitoires
+                    delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
+                    self.reconnect_attempts += 1
+                    self.logger.warning(f"Connexion WebSocket fermée (code: {e.code}, raison: {e.reason}), reconnexion dans {delay}s...")
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Connexion fermée (code: {e.code})")
                         except Exception:
                             pass
-                    await asyncio.sleep(self.reconnect_delay)
+                    await asyncio.sleep(delay)
             except websockets.exceptions.ConnectionClosedError as e:
                 if self.running:
-                    self.logger.warning(f"Erreur de connexion WebSocket fermée: {e}, reconnexion dans {self.reconnect_delay}s...")
+                    # Calculer le délai avec backoff exponentiel pour erreurs transitoires
+                    delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
+                    self.reconnect_attempts += 1
+                    self.logger.warning(f"Erreur de connexion WebSocket fermée: {e}, reconnexion dans {delay}s...")
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Erreur de connexion: {e}")
                         except Exception:
                             pass
-                    await asyncio.sleep(self.reconnect_delay)
+                    await asyncio.sleep(delay)
             except OSError as e:
                 if self.running:
+                    # Calculer le délai avec backoff exponentiel pour erreurs réseau
+                    delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
+                    self.reconnect_attempts += 1
                     self.logger.error(f"Erreur réseau WebSocket: {e}")
-                    self.logger.error(f"Vérifiez que la caméra est accessible à {self.base_url}")
+                    self.logger.error(f"Vérifiez que la caméra est accessible à {self.base_url}, reconnexion dans {delay}s...")
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Erreur réseau: {e}")
                         except Exception:
                             pass
-                    await asyncio.sleep(self.reconnect_delay)
+                    await asyncio.sleep(delay)
             except Exception as e:
                 if self.running:
-                    self.logger.error(f"Erreur WebSocket inattendue: {type(e).__name__}: {e}")
+                    # Calculer le délai avec backoff exponentiel pour erreurs inattendues
+                    delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
+                    self.reconnect_attempts += 1
+                    self.logger.error(f"Erreur WebSocket inattendue: {type(e).__name__}: {e}, reconnexion dans {delay}s...")
                     import traceback
                     self.logger.error(traceback.format_exc())
                     if self.on_connection_status_callback:
@@ -229,7 +326,7 @@ class BlackmagicWebSocketClient:
                             self.on_connection_status_callback(False, f"Erreur: {type(e).__name__}")
                         except Exception:
                             pass
-                    await asyncio.sleep(self.reconnect_delay)
+                    await asyncio.sleep(delay)
             finally:
                 was_connected = self.websocket is not None
                 self.websocket = None
@@ -461,25 +558,32 @@ class BlackmagicFocusController:
             password: Mot de passe pour l'authentification basique
         """
         self.base_url = base_url.rstrip('/')
-        self.focus_endpoint = f"{self.base_url}/control/api/v1/lens/focus"
-        self.autofocus_endpoint = f"{self.base_url}/control/api/v1/lens/focus/doAutoFocus"
-        self.iris_endpoint = f"{self.base_url}/control/api/v1/lens/iris"
-        self.zoom_endpoint = f"{self.base_url}/control/api/v1/lens/zoom"
-        self.gain_endpoint = f"{self.base_url}/control/api/v1/video/gain"
-        self.supported_gains_endpoint = f"{self.base_url}/control/api/v1/video/supportedGains"
-        self.shutter_endpoint = f"{self.base_url}/control/api/v1/video/shutter"
-        self.shutter_measurement_endpoint = f"{self.base_url}/control/api/v1/video/shutter/measurement"
-        self.supported_shutters_endpoint = f"{self.base_url}/control/api/v1/video/supportedShutters"
-        self.whitebalance_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance"
-        self.whitebalance_description_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/description"
-        self.whitebalance_auto_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalance/doAuto"
-        self.whitebalance_tint_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalanceTint"
-        self.whitebalance_tint_description_endpoint = f"{self.base_url}/control/api/v1/video/whiteBalanceTint/description"
+        
+        # Essayer de résoudre les noms .local en IP pour améliorer la stabilité des connexions HTTP
+        resolved_url = resolve_hostname_to_ip(self.base_url, max_retries=2, retry_delay=1.0)
+        self.resolved_base_url = resolved_url if resolved_url != self.base_url else None
+        # Utiliser l'URL résolue pour les endpoints HTTP si disponible, sinon l'URL originale
+        base_url_for_endpoints = self.resolved_base_url if self.resolved_base_url else self.base_url
+        
+        self.focus_endpoint = f"{base_url_for_endpoints}/control/api/v1/lens/focus"
+        self.autofocus_endpoint = f"{base_url_for_endpoints}/control/api/v1/lens/focus/doAutoFocus"
+        self.iris_endpoint = f"{base_url_for_endpoints}/control/api/v1/lens/iris"
+        self.zoom_endpoint = f"{base_url_for_endpoints}/control/api/v1/lens/zoom"
+        self.gain_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/gain"
+        self.supported_gains_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/supportedGains"
+        self.shutter_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/shutter"
+        self.shutter_measurement_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/shutter/measurement"
+        self.supported_shutters_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/supportedShutters"
+        self.whitebalance_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/whiteBalance"
+        self.whitebalance_description_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/whiteBalance/description"
+        self.whitebalance_auto_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/whiteBalance/doAuto"
+        self.whitebalance_tint_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/whiteBalanceTint"
+        self.whitebalance_tint_description_endpoint = f"{base_url_for_endpoints}/control/api/v1/video/whiteBalanceTint/description"
         self.display_name = "HDMI"  # Display name fixe selon la documentation
-        self.zebra_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/zebra"
-        self.focus_assist_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/focusAssist"
-        self.false_color_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/falseColor"
-        self.cleanfeed_endpoint = f"{self.base_url}/control/api/v1/monitoring/{self.display_name}/cleanFeed"
+        self.zebra_endpoint = f"{base_url_for_endpoints}/control/api/v1/monitoring/{self.display_name}/zebra"
+        self.focus_assist_endpoint = f"{base_url_for_endpoints}/control/api/v1/monitoring/{self.display_name}/focusAssist"
+        self.false_color_endpoint = f"{base_url_for_endpoints}/control/api/v1/monitoring/{self.display_name}/falseColor"
+        self.cleanfeed_endpoint = f"{base_url_for_endpoints}/control/api/v1/monitoring/{self.display_name}/cleanFeed"
         self.auth = (username, password)
         self.current_value: Optional[float] = None
         self.target_value: Optional[float] = None

@@ -1,34 +1,55 @@
 {
+  "global": {
+    "companion_surface_id": "emulator:wTUoZejUfSzyNq2IIy5KW",
+    "companion_host": "127.0.0.1",
+    "companion_port": 16759,
+    "sequences_column_widths": {
+      "0": 91.6686114352392,
+      "1": 96.25204200700117,
+      "2": 87.08518086347725,
+      "3": 82.50175029171528,
+      "4": 80.2100350058343,
+      "5": 72.18903150525087,
+      "6": 91.6686114352392,
+      "7": 80.2100350058343,
+      "8": 105.41890315052508
+    },
+    "atem": {
+      "ip": "192.168.1.196",
+      "aux_output": 1
+    }
+  },
   "active_camera": 1,
   "camera_1": {
-    "url": "http://Micro-Studio-Camera-4K-G2.local",
+    "url": "http://Micro-Studio-Camera-4K-G2-1.local",
     "username": "roo",
     "password": "koko",
-    "slider_ip": "192.168.1.37",
+    "slider_ip": "192.168.1.35",
+    "companion_page": 1,
     "presets": {
       "preset_1": {
-        "focus": 0.82778000831604,
+        "focus": 0.2672833204269409,
+        "iris": 0.0,
+        "gain": 0,
+        "shutter": 50,
+        "whitebalance": 5600,
+        "zoom": 0.0,
+        "pan": 0.2664767,
+        "tilt": 0.6875,
+        "zoom_motor": 1.0,
+        "slide": 0.09
+      },
+      "preset_2": {
+        "focus": 0.8273785710334778,
         "iris": 0.1666666716337204,
         "gain": 14,
         "shutter": 50,
         "whitebalance": 5300,
         "zoom": 0.0,
-        "pan": 0.2922631,
-        "tilt": 0.65,
+        "pan": 0.5845262999999999,
+        "tilt": 0.58125,
         "zoom_motor": 0.19896550000000002,
         "slide": 0.0
-      },
-      "preset_2": {
-        "focus": 0.811646580696106,
-        "iris": 0.0,
-        "gain": 14,
-        "shutter": 50,
-        "whitebalance": 5300,
-        "zoom": 0.0,
-        "pan": 0.6361053,
-        "tilt": 0.51875,
-        "zoom_motor": 0.3189655,
-        "slide": 0.15799770000000002
       },
       "preset_4": {
         "focus": 0.7888621687889099,
@@ -130,55 +151,37 @@
           "0.0": {
             "type": "baked",
             "value": {
-              "pan": 0.4721074,
-              "tilt": 0.49375,
-              "zoom": 0.7470689,
-              "slide": 0.6202567,
-              "focus": 0.8532219529151917
+              "pan": 0.31518409999999997,
+              "tilt": 0.61875,
+              "zoom": 0.19896550000000002,
+              "slide": 0.9559998000000001,
+              "focus": 0.8273785710334778
             }
           },
-          "0.25": {
-            "type": "baked",
-            "value": {
-              "pan": 0.16326000000000002,
-              "tilt": 0.5209926,
-              "zoom": 0.7470689,
-              "slide": 0.6202567,
-              "focus": 0.8311455845832825
-            }
-          },
+          "0.25": null,
           "0.5": {
             "type": "baked",
             "value": {
-              "pan": 0.7707719000000001,
-              "tilt": 0.29375,
-              "zoom": 0.7470689,
-              "slide": 0.6202567,
-              "focus": 0.8421837687492371
+              "pan": 0.5845262999999999,
+              "tilt": 0.58125,
+              "zoom": 0.19896550000000002,
+              "slide": 0.0,
+              "focus": 0.8273785710334778
             }
           },
-          "0.75": {
-            "type": "baked",
-            "value": {
-              "pan": 0.04871052,
-              "tilt": 0.05625,
-              "zoom": 0.0,
-              "slide": 0.7440004,
-              "focus": 0.574701189994812
-            }
-          },
+          "0.75": null,
           "1.0": {
             "type": "baked",
             "value": {
-              "pan": 0.9455615,
-              "tilt": 0.90625,
-              "zoom": 1.0,
-              "slide": 0.9510033,
-              "focus": 0.6326996088027954
+              "pan": 0.31518409999999997,
+              "tilt": 0.61875,
+              "zoom": 0.19896550000000002,
+              "slide": 0.9559998000000001,
+              "focus": 0.8273785710334778
             }
           }
         },
-        "duration": 300.0,
+        "duration": 15.0,
         "baked": true
       },
       {
@@ -205,7 +208,7 @@
             "value": 1
           }
         },
-        "duration": 5.0,
+        "duration": 50.0,
         "baked": false
       },
       {
@@ -433,24 +436,14 @@
       "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 8.0,
-    "sequences_column_widths": {
-      "0": 1028.98016336056,
-      "1": 468.6557759626604,
-      "2": 488.13535589264876,
-      "3": 468.6557759626604,
-      "4": 409.07117852975495,
-      "5": 569.4912485414236,
-      "6": 745.953325554259,
-      "7": 1129.815635939323,
-      "8": 1291.3815635939322
-    }
+    "crossfade_duration": 8.0
   },
   "camera_2": {
-    "url": "http://Micro-Studio-Camera-4K-G2-2.local",
+    "url": "http://Micro-Studio-Camera-4K-G2-3.local",
     "username": "",
     "password": "",
-    "slider_ip": "",
+    "slider_ip": "192.168.1.37",
+    "companion_page": 2,
     "presets": {
       "preset_1": {
         "focus": 0.2091946005821228,
@@ -726,6 +719,7 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 3,
     "presets": {},
     "sequences": [
       {
@@ -984,6 +978,7 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 4,
     "presets": {},
     "sequences": [
       {
@@ -1242,6 +1237,7 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 5,
     "presets": {},
     "sequences": [
       {
@@ -1500,8 +1496,250 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 6,
     "presets": {},
-    "sequences": [],
+    "sequences": [
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -1517,8 +1755,250 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 7,
     "presets": {},
-    "sequences": [],
+    "sequences": [
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
     "recall_scope": {
       "focus": false,
       "iris": false,
@@ -1534,8 +2014,250 @@
     "username": "",
     "password": "",
     "slider_ip": "",
+    "companion_page": 8,
     "presets": {},
-    "sequences": [],
+    "sequences": [
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "points": {
+          "0.0": null,
+          "0.25": null,
+          "0.5": null,
+          "0.75": null,
+          "1.0": null
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
     "recall_scope": {
       "focus": false,
       "iris": false,

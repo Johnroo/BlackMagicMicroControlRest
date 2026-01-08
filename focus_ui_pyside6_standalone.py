@@ -11,13 +11,15 @@ import time
 import json
 import os
 import math
+from functools import partial
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
     QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QCheckBox
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QCheckBox,
+    QComboBox, QScrollArea, QGroupBox, QSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
 from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent, QDoubleValidator
@@ -29,6 +31,14 @@ from command_handler import CommandHandler
 from slider_controller import SliderController
 from slider_websocket_client import SliderWebSocketClient
 from focus_lut import FocusLUT
+from companion_controller import CompanionController
+from atem_controller import AtemController
+from preset_description_manager import (
+    load_preset_descriptions, save_preset_descriptions,
+    get_musicians, add_musician, remove_musician,
+    set_preset_musician_plan, get_preset_musician_plan,
+    ensure_camera_exists
+)
 # from zoom_lut import ZoomLUT  # Désactivé - seule la LUT 3D est utilisée
 
 logging.basicConfig(level=logging.INFO)
@@ -437,6 +447,7 @@ class CameraData:
     username: str = ""
     password: str = ""
     slider_ip: str = ""
+    companion_page: int = 1  # Numéro de page Companion pour cette caméra
     
     # Connexions
     controller: Optional[Any] = None  # BlackmagicFocusController
@@ -479,7 +490,6 @@ class CameraData:
     
     # Sequences
     sequences: list = field(default_factory=list)  # Liste des séquences sauvegardées
-    sequences_column_widths: Optional[Dict[str, float]] = None  # Largeurs des colonnes du tableau Sequences
     
     # Presets
     presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -541,7 +551,7 @@ class CameraSignals(QObject):
 class ConnectionDialog(QDialog):
     """Dialog pour la connexion à la caméra."""
     
-    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", slider_ip: str = "", connected: bool = False):
+    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", slider_ip: str = "", companion_page: int = 1, connected: bool = False):
         super().__init__(parent)
         self.setWindowTitle(f"Paramètres de connexion - Caméra {camera_id}")
         self.setMinimumWidth(400)
@@ -633,6 +643,24 @@ class ConnectionDialog(QDialog):
             }
         """)
         layout.addWidget(self.slider_ip_input)
+        
+        # Champ Companion Page
+        companion_label = QLabel("Page Companion:")
+        companion_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(companion_label)
+        self.companion_page_input = QLineEdit()
+        self.companion_page_input.setText(str(companion_page))
+        self.companion_page_input.setPlaceholderText("1")
+        self.companion_page_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+        """)
+        layout.addWidget(self.companion_page_input)
         
         # Voyant de statut
         status_layout = QHBoxLayout()
@@ -862,9 +890,19 @@ class MainWindow(QMainWindow):
         # CommandHandler pour traiter les commandes Companion
         self.command_handler = CommandHandler()
         
+        # Companion Controller sera initialisé après le chargement de la config
+        self.companion_controller = None
+        
+        # ATEM Controller sera initialisé après le chargement de la config
+        self.atem_controller: Optional[AtemController] = None
+        self.atem_config = {"ip": "", "aux_output": 2, "connected": False}
+        
         # Variables de connexion (remplacées par cameras dict)
         self.cameras: Dict[int, CameraData] = {}
         self.active_camera_id: int = 1
+        
+        # Configuration globale (pas par caméra)
+        self.sequences_column_widths: Optional[Dict[str, float]] = None  # Largeurs des colonnes du tableau Sequences (global)
         
         # Variables pour le throttling (les timestamps sont maintenant dans CameraData)
         self.OTHER_MIN_INTERVAL = 500  # ms
@@ -996,6 +1034,9 @@ class MainWindow(QMainWindow):
         # Connecter les signaux
         self.connect_signals()
         
+        # Initialiser la page Companion pour la caméra active au démarrage
+        QTimer.singleShot(500, lambda: self._init_companion_page())
+        
         # Charger les valeurs de la caméra active dans l'UI
         self._update_ui_from_camera_data(self.get_active_camera_data())
         
@@ -1028,11 +1069,10 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet("color: #aaa;")
             self.set_controls_enabled(False)
         
-        # Connexion automatique si la caméra active a des paramètres configurés
+        # Connexion automatique pour toutes les caméras configurées
         # Utiliser QTimer pour ne pas bloquer l'ouverture de l'UI
-        if cam_data.url and cam_data.username and cam_data.password:
-            # Délai de 500ms pour laisser l'UI s'afficher d'abord
-            QTimer.singleShot(500, lambda: self._try_auto_connect())
+        # Délai initial plus long (2 secondes) pour laisser le système réseau se stabiliser
+        QTimer.singleShot(2000, lambda: self._try_auto_connect_all_cameras())
         
         # Détection du réveil de l'ordinateur pour reconnecter les WebSockets
         app = QApplication.instance()
@@ -1043,6 +1083,11 @@ class MainWindow(QMainWindow):
         self.websocket_check_timer = QTimer()
         self.websocket_check_timer.timeout.connect(self._check_websockets_health)
         self.websocket_check_timer.start(10000)  # 10 secondes
+        
+        # Timer périodique pour vérifier l'état de l'ATEM (toutes les 2 secondes)
+        self.atem_status_timer = QTimer()
+        self.atem_status_timer.timeout.connect(self._check_atem_status)
+        self.atem_status_timer.start(2000)  # 2 secondes
     
     def load_cameras_config(self):
         """Charge la configuration des caméras depuis cameras_config.json."""
@@ -1055,6 +1100,11 @@ class MainWindow(QMainWindow):
             else:
                 # Créer une configuration par défaut
                 config = {
+                    "global": {
+                        "companion_surface_id": "emulator:wTUoZejUfSzyNq2IIy5KW",
+                        "companion_host": "127.0.0.1",
+                        "companion_port": 16759
+                    },
                     "camera_1": {
                         "url": "http://Micro-Studio-Camera-4K-G2.local",
                         "username": "roo",
@@ -1070,6 +1120,61 @@ class MainWindow(QMainWindow):
                         "presets": {}
                     }
                 config["active_camera"] = 1
+            
+            # Charger la configuration globale Companion
+            global_config = config.get("global", {})
+            companion_surface_id = global_config.get("companion_surface_id", "emulator:wTUoZejUfSzyNq2IIy5KW")
+            companion_host = global_config.get("companion_host", "127.0.0.1")
+            companion_port = global_config.get("companion_port", 16759)
+            
+            # Charger sequences_column_widths depuis la config globale (pas par caméra)
+            # Migration: si présent dans une caméra, le déplacer vers global
+            if "sequences_column_widths" in global_config:
+                self.sequences_column_widths = global_config.get("sequences_column_widths")
+            else:
+                # Migration: chercher dans les caméras pour migrer vers global
+                migration_needed = False
+                for i in range(1, 9):
+                    cam_key = f"camera_{i}"
+                    if cam_key in config:
+                        cam_config = config.get(cam_key, {})
+                        if "sequences_column_widths" in cam_config:
+                            # Migrer vers global
+                            if not self.sequences_column_widths:
+                                self.sequences_column_widths = cam_config["sequences_column_widths"]
+                                logger.info(f"Migration: sequences_column_widths déplacé de {cam_key} vers config globale")
+                            migration_needed = True
+                            # Supprimer de la caméra (sera nettoyé lors de la prochaine sauvegarde)
+                            del config[cam_key]["sequences_column_widths"]
+                if migration_needed and self.sequences_column_widths:
+                    # Sauvegarder la migration
+                    global_config["sequences_column_widths"] = self.sequences_column_widths
+                    config["global"] = global_config
+                    try:
+                        with open("cameras_config.json", 'w') as f:
+                            json.dump(config, f, indent=2)
+                        logger.info("Migration sequences_column_widths terminée et sauvegardée")
+                    except Exception as e:
+                        logger.warning(f"Erreur lors de la sauvegarde de la migration: {e}")
+            
+            # Initialiser le Companion Controller avec la config chargée
+            self.companion_controller = CompanionController(
+                host=companion_host,
+                port=companion_port,
+                surface_ids=[companion_surface_id]
+            )
+            
+            # Charger la configuration ATEM depuis global
+            atem_config = global_config.get("atem", {})
+            self.atem_config = {
+                "ip": atem_config.get("ip", ""),
+                "aux_output": atem_config.get("aux_output", 2),
+                "connected": False  # État de connexion, pas sauvegardé
+            }
+            
+            # Initialiser l'ATEM Controller si IP configurée
+            if self.atem_config["ip"]:
+                self.init_atem_controller()
             
             # Initialiser les 8 caméras
             for i in range(1, 9):
@@ -1128,14 +1233,13 @@ class MainWindow(QMainWindow):
                         username=cam_config.get("username", ""),
                         password=cam_config.get("password", ""),
                         slider_ip=cam_config.get("slider_ip", ""),
+                        companion_page=cam_config.get("companion_page", i),  # Par défaut, page = ID caméra
                         presets=cam_config.get("presets", {}),
                         sequences=normalized_sequences,
                         recall_scope=recall_scope,
                         crossfade_duration=float(crossfade_duration)
                     )
-                    # Charger sequences_column_widths si présent
-                    if "sequences_column_widths" in cam_config:
-                        cam_data.sequences_column_widths = cam_config.get("sequences_column_widths")
+                    # sequences_column_widths est maintenant global, pas par caméra
                     self.cameras[i] = cam_data
                 else:
                     # Créer une caméra vide
@@ -1156,7 +1260,36 @@ class MainWindow(QMainWindow):
         config_file = "cameras_config.json"
         
         try:
+            # Charger la config existante pour préserver la section globale
+            global_config = {}
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r') as f:
+                        existing_config = json.load(f)
+                        global_config = existing_config.get("global", {})
+                except:
+                    pass
+            
+            # Si pas de config globale, utiliser les valeurs par défaut
+            if not global_config:
+                global_config = {
+                    "companion_surface_id": "emulator:wTUoZejUfSzyNq2IIy5KW",
+                    "companion_host": "127.0.0.1",
+                    "companion_port": 16759
+                }
+            
+            # Ajouter sequences_column_widths à la config globale si présent
+            if self.sequences_column_widths:
+                global_config["sequences_column_widths"] = self.sequences_column_widths
+            
+            # Ajouter la config ATEM à la config globale (sans l'état connected)
+            global_config["atem"] = {
+                "ip": self.atem_config.get("ip", ""),
+                "aux_output": self.atem_config.get("aux_output", 2)
+            }
+            
             config = {
+                "global": global_config,
                 "active_camera": self.active_camera_id
             }
             
@@ -1167,14 +1300,13 @@ class MainWindow(QMainWindow):
                     "username": cam_data.username,
                     "password": cam_data.password,
                     "slider_ip": cam_data.slider_ip,
+                    "companion_page": cam_data.companion_page,
                     "presets": cam_data.presets,
                     "sequences": cam_data.sequences,
                     "recall_scope": cam_data.recall_scope,
                     "crossfade_duration": cam_data.crossfade_duration
                 }
-                # Sauvegarder sequences_column_widths si présent
-                if cam_data.sequences_column_widths:
-                    config[f"camera_{i}"]["sequences_column_widths"] = cam_data.sequences_column_widths
+                # sequences_column_widths est maintenant global, pas sauvegardé par caméra
             
             with open(config_file, 'w') as f:
                 json.dump(config, f, indent=2)
@@ -1186,6 +1318,73 @@ class MainWindow(QMainWindow):
     def get_active_camera_data(self) -> CameraData:
         """Retourne les données de la caméra active."""
         return self.cameras.get(self.active_camera_id, CameraData())
+    
+    def init_atem_controller(self):
+        """Initialise l'ATEM Controller avec la configuration actuelle."""
+        if not self.atem_config.get("ip"):
+            logger.debug("Pas d'IP ATEM configurée, initialisation ignorée")
+            return
+        
+        try:
+            # Déconnecter l'ancien controller s'il existe
+            if self.atem_controller:
+                self.atem_controller.disconnect()
+            
+            # Créer le nouveau controller
+            def status_callback(connected: bool, ip: str):
+                """Callback appelé quand l'état de connexion ATEM change."""
+                self.atem_config["connected"] = connected
+                # Mettre à jour l'UI si le workspace 4 est actif
+                if self.active_workspace_id == 4:
+                    self.update_atem_status()
+            
+            self.atem_controller = AtemController(
+                ip=self.atem_config["ip"],
+                aux_output=self.atem_config.get("aux_output", 2),
+                auto_retry=True,
+                retry_delay=5,
+                max_retry_delay=30,
+                max_retry_attempts=-1,  # Tentatives illimitées
+                status_callback=status_callback
+            )
+            
+            # Lancer la connexion dans un thread séparé pour ne pas bloquer l'UI
+            import threading
+            connect_thread = threading.Thread(target=self.atem_controller.connect, daemon=True)
+            connect_thread.start()
+            
+            logger.info(f"ATEM Controller initialisé pour {self.atem_config['ip']}")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation de l'ATEM Controller: {e}")
+            self.atem_controller = None
+    
+    def connect_atem(self):
+        """Établit la connexion avec l'ATEM."""
+        if not self.atem_controller:
+            if not self.atem_config.get("ip"):
+                logger.warning("IP ATEM non configurée, impossible de se connecter")
+                return
+            self.init_atem_controller()
+        else:
+            if not self.atem_controller.is_connected():
+                import threading
+                connect_thread = threading.Thread(target=self.atem_controller.connect, daemon=True)
+                connect_thread.start()
+    
+    def disconnect_atem(self):
+        """Ferme la connexion ATEM."""
+        if self.atem_controller:
+            self.atem_controller.disconnect()
+            self.atem_config["connected"] = False
+            if self.active_workspace_id == 4:
+                self.update_atem_status()
+    
+    def _init_companion_page(self):
+        """Initialise la page Companion au démarrage."""
+        if hasattr(self, 'companion_controller') and self.companion_controller:
+            cam_data = self.get_active_camera_data()
+            companion_page = cam_data.companion_page
+            self.companion_controller.switch_camera_page(self.active_camera_id, companion_page)
     
     def init_ui(self):
         """Initialise l'interface utilisateur."""
@@ -1273,7 +1472,7 @@ class MainWindow(QMainWindow):
         
         # Créer 2 boutons pour les workspaces
         self.workspace_buttons = []
-        for i in range(1, 3):
+        for i in range(1, 5):
             btn = QPushButton(f"Workspace {i}")
             btn_width = self._scale_value(100)
             btn_height = self._scale_value(30)
@@ -1406,6 +1605,14 @@ class MainWindow(QMainWindow):
         workspace_2_page = self.create_workspace_2_page()
         self.workspace_stack.addWidget(workspace_2_page)
         
+        # Page 3 (Workspace 3) : Vue caméras (style AUTOREAL)
+        workspace_3_page = self.create_workspace_3_page()
+        self.workspace_stack.addWidget(workspace_3_page)
+        
+        # Page 4 (Workspace 4) : Configuration et état ATEM
+        workspace_4_page = self.create_workspace_4_page()
+        self.workspace_stack.addWidget(workspace_4_page)
+        
         # Connecter les signaux du panneau joystick et LFO
         if hasattr(workspace_2_page, 'layout') and workspace_2_page.layout():
             # Trouver les panneaux dans la page
@@ -1523,7 +1730,7 @@ class MainWindow(QMainWindow):
     
     def switch_workspace(self, workspace_id: int):
         """Change l'onglet workspace actif."""
-        if workspace_id < 1 or workspace_id > 2:
+        if workspace_id < 1 or workspace_id > 4:
             logger.warning(f"ID de workspace invalide: {workspace_id}")
             return
         
@@ -1539,7 +1746,31 @@ class MainWindow(QMainWindow):
         for i, btn in enumerate(self.workspace_buttons, start=1):
             btn.setChecked(i == workspace_id)
         
+        # Mettre à jour l'affichage du Workspace 3 si on y accède
+        if workspace_id == 3:
+            self.update_workspace_3_camera_display()
+            # Rafraîchir aussi les musiciens
+            if hasattr(self, 'workspace_3_refresh_musicians'):
+                self.workspace_3_refresh_musicians()
+        
+        # Mettre à jour l'affichage du Workspace 4 si on y accède
+        if workspace_id == 4:
+            self.update_atem_status()
+        
         logger.debug(f"Workspace changé vers {workspace_id}")
+    
+    def _check_atem_status(self):
+        """Vérifie périodiquement l'état de connexion ATEM et met à jour l'affichage."""
+        if self.atem_controller:
+            # Mettre à jour l'état dans la config
+            was_connected = self.atem_config.get("connected", False)
+            is_connected = self.atem_controller.is_connected()
+            
+            if was_connected != is_connected:
+                self.atem_config["connected"] = is_connected
+                # Mettre à jour l'affichage si on est dans le workspace 4
+                if self.active_workspace_id == 4:
+                    self.update_atem_status()
     
     def switch_active_camera(self, camera_id: int):
         """Bascule vers la caméra spécifiée (pour l'affichage UI)."""
@@ -1566,6 +1797,13 @@ class MainWindow(QMainWindow):
         # Mettre à jour l'encadré du preset actif
         self.update_preset_highlight()
         
+        # Mettre à jour les boutons de caméras dans le Workspace 3
+        if hasattr(self, 'workspace_3_camera_buttons'):
+            for i, btn in enumerate(self.workspace_3_camera_buttons, start=1):
+                btn.blockSignals(True)
+                btn.setChecked(i == camera_id)
+                btn.blockSignals(False)
+        
         # Mettre à jour l'UI du recall scope
         self.update_recall_scope_ui()
         
@@ -1586,8 +1824,27 @@ class MainWindow(QMainWindow):
         # Mettre à jour l'indicateur de statut du slider pour cette caméra
         self.update_slider_status_indicator()
         
+        # Mettre à jour le Workspace 3 si visible
+        self.update_workspace_3_camera_display()
+        
+        # Changer la page Companion selon la caméra sélectionnée
+        if hasattr(self, 'companion_controller') and self.companion_controller:
+            companion_page = cam_data.companion_page
+            self.companion_controller.switch_camera_page(camera_id, companion_page)
+        
         # Activer/désactiver les contrôles selon l'état de connexion
         self.set_controls_enabled(cam_data.connected)
+        
+        # Synchroniser avec l'ATEM switcher (commuter HDMI 2 vers la caméra sélectionnée)
+        if self.atem_controller and self.atem_controller.is_connected():
+            try:
+                # Mapping 1:1 : caméra 1 = input 1, caméra 2 = input 2, etc.
+                if self.atem_controller.switch_to_camera(camera_id):
+                    logger.info(f"ATEM: HDMI 2 commuté vers caméra {camera_id}")
+                else:
+                    logger.warning(f"ATEM: Échec de la commutation vers caméra {camera_id}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la commutation ATEM: {e}")
         
         # Sauvegarder la caméra active dans la config
         self.save_cameras_config()
@@ -3974,6 +4231,360 @@ class MainWindow(QMainWindow):
         
         return page
     
+    def create_workspace_3_page(self):
+        """Crée la page pour le Workspace 3 - Vue caméras avec gestion musiciens et plans (style AUTOREAL)."""
+        page = QWidget()
+        page.setStyleSheet("""
+            QWidget {
+                background-color: #2a2a2a;
+            }
+        """)
+        main_layout = QHBoxLayout(page)
+        main_layout.setContentsMargins(self._scale_value(20), self._scale_value(20), 
+                                      self._scale_value(20), self._scale_value(20))
+        main_layout.setSpacing(self._scale_value(20))
+        
+        # Colonne gauche : Gestion des musiciens
+        left_panel = self.create_workspace_3_musicians_panel()
+        main_layout.addWidget(left_panel, stretch=0)
+        
+        # Colonne droite : Affichage d'un preset avec Save/Recall et assignation musiciens/plans
+        right_panel = self.create_workspace_3_preset_view_panel()
+        main_layout.addWidget(right_panel, stretch=1)
+        
+        return page
+    
+    def create_workspace_3_musicians_panel(self):
+        """Crée le panneau de gestion des musiciens (colonne gauche)."""
+        panel = QWidget()
+        panel_width = self._scale_value(280)
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(panel_width)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 8px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(self._scale_value(25), self._scale_value(25), 
+                                 self._scale_value(25), self._scale_value(25))
+        layout.setSpacing(self._scale_value(15))
+        
+        # Titre
+        title = QLabel("🎵 Musiciens")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size: {self._scale_font(18)}; font-weight: bold; color: #fff;")
+        layout.addWidget(title)
+        
+        # Séparateur
+        separator = QWidget()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: #444;")
+        layout.addWidget(separator)
+        
+        # Liste des musiciens
+        musicians_scroll = QScrollArea()
+        musicians_scroll.setWidgetResizable(True)
+        musicians_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+        
+        musicians_list_widget = QWidget()
+        musicians_list_layout = QVBoxLayout(musicians_list_widget)
+        musicians_list_layout.setContentsMargins(0, 0, 0, 0)
+        musicians_list_layout.setSpacing(self._scale_value(8))
+        
+        self.workspace_3_musicians_list_layout = musicians_list_layout
+        self.workspace_3_musician_widgets = []
+        
+        musicians_scroll.setWidget(musicians_list_widget)
+        layout.addWidget(musicians_scroll, stretch=1)
+        
+        # Séparateur
+        separator2 = QWidget()
+        separator2.setFixedHeight(1)
+        separator2.setStyleSheet("background-color: #444;")
+        layout.addWidget(separator2)
+        
+        # Formulaire d'ajout
+        add_label = QLabel("Ajouter un musicien:")
+        add_label.setStyleSheet(f"font-size: {self._scale_font(12)}; font-weight: bold; color: #aaa;")
+        layout.addWidget(add_label)
+        
+        add_container = QWidget()
+        add_layout = QHBoxLayout(add_container)
+        add_layout.setContentsMargins(0, 0, 0, 0)
+        add_layout.setSpacing(self._scale_value(8))
+        
+        self.workspace_3_new_musician_input = QLineEdit()
+        self.workspace_3_new_musician_input.setPlaceholderText("Nom du musicien")
+        self.workspace_3_new_musician_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #2a2a2a;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #0a5;
+                background-color: #333;
+            }
+        """))
+        
+        add_btn = QPushButton("+")
+        add_btn.setMinimumWidth(self._scale_value(45))
+        add_btn.setMinimumHeight(self._scale_value(35))
+        add_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 8px;
+                background-color: #0a5;
+                border: 1px solid #0c7;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 18px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+            QPushButton:pressed {
+                background-color: #084;
+            }
+        """))
+        add_btn.clicked.connect(self.workspace_3_add_musician)
+        self.workspace_3_new_musician_input.returnPressed.connect(self.workspace_3_add_musician)
+        
+        add_layout.addWidget(self.workspace_3_new_musician_input)
+        add_layout.addWidget(add_btn)
+        layout.addWidget(add_container)
+        
+        # Charger et afficher les musiciens existants
+        QTimer.singleShot(100, self.workspace_3_refresh_musicians)
+        
+        return panel
+    
+    def create_workspace_3_preset_view_panel(self):
+        """Crée le panneau d'affichage d'un preset avec Save/Recall et assignation musiciens/plans."""
+        panel = QWidget()
+        panel.setStyleSheet(self._scale_style("""
+            QWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 8px;
+            }
+        """))
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(self._scale_value(30), self._scale_value(30), 
+                                 self._scale_value(30), self._scale_value(30))
+        layout.setSpacing(self._scale_value(20))
+        
+        # Header avec nom de caméra et badges (ON AIR / PREVIEW)
+        header_container = QWidget()
+        header_layout = QHBoxLayout(header_container)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(self._scale_value(15))
+        
+        self.workspace_3_camera_name_label = QLabel("📹 Caméra 1")
+        self.workspace_3_camera_name_label.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
+        header_layout.addWidget(self.workspace_3_camera_name_label)
+        
+        # Badges ON AIR / PREVIEW (pour l'instant cachés, intégration ATEM future)
+        self.workspace_3_on_air_badge = QLabel("🔴 ON AIR")
+        self.workspace_3_on_air_badge.setStyleSheet(f"""
+            font-size: {self._scale_font(12)};
+            font-weight: bold;
+            color: #fff;
+            background-color: #f00;
+            padding: 5px 10px;
+            border-radius: 4px;
+        """)
+        self.workspace_3_on_air_badge.hide()
+        
+        self.workspace_3_preview_badge = QLabel("🟢 PREVIEW")
+        self.workspace_3_preview_badge.setStyleSheet(f"""
+            font-size: {self._scale_font(12)};
+            font-weight: bold;
+            color: #fff;
+            background-color: #0a5;
+            padding: 5px 10px;
+            border-radius: 4px;
+        """)
+        self.workspace_3_preview_badge.hide()
+        
+        header_layout.addWidget(self.workspace_3_on_air_badge)
+        header_layout.addWidget(self.workspace_3_preview_badge)
+        header_layout.addStretch()
+        
+        layout.addWidget(header_container)
+        
+        # Séparateur
+        separator = QWidget()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: #444;")
+        layout.addWidget(separator)
+        
+        # Sélecteur de preset (boutons 1-10)
+        preset_selector_label = QLabel("Sélectionner un preset:")
+        preset_selector_label.setStyleSheet(f"font-size: {self._scale_font(14)}; font-weight: bold; color: #fff;")
+        layout.addWidget(preset_selector_label)
+        
+        preset_buttons_container = QWidget()
+        preset_buttons_layout = QGridLayout(preset_buttons_container)
+        preset_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        preset_buttons_layout.setSpacing(self._scale_value(8))
+        
+        self.workspace_3_preset_selector_buttons = []
+        self.workspace_3_selected_preset_id = 1
+        
+        for i in range(1, 11):
+            row = (i - 1) // 5
+            col = (i - 1) % 5
+            
+            btn = QPushButton(f"{i}")
+            btn.setCheckable(True)
+            btn.setMinimumHeight(self._scale_value(35))
+            btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 8px;
+                    background-color: #333;
+                    border: 2px solid #555;
+                    border-radius: 4px;
+                    color: #fff;
+                    font-size: 13px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #444;
+                    border-color: #777;
+                }
+                QPushButton:checked {
+                    background-color: #0066cc;
+                    border-color: #0088ff;
+                }
+            """))
+            if i == 1:
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, preset_id=i: self.workspace_3_select_preset(preset_id))
+            self.workspace_3_preset_selector_buttons.append(btn)
+            preset_buttons_layout.addWidget(btn, row, col)
+        
+        layout.addWidget(preset_buttons_container)
+        
+        # Séparateur
+        separator2 = QWidget()
+        separator2.setFixedHeight(1)
+        separator2.setStyleSheet("background-color: #444;")
+        layout.addWidget(separator2)
+        
+        # Section pour le preset sélectionné
+        preset_title_label = QLabel("Preset 1")
+        preset_title_label.setStyleSheet(f"font-size: {self._scale_font(18)}; font-weight: bold; color: #fff;")
+        layout.addWidget(preset_title_label)
+        self.workspace_3_preset_title_label = preset_title_label
+        
+        # Boutons Save et Recall pour ce preset (style identique au Workspace 1)
+        buttons_container = QWidget()
+        buttons_layout = QHBoxLayout(buttons_container)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(self._scale_value(15))
+        
+        # Bouton Save
+        save_btn = QPushButton("Save")
+        save_btn.setMinimumHeight(self._scale_value(35))
+        save_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 8px 20px;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #333;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """))
+        save_btn.clicked.connect(lambda: self.workspace_3_save_current_preset())
+        self.workspace_3_save_btn = save_btn
+        
+        # Bouton Recall
+        recall_btn = QPushButton("Recall")
+        recall_btn.setMinimumHeight(self._scale_value(35))
+        recall_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 8px 20px;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #0a5;
+                color: #fff;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
+        """))
+        recall_btn.clicked.connect(lambda: self.workspace_3_recall_current_preset())
+        self.workspace_3_recall_btn = recall_btn
+        
+        buttons_layout.addWidget(save_btn)
+        buttons_layout.addWidget(recall_btn)
+        buttons_layout.addStretch()
+        
+        layout.addWidget(buttons_container)
+        
+        # Séparateur
+        separator3 = QWidget()
+        separator3.setFixedHeight(1)
+        separator3.setStyleSheet("background-color: #444;")
+        layout.addWidget(separator3)
+        
+        # Section assignation musiciens/plans
+        assignment_label = QLabel("Assignation musiciens / plans")
+        assignment_label.setStyleSheet(f"font-size: {self._scale_font(16)}; font-weight: bold; color: #fff;")
+        layout.addWidget(assignment_label)
+        
+        # Scroll area pour la grille de musiciens
+        musicians_scroll = QScrollArea()
+        musicians_scroll.setWidgetResizable(True)
+        musicians_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+        
+        musicians_grid_widget = QWidget()
+        musicians_grid_layout = QVBoxLayout(musicians_grid_widget)
+        musicians_grid_layout.setContentsMargins(0, 0, 0, 0)
+        musicians_grid_layout.setSpacing(self._scale_value(12))
+        
+        self.workspace_3_musicians_grid_layout = musicians_grid_layout
+        self.workspace_3_musician_plan_widgets = []
+        
+        musicians_scroll.setWidget(musicians_grid_widget)
+        layout.addWidget(musicians_scroll, stretch=1)
+        
+        # Charger les assignations pour le preset sélectionné
+        QTimer.singleShot(200, lambda: self.workspace_3_refresh_preset_assignment())
+        
+        return panel
+    
     def create_joystick_control_panel(self):
         """Crée le panneau de contrôle Joystick."""
         panel = QWidget()
@@ -6244,25 +6855,22 @@ class MainWindow(QMainWindow):
             unscaled_width = width / scale_factor
             column_widths[str(i)] = unscaled_width
         
-        # Sauvegarder dans la configuration de la caméra active
-        cam_data = self.get_active_camera_data()
-        if cam_data:
-            cam_data.sequences_column_widths = column_widths
-            self.save_cameras_config()
-            logger.debug(f"Largeurs de colonnes sauvegardées: {column_widths}")
+        # Sauvegarder dans la configuration globale (pas par caméra)
+        self.sequences_column_widths = column_widths
+        self.save_cameras_config()
+        logger.debug(f"Largeurs de colonnes sauvegardées (global): {column_widths}")
 
     def load_sequences_column_widths(self):
-        """Charge les largeurs sauvegardées des colonnes du tableau Sequences."""
+        """Charge les largeurs sauvegardées des colonnes du tableau Sequences (global)."""
         if not self.sequences_table:
             logger.debug("load_sequences_column_widths: sequences_table n'existe pas encore")
             return
         
-        cam_data = self.get_active_camera_data()
-        logger.debug(f"load_sequences_column_widths: cam_data.sequences_column_widths = {cam_data.sequences_column_widths if cam_data else None}")
+        logger.debug(f"load_sequences_column_widths: self.sequences_column_widths = {self.sequences_column_widths}")
         
-        if cam_data and cam_data.sequences_column_widths:
-            column_widths = cam_data.sequences_column_widths
-            logger.info(f"Chargement des largeurs de colonnes sauvegardées: {column_widths}")
+        if self.sequences_column_widths:
+            column_widths = self.sequences_column_widths
+            logger.info(f"Chargement des largeurs de colonnes sauvegardées (global): {column_widths}")
             for i in range(9):
                 if str(i) in column_widths:
                     unscaled_width = column_widths[str(i)]
@@ -7094,6 +7702,7 @@ class MainWindow(QMainWindow):
             username=cam_data.username,
             password=cam_data.password,
             slider_ip=cam_data.slider_ip,
+            companion_page=cam_data.companion_page,
             connected=cam_data.connected
         )
         if dialog.exec():
@@ -7102,6 +7711,10 @@ class MainWindow(QMainWindow):
             cam_data.username = dialog.username_input.text()
             cam_data.password = dialog.password_input.text()
             cam_data.slider_ip = dialog.slider_ip_input.text().strip()
+            try:
+                cam_data.companion_page = int(dialog.companion_page_input.text().strip() or str(self.active_camera_id))
+            except ValueError:
+                cam_data.companion_page = self.active_camera_id
             
             # Arrêter l'ancien WebSocket slider si existant
             if cam_data.slider_websocket_client:
@@ -7151,33 +7764,125 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
     
-    def _try_auto_connect(self):
-        """Tente une connexion automatique sans bloquer l'UI."""
-        try:
-            cam_data = self.get_active_camera_data()
+    def _try_auto_connect_all_cameras(self):
+        """Tente une connexion automatique pour toutes les caméras configurées."""
+        logger.info("Démarrage de la connexion automatique pour toutes les caméras configurées...")
+        camera_count = 0
+        for camera_id in range(1, 9):
+            cam_data = self.cameras[camera_id]
             if cam_data.url and cam_data.username and cam_data.password:
-                # Test rapide de connectivité avec un timeout très court (1 seconde)
-                # Si la caméra ne répond pas rapidement, on skip la connexion automatique
-                import requests
-                from requests.auth import HTTPBasicAuth
-                try:
-                    test_url = f"{cam_data.url}/control/api/v1/lens/focus"
-                    response = requests.get(
-                        test_url,
-                        auth=HTTPBasicAuth(cam_data.username, cam_data.password),
-                        timeout=1.0  # Timeout très court pour ne pas bloquer
-                    )
-                    # Si la caméra répond, on peut lancer la connexion complète
-                    if response.status_code == 200:
-                        self.connect_to_camera(self.active_camera_id, cam_data.url, cam_data.username, cam_data.password)
+                # Ne pas vérifier cam_data.connected ici car cela peut être False même si la connexion est en cours
+                # Échelonner les tentatives de connexion (2 secondes entre chaque caméra)
+                # pour éviter de surcharger le réseau et donner plus de temps à chaque caméra
+                delay_ms = 2000 * camera_count  # 0ms pour première caméra, 2000ms pour suivante, etc.
+                camera_count += 1
+                # Utiliser functools.partial ou une fonction wrapper pour capturer correctement camera_id
+                def make_connect_func(cam_id):
+                    return lambda: self._try_auto_connect(cam_id, attempt=0, max_attempts=5)
+                QTimer.singleShot(delay_ms, make_connect_func(camera_id))
+                logger.info(f"Connexion automatique programmée pour caméra {camera_id} dans {delay_ms/1000:.1f}s")
+    
+    def _try_auto_connect(self, camera_id: int = None, attempt: int = 0, max_attempts: int = 5):
+        """Tente une connexion automatique sans bloquer l'UI avec plusieurs tentatives."""
+        try:
+            # Utiliser la caméra active si camera_id n'est pas spécifié (rétrocompatibilité)
+            if camera_id is None:
+                camera_id = self.active_camera_id
+            
+            cam_data = self.cameras[camera_id]
+            if not cam_data.url or not cam_data.username or not cam_data.password:
+                logger.debug(f"Caméra {camera_id} - Paramètres de connexion manquants, connexion automatique ignorée")
+                return
+            
+            # Si déjà connecté, ne pas réessayer
+            if cam_data.connected:
+                logger.info(f"Caméra {camera_id} - Déjà connectée, connexion automatique ignorée")
+                return
+            
+            # Si un contrôleur existe déjà (connexion en cours), ne pas réessayer immédiatement
+            if cam_data.controller is not None:
+                logger.debug(f"Caméra {camera_id} - Contrôleur existe déjà, connexion peut être en cours")
+                # Attendre un peu et vérifier à nouveau
+                if attempt == 0:
+                    QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, 1, max_attempts))
+                return
+            
+            import requests
+            from requests.auth import HTTPBasicAuth
+            import socket
+            from urllib.parse import urlparse
+            
+            # Résoudre le hostname .local en IP si nécessaire (pour améliorer la stabilité)
+            test_url = cam_data.url
+            try:
+                parsed = urlparse(cam_data.url)
+                hostname = parsed.hostname
+                if hostname and hostname.endswith('.local'):
+                    # Essayer de résoudre le .local en IP
+                    try:
+                        addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+                        if addr_info:
+                            ip_address = addr_info[0][4][0]
+                            logger.info(f"Résolution DNS pour connexion auto: {hostname} -> {ip_address}")
+                            test_url = cam_data.url.replace(hostname, ip_address)
+                    except (socket.gaierror, OSError) as e:
+                        logger.debug(f"Résolution DNS échouée pour {hostname}, utilisation du nom original: {e}")
+            except Exception as e:
+                logger.debug(f"Erreur lors de la résolution DNS: {e}, utilisation de l'URL originale")
+            
+            # Timeout progressif : 5s pour la première tentative, 8s pour les suivantes
+            timeout = 5.0 if attempt == 0 else 8.0
+            
+            try:
+                test_endpoint = f"{test_url}/control/api/v1/lens/focus"
+                logger.info(f"Caméra {camera_id} - Tentative {attempt + 1}/{max_attempts} de connexion automatique à {test_endpoint} (timeout: {timeout}s)")
+                
+                response = requests.get(
+                    test_endpoint,
+                    auth=HTTPBasicAuth(cam_data.username, cam_data.password),
+                    timeout=timeout,
+                    verify=False  # Désactiver la vérification SSL pour les certificats auto-signés
+                )
+                
+                # Si la caméra répond, on peut lancer la connexion complète
+                if response.status_code == 200:
+                    logger.info(f"✓ Caméra {camera_id} accessible, connexion en cours...")
+                    self.connect_to_camera(camera_id, cam_data.url, cam_data.username, cam_data.password)
+                else:
+                    logger.info(f"Caméra {camera_id} - Réponse HTTP {response.status_code}, réessai dans 2s...")
+                    if attempt < max_attempts - 1:
+                        QTimer.singleShot(2000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                        
+            except requests.exceptions.Timeout:
+                logger.info(f"Caméra {camera_id} - Timeout après {timeout}s (tentative {attempt + 1}/{max_attempts})")
+                if attempt < max_attempts - 1:
+                    # Attendre 3 secondes avant la prochaine tentative (augmenté de 2s à 3s)
+                    QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                else:
+                    logger.warning(f"Caméra {camera_id} - Connexion automatique abandonnée après {max_attempts} tentatives (timeout)")
+                    
+            except (requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+                error_str = str(e).lower()
+                # Si c'est une erreur de résolution DNS, réessayer avec plus de patience
+                if 'nodename' in error_str or 'servname' in error_str or 'name resolution' in error_str:
+                    logger.info(f"Caméra {camera_id} - Résolution DNS en cours... (tentative {attempt + 1}/{max_attempts})")
+                    if attempt < max_attempts - 1:
+                        # Attendre plus longtemps pour la résolution DNS (6 secondes, augmenté de 5s)
+                        QTimer.singleShot(6000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
                     else:
-                        logger.info(f"Caméra {self.active_camera_id} - Pas de réponse rapide, connexion automatique ignorée")
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
-                    # Caméra non accessible rapidement, on skip la connexion automatique
-                    logger.info(f"Caméra {self.active_camera_id} - Non accessible rapidement, connexion automatique ignorée")
+                        logger.warning(f"Caméra {camera_id} - Résolution DNS échouée après {max_attempts} tentatives")
+                else:
+                    logger.info(f"Caméra {camera_id} - Erreur de connexion (tentative {attempt + 1}/{max_attempts}): {e}")
+                    if attempt < max_attempts - 1:
+                        QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                    else:
+                        logger.warning(f"Caméra {camera_id} - Connexion automatique abandonnée après {max_attempts} tentatives")
+                        
         except Exception as e:
-            logger.warning(f"Connexion automatique échouée (non bloquant): {e}")
-            # Ne pas bloquer l'UI, juste logger l'erreur
+            logger.warning(f"Connexion automatique échouée pour caméra {camera_id} (non bloquant): {e}")
+            # Réessayer une fois de plus si on n'a pas atteint le maximum
+            if attempt < max_attempts - 1:
+                QTimer.singleShot(4000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
     
     def connect_to_camera(self, camera_id: int, camera_url: str, username: str, password: str):
         """Se connecte à la caméra avec les paramètres fournis."""
@@ -9540,11 +10245,37 @@ class MainWindow(QMainWindow):
         self.crossfade_duration_spinbox.setValue(cam_data.crossfade_duration)
         self.crossfade_duration_spinbox.blockSignals(False)
     
+    def update_workspace_3_camera_display(self):
+        """Met à jour l'affichage de la caméra dans le Workspace 3."""
+        cam_data = self.get_active_camera_data()
+        
+        # Mettre à jour le nom de la caméra
+        if hasattr(self, 'workspace_3_camera_name_label'):
+            self.workspace_3_camera_name_label.setText(f"📹 Caméra {self.active_camera_id}")
+        
+        # S'assurer que la caméra existe dans preset_description.json
+        ensure_camera_exists(self.active_camera_id)
+        
+        # Réinitialiser le preset sélectionné à 1 quand on change de caméra
+        if hasattr(self, 'workspace_3_selected_preset_id'):
+            self.workspace_3_selected_preset_id = 1
+            if hasattr(self, 'workspace_3_preset_title_label'):
+                self.workspace_3_preset_title_label.setText("Preset 1")
+            # Mettre à jour les boutons de sélection
+            if hasattr(self, 'workspace_3_preset_selector_buttons'):
+                for i, btn in enumerate(self.workspace_3_preset_selector_buttons, start=1):
+                    btn.setChecked(i == 1)
+        
+        # Rafraîchir l'assignation musiciens/plans pour le preset sélectionné
+        if hasattr(self, 'workspace_3_selected_preset_id'):
+            self.workspace_3_refresh_preset_assignment()
+    
     def update_preset_highlight(self):
         """Met à jour l'encadré coloré autour du preset actif."""
         cam_data = self.get_active_camera_data()
         active_preset_num = cam_data.active_preset
         
+        # Mettre à jour les presets du Workspace 1
         for i, recall_btn in enumerate(self.preset_recall_buttons, start=1):
             if i == active_preset_num:
                 # Style pour le preset actif - encadré coloré
@@ -9585,6 +10316,614 @@ class MainWindow(QMainWindow):
                         opacity: 0.5;
                     }
                 """)
+        
+        # Mettre à jour le bouton Recall du Workspace 3 (si visible)
+        if hasattr(self, 'workspace_3_recall_btn'):
+            # Le bouton Recall du Workspace 3 n'a pas besoin de mise à jour visuelle
+            # car il est toujours disponible pour le preset sélectionné
+            pass
+    
+    # ========== Workspace 3 - Gestion musiciens et plans ==========
+    
+    def workspace_3_add_musician(self):
+        """Ajoute un musicien à la liste."""
+        name = self.workspace_3_new_musician_input.text().strip()
+        if not name:
+            return
+        
+        if add_musician(name):
+            self.workspace_3_new_musician_input.clear()
+            self.workspace_3_refresh_musicians()
+            self.workspace_3_refresh_preset_assignment()
+            logger.info(f"Musicien ajouté: {name}")
+        else:
+            logger.warning(f"Impossible d'ajouter le musicien: {name} (déjà existant?)")
+    
+    def workspace_3_remove_musician(self, name: str):
+        """Supprime un musicien de la liste."""
+        if remove_musician(name):
+            self.workspace_3_refresh_musicians()
+            self.workspace_3_refresh_preset_assignment()
+            logger.info(f"Musicien supprimé: {name}")
+        else:
+            logger.warning(f"Impossible de supprimer le musicien: {name}")
+    
+    def workspace_3_refresh_musicians(self):
+        """Rafraîchit l'affichage de la liste des musiciens."""
+        if not hasattr(self, 'workspace_3_musicians_list_layout'):
+            return
+        
+        # Supprimer les widgets existants
+        for widget in self.workspace_3_musician_widgets:
+            widget.setParent(None)
+        self.workspace_3_musician_widgets.clear()
+        
+        # Charger les musiciens
+        musicians = get_musicians()
+        
+        # Créer un widget pour chaque musicien
+        for musician in musicians:
+            musician_row = QWidget()
+            musician_row.setStyleSheet(self._scale_style("""
+                QWidget {
+                    background-color: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 2px;
+                }
+            """))
+            musician_layout = QHBoxLayout(musician_row)
+            musician_layout.setContentsMargins(self._scale_value(10), self._scale_value(8), 
+                                              self._scale_value(10), self._scale_value(8))
+            musician_layout.setSpacing(self._scale_value(10))
+            
+            label = QLabel(musician)
+            label.setStyleSheet(f"font-size: {self._scale_font(13)}; font-weight: bold; color: #fff;")
+            label.setMinimumWidth(self._scale_value(150))
+            
+            remove_btn = QPushButton("×")
+            remove_btn.setFixedSize(self._scale_value(30), self._scale_value(30))
+            remove_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    background-color: #a50;
+                    border: 1px solid #c70;
+                    border-radius: 4px;
+                    color: #fff;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #c70;
+                }
+                QPushButton:pressed {
+                    background-color: #840;
+                }
+            """))
+            remove_btn.clicked.connect(lambda checked, m=musician: self.workspace_3_remove_musician(m))
+            
+            musician_layout.addWidget(label)
+            musician_layout.addWidget(remove_btn)
+            musician_layout.addStretch()
+            
+            self.workspace_3_musicians_list_layout.addWidget(musician_row)
+            self.workspace_3_musician_widgets.append(musician_row)
+        
+        if not musicians:
+            empty_label = QLabel("Aucun musicien.\nAjoutez-en un ci-dessous.")
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet(f"font-size: {self._scale_font(11)}; color: #666; font-style: italic; padding: 20px;")
+            empty_label.setWordWrap(True)
+            self.workspace_3_musicians_list_layout.addWidget(empty_label)
+    
+    def workspace_3_select_preset(self, preset_id: int):
+        """Sélectionne un preset dans le Workspace 3."""
+        self.workspace_3_selected_preset_id = preset_id
+        
+        # Mettre à jour le titre du preset
+        if hasattr(self, 'workspace_3_preset_title_label'):
+            self.workspace_3_preset_title_label.setText(f"Preset {preset_id}")
+        
+        # Mettre à jour les boutons de sélection
+        for i, btn in enumerate(self.workspace_3_preset_selector_buttons, start=1):
+            btn.setChecked(i == preset_id)
+        
+        # Rafraîchir l'assignation musiciens/plans
+        self.workspace_3_refresh_preset_assignment()
+    
+    def workspace_3_refresh_preset_assignment(self):
+        """Rafraîchit l'affichage de l'assignation musiciens/plans pour le preset sélectionné."""
+        if not hasattr(self, 'workspace_3_musicians_grid_layout'):
+            return
+        
+        # Supprimer les widgets existants
+        for widget in self.workspace_3_musician_plan_widgets:
+            widget.setParent(None)
+        self.workspace_3_musician_plan_widgets.clear()
+        
+        # S'assurer que la caméra existe dans preset_description.json
+        ensure_camera_exists(self.active_camera_id)
+        
+        # Charger les musiciens
+        musicians = get_musicians()
+        
+        if not musicians:
+            empty_label = QLabel("Aucun musicien.\nAjoutez-en dans le panneau de gauche\npour les assigner aux presets.")
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet(f"font-size: {self._scale_font(12)}; color: #666; font-style: italic; padding: 40px;")
+            empty_label.setWordWrap(True)
+            self.workspace_3_musicians_grid_layout.addWidget(empty_label)
+            return
+        
+        # Plans disponibles
+        shot_types = [
+            ("absent", "absent – Non cadré"),
+            ("ecu", "ECU – Détail (main/pédale)"),
+            ("cu", "CU – Gros plan (visage/instrument serré)"),
+            ("mcu", "MCU – Plan rapproché (buste)"),
+            ("ms", "MS – Plan moyen (taille)"),
+            ("ws", "WS – Plan large (ensemble)")
+        ]
+        
+        # Créer une ligne pour chaque musicien
+        for musician in musicians:
+            row = QWidget()
+            row.setStyleSheet(self._scale_style("""
+                QWidget {
+                    background-color: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                    padding: 2px;
+                }
+            """))
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(self._scale_value(12), self._scale_value(10), 
+                                         self._scale_value(12), self._scale_value(10))
+            row_layout.setSpacing(self._scale_value(15))
+            
+            # Label du musicien
+            label = QLabel(musician)
+            label.setMinimumWidth(self._scale_value(140))
+            label.setStyleSheet(f"font-size: {self._scale_font(13)}; font-weight: bold; color: #fff;")
+            row_layout.addWidget(label)
+            
+            # Menu déroulant pour le plan
+            combo = QComboBox()
+            combo.setMinimumWidth(self._scale_value(280))
+            combo.setMinimumHeight(self._scale_value(32))
+            current_plan = get_preset_musician_plan(
+                self.active_camera_id,
+                self.workspace_3_selected_preset_id,
+                musician
+            )
+            
+            combo.setStyleSheet(self._scale_style("""
+                QComboBox {
+                    padding: 6px 8px;
+                    background-color: #333;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    color: #fff;
+                    font-size: 12px;
+                }
+                QComboBox:hover {
+                    border: 1px solid #777;
+                    background-color: #3a3a3a;
+                }
+                QComboBox::drop-down {
+                    border: none;
+                    width: 20px;
+                }
+                QComboBox::down-arrow {
+                    image: none;
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 6px solid #aaa;
+                    margin-right: 5px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #333;
+                    border: 1px solid #555;
+                    selection-background-color: #0a5;
+                    selection-color: #fff;
+                    color: #fff;
+                }
+            """))
+            
+            current_index = 0
+            for idx, (plan_value, plan_label) in enumerate(shot_types):
+                combo.addItem(plan_label)
+                combo.setItemData(idx, plan_value)
+                if plan_value == current_plan:
+                    current_index = idx
+            combo.setCurrentIndex(current_index)
+            
+            # Appliquer un style selon le plan
+            self.workspace_3_apply_plan_style(row, current_plan)
+            
+            # Stocker les références pour le callback
+            def create_plan_changed_callback(m, c, r):
+                def callback(idx):
+                    plan_value = c.itemData(idx)
+                    if plan_value:
+                        self.workspace_3_on_plan_changed(m, plan_value, r)
+                return callback
+            
+            combo.currentIndexChanged.connect(create_plan_changed_callback(musician, combo, row))
+            
+            row_layout.addWidget(combo)
+            row_layout.addStretch()
+            
+            self.workspace_3_musicians_grid_layout.addWidget(row)
+            self.workspace_3_musician_plan_widgets.append(row)
+    
+    def workspace_3_apply_plan_style(self, widget: QWidget, plan: str):
+        """Applique un style de couleur selon le plan."""
+        colors = {
+            "absent": "#666",
+            "ecu": "#8b5cf6",
+            "cu": "#a78bfa",
+            "mcu": "#c4b5fd",
+            "ms": "#ddd6fe",
+            "ws": "#ede9fe"
+        }
+        color = colors.get(plan, "#666")
+        widget.setStyleSheet(self._scale_style(f"""
+            QWidget {{
+                background-color: {color}30;
+                border-left: 4px solid {color};
+                border-radius: 6px;
+            }}
+        """))
+    
+    def workspace_3_on_plan_changed(self, musician: str, plan: str, row_widget: QWidget):
+        """Appelé quand le plan d'un musicien change."""
+        if set_preset_musician_plan(
+            self.active_camera_id,
+            self.workspace_3_selected_preset_id,
+            musician,
+            plan
+        ):
+            self.workspace_3_apply_plan_style(row_widget, plan)
+            logger.info(f"Plan assigné: Cam{self.active_camera_id} Preset{self.workspace_3_selected_preset_id} - {musician} → {plan}")
+        else:
+            logger.error(f"Erreur lors de l'assignation du plan")
+    
+    def workspace_3_recall_current_preset(self):
+        """Rappelle le preset actuellement sélectionné dans le Workspace 3."""
+        self.recall_preset(self.workspace_3_selected_preset_id)
+    
+    def workspace_3_save_current_preset(self):
+        """Sauvegarde le preset actuellement sélectionné dans le Workspace 3."""
+        self.save_preset(self.workspace_3_selected_preset_id)
+    
+    def create_workspace_4_page(self):
+        """Crée la page pour le Workspace 4 avec la configuration et l'état de l'ATEM."""
+        page = QWidget()
+        page.setStyleSheet("""
+            QWidget {
+                background-color: #2a2a2a;
+            }
+        """)
+        
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(self._scale_value(40), self._scale_value(40), 
+                                     self._scale_value(40), self._scale_value(40))
+        main_layout.setSpacing(self._scale_value(30))
+        
+        # Titre
+        title_label = QLabel("Configuration ATEM Switcher")
+        title_label.setStyleSheet(f"""
+            font-size: {self._scale_font(24)}px;
+            font-weight: bold;
+            color: #fff;
+            padding-bottom: {self._scale_value(10)}px;
+        """)
+        main_layout.addWidget(title_label)
+        
+        # Section Configuration
+        config_group = QGroupBox("Configuration")
+        config_group.setStyleSheet(self._scale_style("""
+            QGroupBox {
+                font-size: 16px;
+                font-weight: bold;
+                color: #fff;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """))
+        config_layout = QVBoxLayout(config_group)
+        config_layout.setSpacing(self._scale_value(15))
+        
+        # IP ATEM
+        ip_layout = QHBoxLayout()
+        ip_label = QLabel("IP ATEM:")
+        ip_label.setMinimumWidth(self._scale_value(120))
+        ip_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        ip_layout.addWidget(ip_label)
+        self.workspace_4_atem_ip_input = QLineEdit()
+        self.workspace_4_atem_ip_input.setPlaceholderText("192.168.1.100")
+        self.workspace_4_atem_ip_input.setText(self.atem_config.get("ip", ""))
+        self.workspace_4_atem_ip_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0a5;
+            }
+        """))
+        ip_layout.addWidget(self.workspace_4_atem_ip_input)
+        config_layout.addLayout(ip_layout)
+        
+        # AUX Output
+        aux_layout = QHBoxLayout()
+        aux_label = QLabel("AUX Output:")
+        aux_label.setMinimumWidth(self._scale_value(120))
+        aux_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        aux_layout.addWidget(aux_label)
+        self.workspace_4_atem_aux_spinbox = QSpinBox()
+        self.workspace_4_atem_aux_spinbox.setMinimum(1)
+        self.workspace_4_atem_aux_spinbox.setMaximum(6)
+        self.workspace_4_atem_aux_spinbox.setValue(self.atem_config.get("aux_output", 2))
+        self.workspace_4_atem_aux_spinbox.setStyleSheet(self._scale_style("""
+            QSpinBox {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 14px;
+                min-width: 100px;
+            }
+            QSpinBox:focus {
+                border: 2px solid #0a5;
+            }
+        """))
+        aux_layout.addWidget(self.workspace_4_atem_aux_spinbox)
+        config_layout.addLayout(aux_layout)
+        
+        # Bouton Sauvegarder
+        save_btn = QPushButton("Sauvegarder")
+        save_btn.clicked.connect(self.save_atem_config)
+        save_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #0a5;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0b6;
+            }
+            QPushButton:pressed {
+                background-color: #094;
+            }
+        """))
+        config_layout.addWidget(save_btn)
+        config_layout.addStretch()
+        main_layout.addWidget(config_group)
+        
+        # Section État de connexion
+        status_group = QGroupBox("État de connexion")
+        status_group.setStyleSheet(self._scale_style("""
+            QGroupBox {
+                font-size: 16px;
+                font-weight: bold;
+                color: #fff;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """))
+        status_layout = QVBoxLayout(status_group)
+        status_layout.setSpacing(self._scale_value(15))
+        
+        # Indicateur LED et label d'état
+        status_indicator_layout = QHBoxLayout()
+        self.workspace_4_atem_status_led = QLabel("●")
+        self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #f00;")
+        status_indicator_layout.addWidget(self.workspace_4_atem_status_led)
+        self.workspace_4_atem_status_label = QLabel("Déconnecté")
+        self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+        status_indicator_layout.addWidget(self.workspace_4_atem_status_label)
+        status_indicator_layout.addStretch()
+        status_layout.addLayout(status_indicator_layout)
+        
+        # Bouton Connecter/Déconnecter
+        self.workspace_4_atem_connect_btn = QPushButton("Connecter")
+        self.workspace_4_atem_connect_btn.clicked.connect(self.on_atem_connect_clicked)
+        self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #0a5;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0b6;
+            }
+            QPushButton:pressed {
+                background-color: #094;
+            }
+        """))
+        status_layout.addWidget(self.workspace_4_atem_connect_btn)
+        status_layout.addStretch()
+        main_layout.addWidget(status_group)
+        
+        # Section Informations
+        info_group = QGroupBox("Informations")
+        info_group.setStyleSheet(self._scale_style("""
+            QGroupBox {
+                font-size: 16px;
+                font-weight: bold;
+                color: #fff;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """))
+        info_layout = QVBoxLayout(info_group)
+        info_layout.setSpacing(self._scale_value(10))
+        
+        self.workspace_4_atem_info_ip = QLabel("IP: -")
+        self.workspace_4_atem_info_ip.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
+        info_layout.addWidget(self.workspace_4_atem_info_ip)
+        
+        self.workspace_4_atem_info_aux = QLabel("AUX Output: -")
+        self.workspace_4_atem_info_aux.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
+        info_layout.addWidget(self.workspace_4_atem_info_aux)
+        
+        self.workspace_4_atem_info_last_camera = QLabel("Dernière caméra: -")
+        self.workspace_4_atem_info_last_camera.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
+        info_layout.addWidget(self.workspace_4_atem_info_last_camera)
+        
+        info_layout.addStretch()
+        main_layout.addWidget(info_group)
+        
+        main_layout.addStretch()
+        
+        # Initialiser l'affichage
+        self.update_atem_status()
+        
+        return page
+    
+    def update_atem_status(self):
+        """Met à jour l'affichage de l'état ATEM dans le workspace 4."""
+        if not hasattr(self, 'workspace_4_atem_status_label'):
+            return  # Workspace 4 pas encore créé
+        
+        connected = self.atem_config.get("connected", False)
+        
+        # Mettre à jour l'indicateur LED
+        if connected:
+            self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #0f0;")
+            self.workspace_4_atem_status_label.setText("Connecté")
+            self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #0f0; font-weight: bold;")
+            self.workspace_4_atem_connect_btn.setText("Déconnecter")
+            self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px 20px;
+                    background-color: #a50;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #b60;
+                }
+                QPushButton:pressed {
+                    background-color: #940;
+                }
+            """))
+        else:
+            self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #f00;")
+            self.workspace_4_atem_status_label.setText("Déconnecté")
+            self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+            self.workspace_4_atem_connect_btn.setText("Connecter")
+            self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px 20px;
+                    background-color: #0a5;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #0b6;
+                }
+                QPushButton:pressed {
+                    background-color: #094;
+                }
+            """))
+        
+        # Mettre à jour les informations
+        ip = self.atem_config.get("ip", "")
+        aux_output = self.atem_config.get("aux_output", 2)
+        self.workspace_4_atem_info_ip.setText(f"IP: {ip if ip else '-'}")
+        self.workspace_4_atem_info_aux.setText(f"AUX Output: {aux_output} (HDMI {aux_output})")
+        
+        # Dernière caméra
+        if self.atem_controller:
+            last_camera = self.atem_controller.get_last_camera_id()
+            if last_camera:
+                self.workspace_4_atem_info_last_camera.setText(f"Dernière caméra: Caméra {last_camera}")
+            else:
+                self.workspace_4_atem_info_last_camera.setText("Dernière caméra: -")
+        else:
+            self.workspace_4_atem_info_last_camera.setText("Dernière caméra: -")
+    
+    def on_atem_connect_clicked(self):
+        """Gère le clic sur le bouton Connecter/Déconnecter ATEM."""
+        if self.atem_config.get("connected", False):
+            self.disconnect_atem()
+        else:
+            self.connect_atem()
+    
+    def save_atem_config(self):
+        """Sauvegarde la configuration ATEM depuis le workspace 4."""
+        # Récupérer les valeurs depuis l'UI
+        new_ip = self.workspace_4_atem_ip_input.text().strip()
+        new_aux_output = self.workspace_4_atem_aux_spinbox.value()
+        
+        # Vérifier que l'IP est valide
+        if not new_ip:
+            logger.warning("IP ATEM non renseignée")
+            return
+        
+        # Mettre à jour la config
+        old_ip = self.atem_config.get("ip", "")
+        self.atem_config["ip"] = new_ip
+        self.atem_config["aux_output"] = new_aux_output
+        
+        # Sauvegarder dans le fichier
+        self.save_cameras_config()
+        
+        # Si l'IP a changé, réinitialiser le controller
+        if old_ip != new_ip:
+            if self.atem_controller:
+                self.atem_controller.disconnect()
+            self.init_atem_controller()
+        elif self.atem_controller:
+            # Si seul l'AUX output a changé, mettre à jour
+            self.atem_controller.aux_output = new_aux_output
+        
+        logger.info(f"Configuration ATEM sauvegardée: IP={new_ip}, AUX={new_aux_output}")
+        
+        # Mettre à jour l'affichage
+        self.update_atem_status()
 
 
 def main():
