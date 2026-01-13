@@ -1,19 +1,12 @@
 {
-  "musicians": [
-    "david",
-    "jc",
-    "roo"
-  ],
+  "musicians": [],
   "cameras": [
     {
       "id": 1,
       "presets": [
         {
           "id": 1,
-          "musicians": {
-            "david": "ecu",
-            "jc": "ecu"
-          }
+          "musicians": {}
         },
         {
           "id": 2,
@@ -148,10 +141,187 @@
       "presets": [
         {
           "id": 1,
-          "musicians": {
-            "david": "ecu",
-            "jc": "cu"
-          }
+          "musicians": {}
+        },
+        {
+          "id": 2,
+          "musicians": {}
+        },
+        {
+          "id": 3,
+          "musicians": {}
+        },
+        {
+          "id": 4,
+          "musicians": {}
+        },
+        {
+          "id": 5,
+          "musicians": {}
+        },
+        {
+          "id": 6,
+          "musicians": {}
+        },
+        {
+          "id": 7,
+          "musicians": {}
+        },
+        {
+          "id": 8,
+          "musicians": {}
+        },
+        {
+          "id": 9,
+          "musicians": {}
+        },
+        {
+          "id": 10,
+          "musicians": {}
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "presets": [
+        {
+          "id": 1,
+          "musicians": {}
+        },
+        {
+          "id": 2,
+          "musicians": {}
+        },
+        {
+          "id": 3,
+          "musicians": {}
+        },
+        {
+          "id": 4,
+          "musicians": {}
+        },
+        {
+          "id": 5,
+          "musicians": {}
+        },
+        {
+          "id": 6,
+          "musicians": {}
+        },
+        {
+          "id": 7,
+          "musicians": {}
+        },
+        {
+          "id": 8,
+          "musicians": {}
+        },
+        {
+          "id": 9,
+          "musicians": {}
+        },
+        {
+          "id": 10,
+          "musicians": {}
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "presets": [
+        {
+          "id": 1,
+          "musicians": {}
+        },
+        {
+          "id": 2,
+          "musicians": {}
+        },
+        {
+          "id": 3,
+          "musicians": {}
+        },
+        {
+          "id": 4,
+          "musicians": {}
+        },
+        {
+          "id": 5,
+          "musicians": {}
+        },
+        {
+          "id": 6,
+          "musicians": {}
+        },
+        {
+          "id": 7,
+          "musicians": {}
+        },
+        {
+          "id": 8,
+          "musicians": {}
+        },
+        {
+          "id": 9,
+          "musicians": {}
+        },
+        {
+          "id": 10,
+          "musicians": {}
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "presets": [
+        {
+          "id": 1,
+          "musicians": {}
+        },
+        {
+          "id": 2,
+          "musicians": {}
+        },
+        {
+          "id": 3,
+          "musicians": {}
+        },
+        {
+          "id": 4,
+          "musicians": {}
+        },
+        {
+          "id": 5,
+          "musicians": {}
+        },
+        {
+          "id": 6,
+          "musicians": {}
+        },
+        {
+          "id": 7,
+          "musicians": {}
+        },
+        {
+          "id": 8,
+          "musicians": {}
+        },
+        {
+          "id": 9,
+          "musicians": {}
+        },
+        {
+          "id": 10,
+          "musicians": {}
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "presets": [
+        {
+          "id": 1,
+          "musicians": {}
         },
         {
           "id": 2,

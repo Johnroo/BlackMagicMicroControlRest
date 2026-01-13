@@ -454,6 +454,10 @@ class CameraData:
     websocket_client: Optional[Any] = None  # BlackmagicWebSocketClient
     slider_websocket_client: Optional[Any] = None  # SliderWebSocketClient
     connected: bool = False
+    connecting: bool = False  # Flag pour indiquer qu'une connexion est en cours
+    slider_connecting: bool = False  # Flag pour indiquer qu'une connexion slider est en cours
+    auto_reconnect_enabled: bool = True  # Flag pour activer/désactiver les reconnexions automatiques de la caméra
+    slider_auto_reconnect_enabled: bool = True  # Flag pour activer/désactiver les reconnexions automatiques du slider
     
     # Valeurs
     focus_sent_value: float = 0.0
@@ -549,17 +553,16 @@ class CameraSignals(QObject):
 
 
 class ConnectionDialog(QDialog):
-    """Dialog pour la connexion à la caméra."""
+    """Dialog pour la configuration ATEM Switcher."""
     
-    def __init__(self, parent=None, camera_id: int = 1, camera_url: str = "", username: str = "", password: str = "", slider_ip: str = "", companion_page: int = 1, connected: bool = False):
+    def __init__(self, parent=None, atem_config: dict = None):
         super().__init__(parent)
-        self.setWindowTitle(f"Paramètres de connexion - Caméra {camera_id}")
-        self.setMinimumWidth(400)
+        self.setWindowTitle("Configuration ATEM Switcher")
+        self.setMinimumWidth(450)
         self.setModal(True)
         
         # Variables
-        self.camera_id = camera_id
-        self.connected = connected
+        self.atem_config = atem_config or {}
         
         # Layout principal
         layout = QVBoxLayout(self)
@@ -567,133 +570,194 @@ class ConnectionDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         
         # Titre
-        title = QLabel("Connexion à la caméra")
+        title = QLabel("Configuration ATEM Switcher")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #fff;")
         layout.addWidget(title)
         
-        # Champ URL
-        url_label = QLabel("URL de la caméra:")
-        url_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        layout.addWidget(url_label)
-        self.url_input = QLineEdit()
-        self.url_input.setText(camera_url)
-        self.url_input.setPlaceholderText("http://Micro-Studio-Camera-4K-G2.local")
-        self.url_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 4px;
-                color: #fff;
-            }
-        """)
-        layout.addWidget(self.url_input)
-        
-        # Champ Username
-        user_label = QLabel("Nom d'utilisateur:")
-        user_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        layout.addWidget(user_label)
-        self.username_input = QLineEdit()
-        self.username_input.setText(username)
-        self.username_input.setPlaceholderText("roo")
-        self.username_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 4px;
-                color: #fff;
-            }
-        """)
-        layout.addWidget(self.username_input)
-        
-        # Champ Password
-        pass_label = QLabel("Mot de passe:")
-        pass_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        layout.addWidget(pass_label)
-        self.password_input = QLineEdit()
-        self.password_input.setText(password)
-        self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setPlaceholderText("koko")
-        self.password_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 4px;
-                color: #fff;
-            }
-        """)
-        layout.addWidget(self.password_input)
-        
-        # Champ Slider IP
-        slider_label = QLabel("IP ou hostname du slider:")
-        slider_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        layout.addWidget(slider_label)
-        self.slider_ip_input = QLineEdit()
-        self.slider_ip_input.setText(slider_ip)
-        self.slider_ip_input.setPlaceholderText("192.168.1.100 ou slider1.local")
-        self.slider_ip_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 4px;
-                color: #fff;
-            }
-        """)
-        layout.addWidget(self.slider_ip_input)
-        
-        # Champ Companion Page
-        companion_label = QLabel("Page Companion:")
-        companion_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        layout.addWidget(companion_label)
-        self.companion_page_input = QLineEdit()
-        self.companion_page_input.setText(str(companion_page))
-        self.companion_page_input.setPlaceholderText("1")
-        self.companion_page_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 4px;
-                color: #fff;
-            }
-        """)
-        layout.addWidget(self.companion_page_input)
-        
-        # Voyant de statut
-        status_layout = QHBoxLayout()
-        status_label = QLabel("Statut:")
-        status_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        status_layout.addWidget(status_label)
-        self.status_indicator = QLabel("●")
-        self.status_indicator.setStyleSheet("font-size: 20px; color: #f00;")
-        self.status_text = QLabel("Déconnecté")
-        self.status_text.setStyleSheet("font-size: 12px; color: #aaa;")
-        status_layout.addWidget(self.status_indicator)
-        status_layout.addWidget(self.status_text)
-        status_layout.addStretch()
-        layout.addLayout(status_layout)
-        
-        # Bouton Connect/Disconnect
-        self.connect_btn = QPushButton("Connecter")
-        self.connect_btn.setStyleSheet("""
-            QPushButton {
-                padding: 10px;
+        # Section Configuration
+        config_group = QGroupBox("Configuration")
+        config_group.setStyleSheet("""
+            QGroupBox {
                 font-size: 14px;
                 font-weight: bold;
-                background-color: #0a5;
                 color: #fff;
-                border: none;
-                border-radius: 4px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
             }
-            QPushButton:hover {
-                background-color: #0c7;
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
             }
         """)
+        config_layout = QVBoxLayout(config_group)
+        config_layout.setSpacing(15)
+        
+        # IP ATEM
+        ip_layout = QHBoxLayout()
+        ip_label = QLabel("IP ATEM:")
+        ip_label.setMinimumWidth(120)
+        ip_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        ip_layout.addWidget(ip_label)
+        self.atem_ip_input = QLineEdit()
+        self.atem_ip_input.setPlaceholderText("192.168.1.100")
+        self.atem_ip_input.setText(self.atem_config.get("ip", ""))
+        self.atem_ip_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0a5;
+            }
+        """)
+        ip_layout.addWidget(self.atem_ip_input)
+        config_layout.addLayout(ip_layout)
+        
+        # AUX Output
+        aux_layout = QHBoxLayout()
+        aux_label = QLabel("AUX Output:")
+        aux_label.setMinimumWidth(120)
+        aux_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        aux_layout.addWidget(aux_label)
+        self.atem_aux_spinbox = QSpinBox()
+        self.atem_aux_spinbox.setMinimum(1)
+        self.atem_aux_spinbox.setMaximum(6)
+        self.atem_aux_spinbox.setValue(self.atem_config.get("aux_output", 2))
+        self.atem_aux_spinbox.setStyleSheet("""
+            QSpinBox {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 12px;
+                min-width: 100px;
+            }
+            QSpinBox:focus {
+                border: 2px solid #0a5;
+            }
+        """)
+        aux_layout.addWidget(self.atem_aux_spinbox)
+        config_layout.addLayout(aux_layout)
+        
+        # Bouton Sauvegarder
+        save_btn = QPushButton("Sauvegarder")
+        save_btn.clicked.connect(self.save_config)
+        save_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #0a5;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0b6;
+            }
+            QPushButton:pressed {
+                background-color: #094;
+            }
+        """)
+        config_layout.addWidget(save_btn)
+        layout.addWidget(config_group)
+        
+        # Section État de connexion
+        status_group = QGroupBox("État de connexion")
+        status_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                color: #fff;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        status_layout = QVBoxLayout(status_group)
+        status_layout.setSpacing(15)
+        
+        # Indicateur LED et label d'état
+        status_indicator_layout = QHBoxLayout()
+        self.status_indicator = QLabel("●")
+        self.status_indicator.setStyleSheet("font-size: 24px; color: #f00;")
+        status_indicator_layout.addWidget(self.status_indicator)
+        self.status_text = QLabel("Déconnecté")
+        self.status_text.setStyleSheet("font-size: 14px; color: #f00; font-weight: bold;")
+        status_indicator_layout.addWidget(self.status_text)
+        status_indicator_layout.addStretch()
+        status_layout.addLayout(status_indicator_layout)
+        
+        # Bouton Connecter/Déconnecter
+        self.connect_btn = QPushButton("Connecter")
         self.connect_btn.clicked.connect(self.toggle_connection)
-        layout.addWidget(self.connect_btn)
+        self.connect_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #0a5;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0b6;
+            }
+            QPushButton:pressed {
+                background-color: #094;
+            }
+        """)
+        status_layout.addWidget(self.connect_btn)
+        layout.addWidget(status_group)
+        
+        # Section Informations
+        info_group = QGroupBox("Informations")
+        info_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                color: #fff;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        info_layout = QVBoxLayout(info_group)
+        info_layout.setSpacing(10)
+        
+        self.info_ip = QLabel("IP: -")
+        self.info_ip.setStyleSheet("font-size: 12px; color: #aaa;")
+        info_layout.addWidget(self.info_ip)
+        
+        self.info_aux = QLabel("AUX Output: -")
+        self.info_aux.setStyleSheet("font-size: 12px; color: #aaa;")
+        info_layout.addWidget(self.info_aux)
+        
+        self.info_last_camera = QLabel("Dernière caméra: -")
+        self.info_last_camera.setStyleSheet("font-size: 12px; color: #aaa;")
+        info_layout.addWidget(self.info_last_camera)
+        
+        layout.addWidget(info_group)
         
         # Boutons de dialog
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
@@ -701,73 +765,148 @@ class ConnectionDialog(QDialog):
         layout.addWidget(button_box)
         
         # Mettre à jour l'affichage initial
-        self.update_status_display()
+        self.update_atem_status()
     
     def toggle_connection(self):
-        """Émet un signal pour connecter/déconnecter."""
-        if self.connected:
-            # Déconnecter
-            self.connected = False
-            if self.parent():
-                self.parent().disconnect_from_camera(self.camera_id)
-        else:
-            # Connecter
-            self.connected = True  # Mettre à jour l'état avant de se connecter
-            if self.parent():
-                self.parent().connect_to_camera(
-                    self.camera_id,
-                    self.url_input.text().strip(),
-                    self.username_input.text().strip(),
-                    self.password_input.text().strip()
-                )
-        self.update_status_display()
+        """Gère la connexion/déconnexion ATEM."""
+        if self.parent():
+            self.parent().on_atem_connect_clicked()
+            # Mettre à jour l'affichage après un court délai pour laisser le temps à la connexion
+            QTimer.singleShot(100, self.update_atem_status)
     
-    def update_status_display(self):
-        """Met à jour l'affichage du statut."""
-        if self.connected:
-            self.status_indicator.setStyleSheet("font-size: 20px; color: #0f0;")
-            self.status_text.setText("Connecté")
-            self.connect_btn.setText("Déconnecter")
-            self.connect_btn.setStyleSheet("""
-                QPushButton {
-                    padding: 10px;
-                    font-size: 14px;
-                    font-weight: bold;
-                    background-color: #a50;
-                    color: #fff;
-                    border: none;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #c70;
-                }
-            """)
-        else:
-            self.status_indicator.setStyleSheet("font-size: 20px; color: #f00;")
-            self.status_text.setText("Déconnecté")
-            self.connect_btn.setText("Connecter")
-            self.connect_btn.setStyleSheet("""
-                QPushButton {
-                    padding: 10px;
-                    font-size: 14px;
-                    font-weight: bold;
-                    background-color: #0a5;
-                    color: #fff;
-                    border: none;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #0c7;
-                }
-            """)
+    def save_config(self):
+        """Sauvegarde la configuration ATEM."""
+        if not self.parent():
+            return
         
-        # Note: Le statut du slider est vérifié par la fonction principale update_slider_status_indicator()
-        # Pas besoin de vérifier ici dans le dialogue
+        new_ip = self.atem_ip_input.text().strip()
+        new_aux_output = self.atem_aux_spinbox.value()
+        
+        if not new_ip:
+            logger.warning("IP ATEM non renseignée")
+            return
+        
+        # Mettre à jour la config via le parent
+        old_ip = self.atem_config.get("ip", "")
+        self.atem_config["ip"] = new_ip
+        self.atem_config["aux_output"] = new_aux_output
+        
+        # Sauvegarder dans le fichier
+        self.parent().atem_config = self.atem_config
+        self.parent().save_cameras_config()
+        
+        # Si l'IP a changé, réinitialiser le controller
+        if old_ip != new_ip:
+            if self.parent().atem_controller:
+                self.parent().atem_controller.disconnect()
+            self.parent().init_atem_controller()
+        elif self.parent().atem_controller:
+            # Si seul l'AUX output a changé, mettre à jour
+            self.parent().atem_controller.aux_output = new_aux_output
+        
+        logger.info(f"Configuration ATEM sauvegardée: IP={new_ip}, AUX={new_aux_output}")
+        self.update_atem_status()
     
-    def set_connected(self, connected: bool):
-        """Met à jour l'état de connexion."""
-        self.connected = connected
-        self.update_status_display()
+    def update_atem_status(self):
+        """Met à jour l'affichage du statut ATEM."""
+        if not self.parent():
+            return
+        
+        connected = self.parent().atem_config.get("connected", False)
+        auto_reconnect = self.parent().atem_config.get("auto_reconnect_enabled", True)
+        controller_running = False
+        if self.parent().atem_controller:
+            controller_running = getattr(self.parent().atem_controller, 'running', False)
+        
+        # Mettre à jour l'indicateur LED
+        if connected:
+            self.status_indicator.setStyleSheet("font-size: 24px; color: #0f0;")
+            self.status_text.setText("Connecté")
+            self.status_text.setStyleSheet("font-size: 14px; color: #0f0; font-weight: bold;")
+            self.connect_btn.setText("Déconnecter")
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setStyleSheet("""
+                QPushButton {
+                    padding: 10px 20px;
+                    background-color: #a50;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #b60;
+                }
+                QPushButton:pressed {
+                    background-color: #940;
+                }
+            """)
+        else:
+            if auto_reconnect and controller_running:
+                # Des tentatives automatiques sont en cours
+                self.status_indicator.setStyleSheet("font-size: 24px; color: #ffa500;")
+                self.status_text.setText("Déconnecté (reconnexion auto...)")
+                self.status_text.setStyleSheet("font-size: 14px; color: #ffa500; font-weight: bold;")
+                self.connect_btn.setText("Arrêter les tentatives")
+                self.connect_btn.setEnabled(True)
+                self.connect_btn.setStyleSheet("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #ff8c00;
+                    border: none;
+                        border-radius: 6px;
+                        color: #fff;
+                        font-size: 14px;
+                        font-weight: bold;
+                }
+                QPushButton:hover {
+                        background-color: #ff9f33;
+                    }
+                    QPushButton:pressed {
+                        background-color: #e67e00;
+                }
+            """)
+            else:
+                # Aucune tentative automatique
+                self.status_indicator.setStyleSheet("font-size: 24px; color: #f00;")
+                self.status_text.setText("Déconnecté")
+                self.status_text.setStyleSheet("font-size: 14px; color: #f00; font-weight: bold;")
+                self.connect_btn.setText("Connecter")
+                self.connect_btn.setEnabled(True)
+                self.connect_btn.setStyleSheet("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #0a5;
+                        border: none;
+                        border-radius: 6px;
+                        color: #fff;
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #0b6;
+                    }
+                    QPushButton:pressed {
+                        background-color: #094;
+                    }
+                """)
+        
+        # Mettre à jour les informations
+        ip = self.parent().atem_config.get("ip", "")
+        aux_output = self.parent().atem_config.get("aux_output", 2)
+        self.info_ip.setText(f"IP: {ip if ip else '-'}")
+        self.info_aux.setText(f"AUX Output: {aux_output} (HDMI {aux_output})")
+        
+        # Dernière caméra
+        if self.parent().atem_controller:
+            last_camera = self.parent().atem_controller.get_last_camera_id()
+            if last_camera:
+                self.info_last_camera.setText(f"Dernière caméra: Caméra {last_camera}")
+            else:
+                self.info_last_camera.setText("Dernière caméra: -")
+        else:
+            self.info_last_camera.setText("Dernière caméra: -")
 
 
 class UIScaler:
@@ -812,14 +951,39 @@ class UIScaler:
     def scale_style(self, style: str) -> str:
         """Applique le scaling à un style CSS en remplaçant les valeurs numériques."""
         import re
-        # Remplacer les valeurs en px dans font-size, width, height, padding, margin, etc.
+        # Éviter de modifier les couleurs hexadécimales (#666, #123456, etc.)
+        # D'abord, protéger les couleurs hexadécimales en les remplaçant temporairement
+        hex_color_pattern = r'#([0-9a-fA-F]{3,6})(?![0-9a-fA-F])'
+        hex_colors = {}
+        hex_counter = [0]  # Utiliser une liste pour la mutabilité dans la closure
+        
+        def protect_hex(match):
+            hex_value = match.group(0)
+            placeholder = f"__HEX_COLOR_{hex_counter[0]}__"
+            hex_colors[placeholder] = hex_value
+            hex_counter[0] += 1
+            return placeholder
+        
+        # Protéger les couleurs hex
+        protected_style = re.sub(hex_color_pattern, protect_hex, style)
+        
+        # Maintenant, remplacer les valeurs px
         def replace_px(match):
             value = float(match.group(1))
-            return f"{int(value * self.scale)}px"
+            scaled_value = int(value * self.scale)
+            # Limiter les valeurs à une plage raisonnable pour éviter les problèmes
+            scaled_value = max(0, min(99999, scaled_value))
+            return f"{scaled_value}px"
         
-        # Patterns pour les propriétés CSS avec valeurs en px
-        pattern = r'(\d+(?:\.\d+)?)px'
-        return re.sub(pattern, replace_px, style)
+        # Pattern pour les valeurs px (maintenant sans risque de toucher aux couleurs)
+        px_pattern = r'(\d+(?:\.\d+)?)px'
+        scaled_style = re.sub(px_pattern, replace_px, protected_style)
+        
+        # Restaurer les couleurs hex
+        for placeholder, hex_color in hex_colors.items():
+            scaled_style = scaled_style.replace(placeholder, hex_color)
+        
+        return scaled_style
 
 
 class UIScaler:
@@ -856,14 +1020,39 @@ class UIScaler:
     def scale_style(self, style: str) -> str:
         """Applique le scaling à un style CSS en remplaçant les valeurs numériques."""
         import re
-        # Remplacer les valeurs en px dans font-size, width, height, padding, margin, etc.
+        # Éviter de modifier les couleurs hexadécimales (#666, #123456, etc.)
+        # D'abord, protéger les couleurs hexadécimales en les remplaçant temporairement
+        hex_color_pattern = r'#([0-9a-fA-F]{3,6})(?![0-9a-fA-F])'
+        hex_colors = {}
+        hex_counter = [0]  # Utiliser une liste pour la mutabilité dans la closure
+        
+        def protect_hex(match):
+            hex_value = match.group(0)
+            placeholder = f"__HEX_COLOR_{hex_counter[0]}__"
+            hex_colors[placeholder] = hex_value
+            hex_counter[0] += 1
+            return placeholder
+        
+        # Protéger les couleurs hex
+        protected_style = re.sub(hex_color_pattern, protect_hex, style)
+        
+        # Maintenant, remplacer les valeurs px
         def replace_px(match):
             value = float(match.group(1))
-            return f"{int(value * self.scale)}px"
+            scaled_value = int(value * self.scale)
+            # Limiter les valeurs à une plage raisonnable pour éviter les problèmes
+            scaled_value = max(0, min(99999, scaled_value))
+            return f"{scaled_value}px"
         
-        # Patterns pour les propriétés CSS avec valeurs en px
-        pattern = r'(\d+(?:\.\d+)?)px'
-        return re.sub(pattern, replace_px, style)
+        # Pattern pour les valeurs px (maintenant sans risque de toucher aux couleurs)
+        px_pattern = r'(\d+(?:\.\d+)?)px'
+        scaled_style = re.sub(px_pattern, replace_px, protected_style)
+        
+        # Restaurer les couleurs hex
+        for placeholder, hex_color in hex_colors.items():
+            scaled_style = scaled_style.replace(placeholder, hex_color)
+        
+        return scaled_style
 
 
 class MainWindow(QMainWindow):
@@ -895,7 +1084,8 @@ class MainWindow(QMainWindow):
         
         # ATEM Controller sera initialisé après le chargement de la config
         self.atem_controller: Optional[AtemController] = None
-        self.atem_config = {"ip": "", "aux_output": 2, "connected": False}
+        self.atem_config = {"ip": "", "aux_output": 2, "connected": False, "auto_reconnect_enabled": True}
+        self.atem_dialog = None  # Référence au dialog ATEM si ouvert
         
         # Variables de connexion (remplacées par cameras dict)
         self.cameras: Dict[int, CameraData] = {}
@@ -1286,7 +1476,7 @@ class MainWindow(QMainWindow):
             global_config["atem"] = {
                 "ip": self.atem_config.get("ip", ""),
                 "aux_output": self.atem_config.get("aux_output", 2)
-            }
+                }
             
             config = {
                 "global": global_config,
@@ -1334,17 +1524,18 @@ class MainWindow(QMainWindow):
             def status_callback(connected: bool, ip: str):
                 """Callback appelé quand l'état de connexion ATEM change."""
                 self.atem_config["connected"] = connected
-                # Mettre à jour l'UI si le workspace 4 est actif
-                if self.active_workspace_id == 4:
-                    self.update_atem_status()
+                # Mettre à jour l'UI du dialog ATEM s'il est ouvert
+                self.update_atem_status()
             
+            # Utiliser le flag auto_reconnect_enabled pour contrôler les tentatives automatiques
+            auto_reconnect = self.atem_config.get("auto_reconnect_enabled", True)
             self.atem_controller = AtemController(
                 ip=self.atem_config["ip"],
                 aux_output=self.atem_config.get("aux_output", 2),
-                auto_retry=True,
+                auto_retry=auto_reconnect,
                 retry_delay=5,
                 max_retry_delay=30,
-                max_retry_attempts=-1,  # Tentatives illimitées
+                max_retry_attempts=-1 if auto_reconnect else 0,  # Tentatives illimitées si activé, sinon aucune
                 status_callback=status_callback
             )
             
@@ -1372,12 +1563,19 @@ class MainWindow(QMainWindow):
                 connect_thread.start()
     
     def disconnect_atem(self):
-        """Ferme la connexion ATEM."""
+        """Ferme la connexion ATEM et désactive la reconnexion automatique."""
+        # Désactiver la reconnexion automatique
+        self.atem_config["auto_reconnect_enabled"] = False
+        
         if self.atem_controller:
+            # Désactiver auto_retry dans le controller
+            self.atem_controller.auto_retry = False
+            # Arrêter le thread de reconnexion si en cours
+            self.atem_controller.running = False
             self.atem_controller.disconnect()
             self.atem_config["connected"] = False
-            if self.active_workspace_id == 4:
-                self.update_atem_status()
+        
+        self.update_atem_status()
     
     def _init_companion_page(self):
         """Initialise la page Companion au démarrage."""
@@ -1755,7 +1953,8 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour l'affichage du Workspace 4 si on y accède
         if workspace_id == 4:
-            self.update_atem_status()
+            # Recharger les paramètres de la caméra active
+            self.update_workspace_4_for_active_camera()
         
         logger.debug(f"Workspace changé vers {workspace_id}")
     
@@ -1768,9 +1967,8 @@ class MainWindow(QMainWindow):
             
             if was_connected != is_connected:
                 self.atem_config["connected"] = is_connected
-                # Mettre à jour l'affichage si on est dans le workspace 4
-                if self.active_workspace_id == 4:
-                    self.update_atem_status()
+                # Mettre à jour l'affichage du dialog ATEM s'il est ouvert
+                self.update_atem_status()
     
     def switch_active_camera(self, camera_id: int):
         """Bascule vers la caméra spécifiée (pour l'affichage UI)."""
@@ -1826,6 +2024,10 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour le Workspace 3 si visible
         self.update_workspace_3_camera_display()
+        
+        # Mettre à jour le Workspace 4 si visible
+        if self.active_workspace_id == 4:
+            self.update_workspace_4_for_active_camera()
         
         # Changer la page Companion selon la caméra sélectionnée
         if hasattr(self, 'companion_controller') and self.companion_controller:
@@ -7693,96 +7895,46 @@ class MainWindow(QMainWindow):
         pass
     
     def open_connection_dialog(self):
-        """Ouvre le dialog de connexion pour la caméra active."""
-        cam_data = self.get_active_camera_data()
-        dialog = ConnectionDialog(
-            self,
-            camera_id=self.active_camera_id,
-            camera_url=cam_data.url,
-            username=cam_data.username,
-            password=cam_data.password,
-            slider_ip=cam_data.slider_ip,
-            companion_page=cam_data.companion_page,
-            connected=cam_data.connected
-        )
-        if dialog.exec():
-            # Sauvegarder la configuration
-            cam_data.url = dialog.url_input.text().rstrip('/')
-            cam_data.username = dialog.username_input.text()
-            cam_data.password = dialog.password_input.text()
-            cam_data.slider_ip = dialog.slider_ip_input.text().strip()
-            try:
-                cam_data.companion_page = int(dialog.companion_page_input.text().strip() or str(self.active_camera_id))
-            except ValueError:
-                cam_data.companion_page = self.active_camera_id
-            
-            # Arrêter l'ancien WebSocket slider si existant
-            if cam_data.slider_websocket_client:
-                cam_data.slider_websocket_client.stop()
-                cam_data.slider_websocket_client = None
-            
-            # Mettre à jour le SliderController
-            if cam_data.slider_ip:
-                slider_controller = SliderController(cam_data.slider_ip)
-                self.slider_controllers[self.active_camera_id] = slider_controller
-                # Vérifier que le slider répond
-                try:
-                    status = slider_controller.get_status(silent=True)
-                    if status is not None:
-                        logger.info(f"Slider {cam_data.slider_ip} répond correctement")
-                    else:
-                        logger.warning(f"Slider {cam_data.slider_ip} configuré mais ne répond pas")
-                except Exception as e:
-                    logger.warning(f"Erreur lors de la vérification du slider {cam_data.slider_ip}: {e}")
-            else:
-                self.slider_controllers[self.active_camera_id] = None
-            
-            # Sauvegarder dans le fichier
-            self.save_cameras_config()
-            
-            # Mettre à jour l'indicateur de statut du slider
-            QTimer.singleShot(100, self.update_slider_status_indicator)
-            
-            # Note: La connexion se fait directement dans toggle_connection() du dialogue
-            # Pas besoin de vérifier ici car toggle_connection() appelle déjà connect_to_camera()
-            # Si la caméra était déjà connectée et qu'on a juste changé le slider_ip, démarrer le WebSocket slider
-            if cam_data.connected and cam_data.slider_ip:
-                # Si déjà connecté, démarrer le nouveau WebSocket slider
-                try:
-                    # Créer un callback qui passe le camera_id
-                    def position_update_callback(data):
-                        self.on_slider_position_update(data, camera_id=self.active_camera_id)
-                    
-                    slider_ws_client = SliderWebSocketClient(
-                        slider_ip=cam_data.slider_ip,
-                        on_position_update_callback=position_update_callback,
-                        on_connection_status_callback=None
-                    )
-                    slider_ws_client.start()
-                    cam_data.slider_websocket_client = slider_ws_client
-                    logger.info(f"WebSocket slider démarré pour caméra {self.active_camera_id}")
-                except Exception as e:
-                    logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
+        """Ouvre le dialog de configuration ATEM."""
+        dialog = ConnectionDialog(self, atem_config=self.atem_config)
+        # Mettre à jour le statut après création pour afficher l'état initial
+        dialog.update_atem_status()
+        # Garder une référence au dialog pour mettre à jour le statut
+        self.atem_dialog = dialog
+        dialog.exec()
+        # Nettoyer la référence après fermeture
+        self.atem_dialog = None
     
     def _try_auto_connect_all_cameras(self):
         """Tente une connexion automatique pour toutes les caméras configurées."""
         logger.info("Démarrage de la connexion automatique pour toutes les caméras configurées...")
         camera_count = 0
+        # Credentials par défaut si vides
+        default_username = "roo"
+        default_password = "koko"
+        
         for camera_id in range(1, 9):
             cam_data = self.cameras[camera_id]
-            if cam_data.url and cam_data.username and cam_data.password:
-                # Ne pas vérifier cam_data.connected ici car cela peut être False même si la connexion est en cours
-                # Échelonner les tentatives de connexion (2 secondes entre chaque caméra)
-                # pour éviter de surcharger le réseau et donner plus de temps à chaque caméra
-                delay_ms = 2000 * camera_count  # 0ms pour première caméra, 2000ms pour suivante, etc.
-                camera_count += 1
-                # Utiliser functools.partial ou une fonction wrapper pour capturer correctement camera_id
-                def make_connect_func(cam_id):
-                    return lambda: self._try_auto_connect(cam_id, attempt=0, max_attempts=5)
-                QTimer.singleShot(delay_ms, make_connect_func(camera_id))
-                logger.info(f"Connexion automatique programmée pour caméra {camera_id} dans {delay_ms/1000:.1f}s")
+            # Vérifier que l'URL existe (requis)
+            if not cam_data.url:
+                continue
+            
+            # Utiliser les credentials par défaut si vides
+            username = cam_data.username if cam_data.username else default_username
+            password = cam_data.password if cam_data.password else default_password
+            
+            # Ne pas vérifier cam_data.connected ici car cela peut être False même si la connexion est en cours
+            # Échelonner les tentatives de connexion (2 secondes entre chaque caméra)
+            # pour éviter de surcharger le réseau et donner plus de temps à chaque caméra
+            delay_ms = 2000 * camera_count  # 0ms pour première caméra, 2000ms pour suivante, etc.
+            camera_count += 1
+            # Utiliser functools.partial ou une fonction wrapper pour capturer correctement camera_id
+            def make_connect_func(cam_id, user, pwd):
+                return lambda: self._try_auto_connect(cam_id, attempt=0, max_attempts=5, username=user, password=pwd)
+            QTimer.singleShot(delay_ms, make_connect_func(camera_id, username, password))
+            logger.info(f"Connexion automatique programmée pour caméra {camera_id} dans {delay_ms/1000:.1f}s (user: {username})")
     
-    def _try_auto_connect(self, camera_id: int = None, attempt: int = 0, max_attempts: int = 5):
+    def _try_auto_connect(self, camera_id: int = None, attempt: int = 0, max_attempts: int = 5, username: str = None, password: str = None):
         """Tente une connexion automatique sans bloquer l'UI avec plusieurs tentatives."""
         try:
             # Utiliser la caméra active si camera_id n'est pas spécifié (rétrocompatibilité)
@@ -7790,9 +7942,20 @@ class MainWindow(QMainWindow):
                 camera_id = self.active_camera_id
             
             cam_data = self.cameras[camera_id]
-            if not cam_data.url or not cam_data.username or not cam_data.password:
-                logger.debug(f"Caméra {camera_id} - Paramètres de connexion manquants, connexion automatique ignorée")
+            if not cam_data.url:
+                logger.debug(f"Caméra {camera_id} - URL manquante, connexion automatique ignorée")
                 return
+            
+            # Vérifier si la reconnexion automatique est activée
+            if not getattr(cam_data, 'auto_reconnect_enabled', True):
+                logger.info(f"Caméra {camera_id} - Reconnexion automatique désactivée, connexion automatique ignorée")
+                return
+            
+            # Utiliser les credentials fournis en paramètre, ou ceux de cam_data, ou les valeurs par défaut
+            default_username = "roo"
+            default_password = "koko"
+            effective_username = username if username is not None else (cam_data.username if cam_data.username else default_username)
+            effective_password = password if password is not None else (cam_data.password if cam_data.password else default_password)
             
             # Si déjà connecté, ne pas réessayer
             if cam_data.connected:
@@ -7807,8 +7970,8 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, 1, max_attempts))
                 return
             
-            import requests
-            from requests.auth import HTTPBasicAuth
+                import requests
+                from requests.auth import HTTPBasicAuth
             import socket
             from urllib.parse import urlparse
             
@@ -7835,11 +7998,11 @@ class MainWindow(QMainWindow):
             
             try:
                 test_endpoint = f"{test_url}/control/api/v1/lens/focus"
-                logger.info(f"Caméra {camera_id} - Tentative {attempt + 1}/{max_attempts} de connexion automatique à {test_endpoint} (timeout: {timeout}s)")
+                logger.info(f"Caméra {camera_id} - Tentative {attempt + 1}/{max_attempts} de connexion automatique à {test_endpoint} (timeout: {timeout}s, user: {effective_username})")
                 
                 response = requests.get(
                     test_endpoint,
-                    auth=HTTPBasicAuth(cam_data.username, cam_data.password),
+                    auth=HTTPBasicAuth(effective_username, effective_password),
                     timeout=timeout,
                     verify=False  # Désactiver la vérification SSL pour les certificats auto-signés
                 )
@@ -7847,7 +8010,7 @@ class MainWindow(QMainWindow):
                 # Si la caméra répond, on peut lancer la connexion complète
                 if response.status_code == 200:
                     logger.info(f"✓ Caméra {camera_id} accessible, connexion en cours...")
-                    self.connect_to_camera(camera_id, cam_data.url, cam_data.username, cam_data.password)
+                    self.connect_to_camera(camera_id, cam_data.url, effective_username, effective_password)
                 else:
                     logger.info(f"Caméra {camera_id} - Réponse HTTP {response.status_code}, réessai dans 2s...")
                     if attempt < max_attempts - 1:
@@ -7902,16 +8065,25 @@ class MainWindow(QMainWindow):
             if cam_data.connected:
                 self.disconnect_from_camera(camera_id)
             
+            # Marquer comme "connecting" si ce n'est pas déjà fait
+            if not getattr(cam_data, 'connecting', False):
+                cam_data.connecting = True
+            
             # Créer le contrôleur (non bloquant, juste initialise les endpoints)
             try:
                 cam_data.controller = BlackmagicFocusController(cam_data.url, cam_data.username, cam_data.password)
             except Exception as e:
                 logger.error(f"Erreur lors de la création du contrôleur pour la caméra {camera_id}: {e}")
                 cam_data.connected = False
+                cam_data.connecting = False
                 if camera_id == self.active_camera_id:
                     self.status_label.setText(f"✗ Caméra {camera_id} - Erreur: {e}")
                     self.status_label.setStyleSheet("color: #f00;")
                     self.set_controls_enabled(False)
+                # Mettre à jour le Workspace 4 si c'est la caméra active
+                if camera_id == self.active_camera_id and hasattr(self, 'workspace_4_camera_status_label'):
+                    QTimer.singleShot(100, lambda: self.update_workspace_4_camera_status(camera_id))
+                    QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
                 return
             
             # Réinitialiser le flag pour cette nouvelle connexion
@@ -7977,11 +8149,22 @@ class MainWindow(QMainWindow):
                     def position_update_callback(data):
                         self.on_slider_position_update(data, camera_id=camera_id)
                     
+                    def connection_status_callback(connected: bool, message: str):
+                        """Callback pour le statut de connexion du slider."""
+                        cam_data.slider_connecting = False
+                        if cam_data.slider_websocket_client:
+                            cam_data.slider_websocket_client.connected = connected
+                        # Mettre à jour l'affichage du Workspace 4 si nécessaire
+                        if camera_id == self.active_camera_id and hasattr(self, 'workspace_4_slider_status_label'):
+                            QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
+                    
                     slider_ws_client = SliderWebSocketClient(
                         slider_ip=cam_data.slider_ip,
                         on_position_update_callback=position_update_callback,
-                        on_connection_status_callback=None  # Optionnel : peut être ajouté plus tard
+                        on_connection_status_callback=connection_status_callback,
+                        auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
                     )
+                    cam_data.slider_connecting = True
                     slider_ws_client.start()
                     cam_data.slider_websocket_client = slider_ws_client
                     logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
@@ -7991,6 +8174,7 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(1000, lambda: self.companion_server.broadcast_snapshot())
                 except Exception as e:
                     logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
+                    cam_data.slider_connecting = False
             
             # Mettre à jour l'UI seulement si c'est la caméra active
             if camera_id == self.active_camera_id:
@@ -8047,6 +8231,7 @@ class MainWindow(QMainWindow):
             
             # Mettre à jour l'état
             cam_data.connected = False
+            cam_data.connecting = False  # Arrêter les tentatives de connexion
             cam_data.initial_values_received = False  # Réinitialiser le flag pour la prochaine connexion
             
             # Mettre à jour l'UI seulement si c'est la caméra active
@@ -8637,7 +8822,8 @@ class MainWindow(QMainWindow):
             cam_data.username,
             cam_data.password,
             on_change_callback=lambda param_name, data: self._handle_websocket_change(camera_id, param_name, data),
-            on_connection_status_callback=on_websocket_status
+            on_connection_status_callback=on_websocket_status,
+            auto_reconnect_enabled=getattr(cam_data, 'auto_reconnect_enabled', True)
         )
         
         cam_data.websocket_client.start()
@@ -9627,6 +9813,9 @@ class MainWindow(QMainWindow):
         
         cam_data = self.cameras[camera_id]
         cam_data.connected = connected
+        # Réinitialiser le flag connecting quand la connexion est établie ou échouée
+        if connected:
+            cam_data.connecting = False
         
         # Mettre à jour le StateStore
         self.state_store.update_cam(camera_id, connected=connected)
@@ -9641,6 +9830,11 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"✗ Caméra {camera_id} - Déconnectée ({cam_data.url})")
                 self.status_label.setStyleSheet("color: #f00;")
                 self.set_controls_enabled(False)
+        
+        # Mettre à jour le Workspace 4 si c'est la caméra active et que le workspace 4 est visible
+        if camera_id == self.active_camera_id and hasattr(self, 'workspace_4_camera_status_label'):
+            QTimer.singleShot(100, lambda: self.update_workspace_4_camera_status(camera_id))
+            QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
         
         logger.info(f"Caméra {camera_id} - WebSocket status: {connected} - {message}")
     
@@ -10597,7 +10791,7 @@ class MainWindow(QMainWindow):
         self.save_preset(self.workspace_3_selected_preset_id)
     
     def create_workspace_4_page(self):
-        """Crée la page pour le Workspace 4 avec la configuration et l'état de l'ATEM."""
+        """Crée la page pour le Workspace 4 avec la configuration des caméras."""
         page = QWidget()
         page.setStyleSheet("""
             QWidget {
@@ -10610,15 +10804,15 @@ class MainWindow(QMainWindow):
                                      self._scale_value(40), self._scale_value(40))
         main_layout.setSpacing(self._scale_value(30))
         
-        # Titre
-        title_label = QLabel("Configuration ATEM Switcher")
-        title_label.setStyleSheet(f"""
+        # Titre avec indication de la caméra active
+        self.workspace_4_camera_label = QLabel(f"Configuration de la Caméra {self.active_camera_id}")
+        self.workspace_4_camera_label.setStyleSheet(f"""
             font-size: {self._scale_font(24)}px;
             font-weight: bold;
             color: #fff;
             padding-bottom: {self._scale_value(10)}px;
         """)
-        main_layout.addWidget(title_label)
+        main_layout.addWidget(self.workspace_4_camera_label)
         
         # Section Configuration
         config_group = QGroupBox("Configuration")
@@ -10641,16 +10835,15 @@ class MainWindow(QMainWindow):
         config_layout = QVBoxLayout(config_group)
         config_layout.setSpacing(self._scale_value(15))
         
-        # IP ATEM
-        ip_layout = QHBoxLayout()
-        ip_label = QLabel("IP ATEM:")
-        ip_label.setMinimumWidth(self._scale_value(120))
-        ip_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
-        ip_layout.addWidget(ip_label)
-        self.workspace_4_atem_ip_input = QLineEdit()
-        self.workspace_4_atem_ip_input.setPlaceholderText("192.168.1.100")
-        self.workspace_4_atem_ip_input.setText(self.atem_config.get("ip", ""))
-        self.workspace_4_atem_ip_input.setStyleSheet(self._scale_style("""
+        # URL de la caméra
+        url_layout = QHBoxLayout()
+        url_label = QLabel("URL de la caméra:")
+        url_label.setMinimumWidth(self._scale_value(150))
+        url_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        url_layout.addWidget(url_label)
+        self.workspace_4_url_input = QLineEdit()
+        self.workspace_4_url_input.setPlaceholderText("http://Micro-Studio-Camera-4K-G2.local")
+        self.workspace_4_url_input.setStyleSheet(self._scale_style("""
             QLineEdit {
                 padding: 8px;
                 background-color: #333;
@@ -10663,39 +10856,109 @@ class MainWindow(QMainWindow):
                 border: 2px solid #0a5;
             }
         """))
-        ip_layout.addWidget(self.workspace_4_atem_ip_input)
-        config_layout.addLayout(ip_layout)
+        url_layout.addWidget(self.workspace_4_url_input)
+        config_layout.addLayout(url_layout)
         
-        # AUX Output
-        aux_layout = QHBoxLayout()
-        aux_label = QLabel("AUX Output:")
-        aux_label.setMinimumWidth(self._scale_value(120))
-        aux_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
-        aux_layout.addWidget(aux_label)
-        self.workspace_4_atem_aux_spinbox = QSpinBox()
-        self.workspace_4_atem_aux_spinbox.setMinimum(1)
-        self.workspace_4_atem_aux_spinbox.setMaximum(6)
-        self.workspace_4_atem_aux_spinbox.setValue(self.atem_config.get("aux_output", 2))
-        self.workspace_4_atem_aux_spinbox.setStyleSheet(self._scale_style("""
-            QSpinBox {
+        # Nom d'utilisateur
+        username_layout = QHBoxLayout()
+        username_label = QLabel("Nom d'utilisateur:")
+        username_label.setMinimumWidth(self._scale_value(150))
+        username_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        username_layout.addWidget(username_label)
+        self.workspace_4_username_input = QLineEdit()
+        self.workspace_4_username_input.setPlaceholderText("roo")
+        self.workspace_4_username_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
                 padding: 8px;
                 background-color: #333;
                 border: 1px solid #555;
                 border-radius: 4px;
                 color: #fff;
                 font-size: 14px;
-                min-width: 100px;
             }
-            QSpinBox:focus {
+            QLineEdit:focus {
                 border: 2px solid #0a5;
             }
         """))
-        aux_layout.addWidget(self.workspace_4_atem_aux_spinbox)
-        config_layout.addLayout(aux_layout)
+        username_layout.addWidget(self.workspace_4_username_input)
+        config_layout.addLayout(username_layout)
+        
+        # Mot de passe
+        password_layout = QHBoxLayout()
+        password_label = QLabel("Mot de passe:")
+        password_label.setMinimumWidth(self._scale_value(150))
+        password_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        password_layout.addWidget(password_label)
+        self.workspace_4_password_input = QLineEdit()
+        self.workspace_4_password_input.setEchoMode(QLineEdit.Password)
+        self.workspace_4_password_input.setPlaceholderText("koko")
+        self.workspace_4_password_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0a5;
+            }
+        """))
+        password_layout.addWidget(self.workspace_4_password_input)
+        config_layout.addLayout(password_layout)
+        
+        # IP du slider
+        slider_layout = QHBoxLayout()
+        slider_label = QLabel("IP ou hostname du slider:")
+        slider_label.setMinimumWidth(self._scale_value(150))
+        slider_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        slider_layout.addWidget(slider_label)
+        self.workspace_4_slider_ip_input = QLineEdit()
+        self.workspace_4_slider_ip_input.setPlaceholderText("192.168.1.100 ou slider1.local")
+        self.workspace_4_slider_ip_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0a5;
+            }
+        """))
+        slider_layout.addWidget(self.workspace_4_slider_ip_input)
+        config_layout.addLayout(slider_layout)
+        
+        # Page Companion
+        companion_layout = QHBoxLayout()
+        companion_label = QLabel("Page Companion:")
+        companion_label.setMinimumWidth(self._scale_value(150))
+        companion_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #aaa;")
+        companion_layout.addWidget(companion_label)
+        self.workspace_4_companion_input = QLineEdit()
+        self.workspace_4_companion_input.setPlaceholderText("1")
+        self.workspace_4_companion_input.setStyleSheet(self._scale_style("""
+            QLineEdit {
+                padding: 8px;
+                background-color: #333;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0a5;
+            }
+        """))
+        companion_layout.addWidget(self.workspace_4_companion_input)
+        config_layout.addLayout(companion_layout)
         
         # Bouton Sauvegarder
         save_btn = QPushButton("Sauvegarder")
-        save_btn.clicked.connect(self.save_atem_config)
+        save_btn.clicked.connect(self.on_workspace_4_save_camera_config)
         save_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 padding: 10px 20px;
@@ -10717,9 +10980,9 @@ class MainWindow(QMainWindow):
         config_layout.addStretch()
         main_layout.addWidget(config_group)
         
-        # Section État de connexion
-        status_group = QGroupBox("État de connexion")
-        status_group.setStyleSheet(self._scale_style("""
+        # Section État de connexion - Caméra
+        camera_status_group = QGroupBox("État de connexion - Caméra")
+        camera_status_group.setStyleSheet(self._scale_style("""
             QGroupBox {
                 font-size: 16px;
                 font-weight: bold;
@@ -10735,24 +10998,26 @@ class MainWindow(QMainWindow):
                 padding: 0 5px;
             }
         """))
-        status_layout = QVBoxLayout(status_group)
-        status_layout.setSpacing(self._scale_value(15))
+        camera_status_layout = QVBoxLayout(camera_status_group)
+        camera_status_layout.setSpacing(self._scale_value(15))
         
-        # Indicateur LED et label d'état
-        status_indicator_layout = QHBoxLayout()
-        self.workspace_4_atem_status_led = QLabel("●")
-        self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #f00;")
-        status_indicator_layout.addWidget(self.workspace_4_atem_status_led)
-        self.workspace_4_atem_status_label = QLabel("Déconnecté")
-        self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
-        status_indicator_layout.addWidget(self.workspace_4_atem_status_label)
-        status_indicator_layout.addStretch()
-        status_layout.addLayout(status_indicator_layout)
+        # Indicateur LED et label d'état caméra
+        camera_status_indicator_layout = QHBoxLayout()
+        self.workspace_4_camera_status_led = QLabel("●")
+        self.workspace_4_camera_status_led.setStyleSheet("font-size: 24px; color: #f00;")
+        camera_status_indicator_layout.addWidget(self.workspace_4_camera_status_led)
+        self.workspace_4_camera_status_label = QLabel("Déconnecté")
+        self.workspace_4_camera_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+        camera_status_indicator_layout.addWidget(self.workspace_4_camera_status_label)
+        camera_status_indicator_layout.addStretch()
+        camera_status_layout.addLayout(camera_status_indicator_layout)
         
-        # Bouton Connecter/Déconnecter
-        self.workspace_4_atem_connect_btn = QPushButton("Connecter")
-        self.workspace_4_atem_connect_btn.clicked.connect(self.on_atem_connect_clicked)
-        self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+        # Boutons Connect/Disconnect caméra
+        camera_buttons_layout = QHBoxLayout()
+        camera_buttons_layout.setSpacing(self._scale_value(10))
+        self.workspace_4_camera_connect_btn = QPushButton("Connecter")
+        self.workspace_4_camera_connect_btn.clicked.connect(self.on_workspace_4_camera_connect)
+        self.workspace_4_camera_connect_btn.setStyleSheet(self._scale_style("""
             QPushButton {
                 padding: 10px 20px;
                 background-color: #0a5;
@@ -10768,14 +11033,45 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #094;
             }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
         """))
-        status_layout.addWidget(self.workspace_4_atem_connect_btn)
-        status_layout.addStretch()
-        main_layout.addWidget(status_group)
+        camera_buttons_layout.addWidget(self.workspace_4_camera_connect_btn)
         
-        # Section Informations
-        info_group = QGroupBox("Informations")
-        info_group.setStyleSheet(self._scale_style("""
+        self.workspace_4_camera_disconnect_btn = QPushButton("Déconnecter")
+        self.workspace_4_camera_disconnect_btn.clicked.connect(self.on_workspace_4_camera_disconnect)
+        self.workspace_4_camera_disconnect_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #a50;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #b60;
+            }
+            QPushButton:pressed {
+                background-color: #940;
+            }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
+        """))
+        self.workspace_4_camera_disconnect_btn.setEnabled(False)
+        camera_buttons_layout.addWidget(self.workspace_4_camera_disconnect_btn)
+        camera_status_layout.addLayout(camera_buttons_layout)
+        camera_status_layout.addStretch()
+        main_layout.addWidget(camera_status_group)
+        
+        # Section État de connexion - Slider
+        slider_status_group = QGroupBox("État de connexion - Slider")
+        slider_status_group.setStyleSheet(self._scale_style("""
             QGroupBox {
                 font-size: 16px;
                 font-weight: bold;
@@ -10791,45 +11087,157 @@ class MainWindow(QMainWindow):
                 padding: 0 5px;
             }
         """))
-        info_layout = QVBoxLayout(info_group)
-        info_layout.setSpacing(self._scale_value(10))
+        slider_status_layout = QVBoxLayout(slider_status_group)
+        slider_status_layout.setSpacing(self._scale_value(15))
         
-        self.workspace_4_atem_info_ip = QLabel("IP: -")
-        self.workspace_4_atem_info_ip.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
-        info_layout.addWidget(self.workspace_4_atem_info_ip)
+        # Indicateur LED et label d'état slider
+        slider_status_indicator_layout = QHBoxLayout()
+        self.workspace_4_slider_status_led = QLabel("●")
+        self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #f00;")
+        slider_status_indicator_layout.addWidget(self.workspace_4_slider_status_led)
+        self.workspace_4_slider_status_label = QLabel("Déconnecté")
+        self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+        slider_status_indicator_layout.addWidget(self.workspace_4_slider_status_label)
+        slider_status_indicator_layout.addStretch()
+        slider_status_layout.addLayout(slider_status_indicator_layout)
         
-        self.workspace_4_atem_info_aux = QLabel("AUX Output: -")
-        self.workspace_4_atem_info_aux.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
-        info_layout.addWidget(self.workspace_4_atem_info_aux)
+        # Boutons Connect/Disconnect slider
+        slider_buttons_layout = QHBoxLayout()
+        slider_buttons_layout.setSpacing(self._scale_value(10))
+        self.workspace_4_slider_connect_btn = QPushButton("Connecter")
+        self.workspace_4_slider_connect_btn.clicked.connect(self.on_workspace_4_slider_connect)
+        self.workspace_4_slider_connect_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #0a5;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0b6;
+            }
+            QPushButton:pressed {
+                background-color: #094;
+            }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
+        """))
+        slider_buttons_layout.addWidget(self.workspace_4_slider_connect_btn)
         
-        self.workspace_4_atem_info_last_camera = QLabel("Dernière caméra: -")
-        self.workspace_4_atem_info_last_camera.setStyleSheet(f"font-size: {self._scale_font(13)}px; color: #aaa;")
-        info_layout.addWidget(self.workspace_4_atem_info_last_camera)
-        
-        info_layout.addStretch()
-        main_layout.addWidget(info_group)
+        self.workspace_4_slider_disconnect_btn = QPushButton("Déconnecter")
+        self.workspace_4_slider_disconnect_btn.clicked.connect(self.on_workspace_4_slider_disconnect)
+        self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
+            QPushButton {
+                padding: 10px 20px;
+                background-color: #a50;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #b60;
+            }
+            QPushButton:pressed {
+                background-color: #940;
+            }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
+        """))
+        self.workspace_4_slider_disconnect_btn.setEnabled(False)
+        slider_buttons_layout.addWidget(self.workspace_4_slider_disconnect_btn)
+        slider_status_layout.addLayout(slider_buttons_layout)
+        slider_status_layout.addStretch()
+        main_layout.addWidget(slider_status_group)
         
         main_layout.addStretch()
         
-        # Initialiser l'affichage
-        self.update_atem_status()
+        # Initialiser avec la caméra active
+        self.update_workspace_4_for_active_camera()
         
         return page
     
-    def update_atem_status(self):
-        """Met à jour l'affichage de l'état ATEM dans le workspace 4."""
-        if not hasattr(self, 'workspace_4_atem_status_label'):
+    def update_workspace_4_for_active_camera(self):
+        """Met à jour le Workspace 4 avec les paramètres de la caméra active."""
+        if not hasattr(self, 'workspace_4_url_input'):
             return  # Workspace 4 pas encore créé
         
-        connected = self.atem_config.get("connected", False)
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
         
-        # Mettre à jour l'indicateur LED
-        if connected:
-            self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #0f0;")
-            self.workspace_4_atem_status_label.setText("Connecté")
-            self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #0f0; font-weight: bold;")
-            self.workspace_4_atem_connect_btn.setText("Déconnecter")
-            self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+        # Mettre à jour le titre
+        if hasattr(self, 'workspace_4_camera_label'):
+            self.workspace_4_camera_label.setText(f"Configuration de la Caméra {camera_id}")
+        
+        # Mettre à jour les champs avec les valeurs de la caméra
+        self.workspace_4_url_input.setText(cam_data.url or "")
+        self.workspace_4_username_input.setText(cam_data.username or "")
+        self.workspace_4_password_input.setText(cam_data.password or "")
+        self.workspace_4_slider_ip_input.setText(cam_data.slider_ip or "")
+        self.workspace_4_companion_input.setText(str(cam_data.companion_page) if cam_data.companion_page else str(camera_id))
+        
+        # Mettre à jour l'affichage du statut de connexion
+        self.update_workspace_4_camera_status(camera_id)
+        self.update_workspace_4_slider_status(camera_id)
+    
+    def on_workspace_4_camera_selected(self, index: int):
+        """Méthode dépréciée - utilise maintenant update_workspace_4_for_active_camera()."""
+        # Cette méthode est conservée pour compatibilité mais ne fait plus rien
+        # Le Workspace 4 suit maintenant automatiquement la caméra active
+        pass
+    
+    def update_workspace_4_camera_status(self, camera_id: int):
+        """Met à jour l'affichage du statut de connexion de la caméra."""
+        if not hasattr(self, 'workspace_4_camera_status_label'):
+            return  # Workspace 4 pas encore créé
+        
+        cam_data = self.cameras[camera_id]
+        connected = cam_data.connected
+        connecting = getattr(cam_data, 'connecting', False)
+        auto_reconnect = getattr(cam_data, 'auto_reconnect_enabled', True)
+        
+        if connecting:
+            # État "Connecting" (tâche de fond en cours)
+            self.workspace_4_camera_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
+            self.workspace_4_camera_status_label.setText("Connexion en cours...")
+            self.workspace_4_camera_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
+            self.workspace_4_camera_connect_btn.setEnabled(False)
+            self.workspace_4_camera_disconnect_btn.setText("Arrêter les tentatives")
+            self.workspace_4_camera_disconnect_btn.setEnabled(True)
+            self.workspace_4_camera_disconnect_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px 20px;
+                    background-color: #ff8c00;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #ff9f33;
+                }
+                QPushButton:pressed {
+                    background-color: #e67e00;
+                }
+            """))
+        elif connected:
+            # État "Connected"
+            self.workspace_4_camera_status_led.setStyleSheet("font-size: 24px; color: #0f0;")  # Vert
+            self.workspace_4_camera_status_label.setText("Connecté")
+            self.workspace_4_camera_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #0f0; font-weight: bold;")
+            self.workspace_4_camera_connect_btn.setEnabled(False)
+            self.workspace_4_camera_disconnect_btn.setText("Déconnecter")
+            self.workspace_4_camera_disconnect_btn.setEnabled(True)
+            self.workspace_4_camera_disconnect_btn.setStyleSheet(self._scale_style("""
                 QPushButton {
                     padding: 10px 20px;
                     background-color: #a50;
@@ -10847,14 +11255,80 @@ class MainWindow(QMainWindow):
                 }
             """))
         else:
-            self.workspace_4_atem_status_led.setStyleSheet("font-size: 24px; color: #f00;")
-            self.workspace_4_atem_status_label.setText("Déconnecté")
-            self.workspace_4_atem_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
-            self.workspace_4_atem_connect_btn.setText("Connecter")
-            self.workspace_4_atem_connect_btn.setStyleSheet(self._scale_style("""
+            # État "Disconnected"
+            if auto_reconnect:
+                # Des tentatives automatiques sont en cours
+                self.workspace_4_camera_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
+                self.workspace_4_camera_status_label.setText("Déconnecté (reconnexion auto...)")
+                self.workspace_4_camera_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
+                self.workspace_4_camera_connect_btn.setEnabled(True)
+                self.workspace_4_camera_disconnect_btn.setText("Arrêter les tentatives")
+                self.workspace_4_camera_disconnect_btn.setEnabled(True)
+                self.workspace_4_camera_disconnect_btn.setStyleSheet(self._scale_style("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #ff8c00;
+                        border: none;
+                        border-radius: 6px;
+                        color: #fff;
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #ff9f33;
+                    }
+                    QPushButton:pressed {
+                        background-color: #e67e00;
+                    }
+                """))
+            else:
+                # Aucune tentative automatique
+                self.workspace_4_camera_status_led.setStyleSheet("font-size: 24px; color: #f00;")  # Rouge
+                self.workspace_4_camera_status_label.setText("Déconnecté")
+                self.workspace_4_camera_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+                self.workspace_4_camera_connect_btn.setEnabled(True)
+                self.workspace_4_camera_disconnect_btn.setText("Arrêter les tentatives")
+                self.workspace_4_camera_disconnect_btn.setEnabled(False)  # Pas de tentative à arrêter
+                self.workspace_4_camera_disconnect_btn.setStyleSheet(self._scale_style("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #444;
+                        border: none;
+                        border-radius: 6px;
+                        color: #888;
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QPushButton:disabled {
+                        background-color: #444;
+                        color: #888;
+                    }
+                """))
+    
+    def update_workspace_4_slider_status(self, camera_id: int):
+        """Met à jour l'affichage du statut de connexion du slider."""
+        if not hasattr(self, 'workspace_4_slider_status_label'):
+            return  # Workspace 4 pas encore créé
+        
+        cam_data = self.cameras[camera_id]
+        slider_connected = False
+        if cam_data.slider_websocket_client:
+            slider_connected = getattr(cam_data.slider_websocket_client, 'connected', False)
+        slider_connecting = getattr(cam_data, 'slider_connecting', False)
+        slider_auto_reconnect = getattr(cam_data, 'slider_auto_reconnect_enabled', True)
+        
+        if slider_connecting:
+            # État "Connecting" (tâche de fond en cours)
+            self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
+            self.workspace_4_slider_status_label.setText("Connexion en cours...")
+            self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
+            self.workspace_4_slider_connect_btn.setEnabled(False)
+            self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
+            self.workspace_4_slider_disconnect_btn.setEnabled(True)
+            self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
                 QPushButton {
                     padding: 10px 20px;
-                    background-color: #0a5;
+                    background-color: #ff8c00;
                     border: none;
                     border-radius: 6px;
                     color: #fff;
@@ -10862,68 +11336,341 @@ class MainWindow(QMainWindow):
                     font-weight: bold;
                 }
                 QPushButton:hover {
-                    background-color: #0b6;
+                    background-color: #ff9f33;
                 }
                 QPushButton:pressed {
-                    background-color: #094;
+                    background-color: #e67e00;
                 }
             """))
-        
-        # Mettre à jour les informations
-        ip = self.atem_config.get("ip", "")
-        aux_output = self.atem_config.get("aux_output", 2)
-        self.workspace_4_atem_info_ip.setText(f"IP: {ip if ip else '-'}")
-        self.workspace_4_atem_info_aux.setText(f"AUX Output: {aux_output} (HDMI {aux_output})")
-        
-        # Dernière caméra
-        if self.atem_controller:
-            last_camera = self.atem_controller.get_last_camera_id()
-            if last_camera:
-                self.workspace_4_atem_info_last_camera.setText(f"Dernière caméra: Caméra {last_camera}")
+        elif slider_connected:
+            # État "Connected"
+            self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #0f0;")  # Vert
+            self.workspace_4_slider_status_label.setText("Connecté")
+            self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #0f0; font-weight: bold;")
+            self.workspace_4_slider_connect_btn.setEnabled(False)
+            self.workspace_4_slider_disconnect_btn.setText("Déconnecter")
+            self.workspace_4_slider_disconnect_btn.setEnabled(True)
+            self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
+                QPushButton {
+                    padding: 10px 20px;
+                    background-color: #a50;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #b60;
+                }
+                QPushButton:pressed {
+                    background-color: #940;
+                }
+            """))
+        else:
+            # État "Disconnected"
+            if slider_auto_reconnect and cam_data.slider_websocket_client and cam_data.slider_websocket_client.running:
+                # Des tentatives automatiques sont en cours
+                self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
+                self.workspace_4_slider_status_label.setText("Déconnecté (reconnexion auto...)")
+                self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
+                self.workspace_4_slider_connect_btn.setEnabled(True)
+                self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
+                self.workspace_4_slider_disconnect_btn.setEnabled(True)
+                self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #ff8c00;
+                        border: none;
+                        border-radius: 6px;
+                        color: #fff;
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #ff9f33;
+                    }
+                    QPushButton:pressed {
+                        background-color: #e67e00;
+                    }
+                """))
             else:
-                self.workspace_4_atem_info_last_camera.setText("Dernière caméra: -")
-        else:
-            self.workspace_4_atem_info_last_camera.setText("Dernière caméra: -")
+                # Aucune tentative automatique
+                self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #f00;")  # Rouge
+                self.workspace_4_slider_status_label.setText("Déconnecté")
+                self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
+                self.workspace_4_slider_connect_btn.setEnabled(True)
+                self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
+                self.workspace_4_slider_disconnect_btn.setEnabled(False)  # Pas de tentative à arrêter
+                self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
+                    QPushButton {
+                        padding: 10px 20px;
+                        background-color: #444;
+                        border: none;
+                        border-radius: 6px;
+                        color: #888;
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QPushButton:disabled {
+                        background-color: #444;
+                        color: #888;
+                    }
+                """))
     
-    def on_atem_connect_clicked(self):
-        """Gère le clic sur le bouton Connecter/Déconnecter ATEM."""
-        if self.atem_config.get("connected", False):
-            self.disconnect_atem()
-        else:
-            self.connect_atem()
-    
-    def save_atem_config(self):
-        """Sauvegarde la configuration ATEM depuis le workspace 4."""
-        # Récupérer les valeurs depuis l'UI
-        new_ip = self.workspace_4_atem_ip_input.text().strip()
-        new_aux_output = self.workspace_4_atem_aux_spinbox.value()
+    def on_workspace_4_save_camera_config(self):
+        """Sauvegarde la configuration de la caméra active."""
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
         
-        # Vérifier que l'IP est valide
-        if not new_ip:
-            logger.warning("IP ATEM non renseignée")
-            return
+        # Récupérer les valeurs des champs
+        new_url = self.workspace_4_url_input.text().strip()
+        new_username = self.workspace_4_username_input.text().strip()
+        new_password = self.workspace_4_password_input.text().strip()
+        new_slider_ip = self.workspace_4_slider_ip_input.text().strip()
+        try:
+            new_companion_page = int(self.workspace_4_companion_input.text().strip() or str(camera_id))
+        except ValueError:
+            new_companion_page = camera_id
         
-        # Mettre à jour la config
-        old_ip = self.atem_config.get("ip", "")
-        self.atem_config["ip"] = new_ip
-        self.atem_config["aux_output"] = new_aux_output
+        # Sauvegarder l'ancien slider_ip pour vérifier s'il a changé
+        old_slider_ip = cam_data.slider_ip
+        
+        # Mettre à jour les valeurs
+        cam_data.url = new_url.rstrip('/')
+        cam_data.username = new_username
+        cam_data.password = new_password
+        cam_data.slider_ip = new_slider_ip
+        cam_data.companion_page = new_companion_page
+        
+        # Arrêter l'ancien WebSocket slider si existant
+        if cam_data.slider_websocket_client:
+            cam_data.slider_websocket_client.stop()
+            cam_data.slider_websocket_client = None
+        
+        # Mettre à jour le SliderController si l'IP a changé
+        if old_slider_ip != new_slider_ip:
+            if new_slider_ip:
+                slider_controller = SliderController(new_slider_ip)
+                self.slider_controllers[camera_id] = slider_controller
+                # Vérifier que le slider répond
+                try:
+                    status = slider_controller.get_status(silent=True)
+                    if status is not None:
+                        logger.info(f"Slider {new_slider_ip} répond correctement")
+                    else:
+                        logger.warning(f"Slider {new_slider_ip} configuré mais ne répond pas")
+                except Exception as e:
+                    logger.warning(f"Erreur lors de la vérification du slider {new_slider_ip}: {e}")
+            else:
+                self.slider_controllers[camera_id] = None
         
         # Sauvegarder dans le fichier
         self.save_cameras_config()
         
-        # Si l'IP a changé, réinitialiser le controller
-        if old_ip != new_ip:
-            if self.atem_controller:
-                self.atem_controller.disconnect()
-            self.init_atem_controller()
-        elif self.atem_controller:
-            # Si seul l'AUX output a changé, mettre à jour
-            self.atem_controller.aux_output = new_aux_output
+        # Mettre à jour l'indicateur de statut du slider
+        QTimer.singleShot(100, self.update_slider_status_indicator)
         
-        logger.info(f"Configuration ATEM sauvegardée: IP={new_ip}, AUX={new_aux_output}")
+        # Si la caméra était déjà connectée et qu'on a changé le slider_ip, démarrer le nouveau WebSocket slider
+        if cam_data.connected and new_slider_ip:
+            try:
+                def position_update_callback(data):
+                    self.on_slider_position_update(data, camera_id=camera_id)
+                
+                slider_ws_client = SliderWebSocketClient(
+                    slider_ip=new_slider_ip,
+                    on_position_update_callback=position_update_callback,
+                    on_connection_status_callback=None,
+                    auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
+                )
+                slider_ws_client.start()
+                cam_data.slider_websocket_client = slider_ws_client
+                logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
+            except Exception as e:
+                logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
+        
+        logger.info(f"Configuration caméra {camera_id} sauvegardée")
+    
+    def on_workspace_4_camera_connect(self):
+        """Lance la connexion de la caméra active."""
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
+        
+        # Vérifier que la caméra n'est pas déjà connectée ou en cours de connexion
+        if cam_data.connected or getattr(cam_data, 'connecting', False):
+            return
+        
+        url = self.workspace_4_url_input.text().strip()
+        username = self.workspace_4_username_input.text().strip()
+        password = self.workspace_4_password_input.text().strip()
+        
+        if not url:
+            logger.warning(f"URL manquante pour caméra {camera_id}")
+            return
+        
+        # Réactiver la reconnexion automatique (car l'utilisateur demande explicitement la connexion)
+        cam_data.auto_reconnect_enabled = True
+        
+        # Marquer comme "connecting"
+        cam_data.connecting = True
+        self.update_workspace_4_camera_status(camera_id)
+        
+        # Lancer la connexion (qui est asynchrone)
+        self.connect_to_camera(camera_id, url, username, password)
+        
+        # Le statut sera mis à jour automatiquement via on_websocket_status
+    
+    def on_workspace_4_camera_disconnect(self):
+        """Arrête la connexion de la caméra active et interrompt les tentatives en cours."""
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
+        
+        # Arrêter les tentatives de connexion automatique si en cours
+        cam_data.connecting = False
+        
+        # Désactiver la reconnexion automatique
+        cam_data.auto_reconnect_enabled = False
+        
+        # Arrêter le WebSocket client s'il existe et qu'il tente de se reconnecter
+        if cam_data.websocket_client:
+            cam_data.websocket_client.stop()  # Cela arrête aussi les tentatives de reconnexion
+        
+        # Déconnecter la caméra
+        if cam_data.connected:
+            self.disconnect_from_camera(camera_id)
         
         # Mettre à jour l'affichage
-        self.update_atem_status()
+        self.update_workspace_4_camera_status(camera_id)
+    
+    def on_workspace_4_slider_connect(self):
+        """Lance la connexion du slider pour la caméra active."""
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
+        
+        # Vérifier que le slider n'est pas déjà connecté ou en cours de connexion
+        slider_connected = False
+        if cam_data.slider_websocket_client:
+            slider_connected = getattr(cam_data.slider_websocket_client, 'connected', False)
+        
+        if slider_connected or getattr(cam_data, 'slider_connecting', False):
+            return
+        
+        slider_ip = self.workspace_4_slider_ip_input.text().strip()
+        if not slider_ip:
+            logger.warning(f"IP slider manquante pour caméra {camera_id}")
+            return
+        
+        # Réactiver la reconnexion automatique (car l'utilisateur demande explicitement la connexion)
+        cam_data.slider_auto_reconnect_enabled = True
+        
+        # Arrêter l'ancien WebSocket slider si existant
+        if cam_data.slider_websocket_client:
+            try:
+                cam_data.slider_websocket_client.stop()
+            except Exception as e:
+                logger.error(f"Erreur lors de l'arrêt de l'ancien WebSocket slider: {e}")
+            cam_data.slider_websocket_client = None
+        
+        # Marquer comme "connecting"
+        cam_data.slider_connecting = True
+        self.update_workspace_4_slider_status(camera_id)
+        
+        # Créer et démarrer le WebSocket slider
+        try:
+            def position_update_callback(data):
+                self.on_slider_position_update(data, camera_id=camera_id)
+            
+            def connection_status_callback(connected: bool, message: str):
+                """Callback pour le statut de connexion du slider."""
+                cam_data.slider_connecting = False
+                if cam_data.slider_websocket_client:
+                    cam_data.slider_websocket_client.connected = connected
+                # Mettre à jour l'affichage
+                QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
+            
+            slider_ws_client = SliderWebSocketClient(
+                slider_ip=slider_ip,
+                on_position_update_callback=position_update_callback,
+                on_connection_status_callback=connection_status_callback,
+                auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
+            )
+            slider_ws_client.start()
+            cam_data.slider_websocket_client = slider_ws_client
+            logger.info(f"Connexion slider WebSocket démarrée pour caméra {camera_id}")
+        except Exception as e:
+            logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
+            cam_data.slider_connecting = False
+            self.update_workspace_4_slider_status(camera_id)
+    
+    def on_workspace_4_slider_disconnect(self):
+        """Arrête la connexion du slider et interrompt les tentatives en cours."""
+        camera_id = self.active_camera_id
+        cam_data = self.cameras[camera_id]
+        
+        # Arrêter les tentatives de connexion si en cours
+        cam_data.slider_connecting = False
+        
+        # Désactiver la reconnexion automatique
+        cam_data.slider_auto_reconnect_enabled = False
+        
+        # Arrêter le WebSocket slider si existant
+        if cam_data.slider_websocket_client:
+            try:
+                # Désactiver la reconnexion automatique dans le WebSocket client
+                cam_data.slider_websocket_client.auto_reconnect_enabled = False
+                cam_data.slider_websocket_client.stop()
+            except Exception as e:
+                logger.error(f"Erreur lors de l'arrêt du WebSocket slider: {e}")
+            cam_data.slider_websocket_client = None
+        
+        # Mettre à jour l'affichage
+        self.update_workspace_4_slider_status(camera_id)
+    
+    def update_atem_status(self):
+        """Met à jour l'affichage de l'état ATEM dans le dialog si ouvert."""
+        # Si le dialog ATEM est ouvert, mettre à jour son affichage
+        if hasattr(self, 'atem_dialog') and self.atem_dialog:
+            self.atem_dialog.update_atem_status()
+    
+    def on_atem_connect_clicked(self):
+        """Gère le clic sur le bouton Connecter/Déconnecter/Arrêter les tentatives ATEM."""
+        connected = self.atem_config.get("connected", False)
+        auto_reconnect = self.atem_config.get("auto_reconnect_enabled", True)
+        controller_running = False
+        if self.atem_controller:
+            controller_running = getattr(self.atem_controller, 'running', False)
+        
+        if connected:
+            # Si connecté, déconnecter
+            self.disconnect_atem()
+        elif auto_reconnect and controller_running:
+            # Si pas connecté mais des tentatives sont en cours, arrêter les tentatives
+            logger.info("Arrêt des tentatives de reconnexion ATEM demandé par l'utilisateur")
+            self.atem_config["auto_reconnect_enabled"] = False
+            if self.atem_controller:
+                # Désactiver auto_retry dans le controller
+                self.atem_controller.auto_retry = False
+                # Arrêter le thread de reconnexion si en cours
+                self.atem_controller.running = False
+                # Déconnecter proprement
+                self.atem_controller.disconnect()
+        else:
+            # Si pas connecté et pas de tentatives en cours, connecter
+            # Réactiver la reconnexion automatique (car l'utilisateur demande explicitement la connexion)
+            self.atem_config["auto_reconnect_enabled"] = True
+            # Réinitialiser le controller avec le nouveau flag si nécessaire
+            if self.atem_controller:
+                # Si le controller existe mais auto_reconnect a changé, le réinitialiser
+                old_auto_retry = getattr(self.atem_controller, 'auto_retry', True)
+                if old_auto_retry != self.atem_config["auto_reconnect_enabled"]:
+                    self.init_atem_controller()
+                else:
+                    self.connect_atem()
+            else:
+                self.connect_atem()
+        
+        # Mettre à jour l'affichage du dialog si ouvert
+        QTimer.singleShot(100, self.update_atem_status)
 
 
 def main():

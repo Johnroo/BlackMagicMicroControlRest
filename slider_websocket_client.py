@@ -18,7 +18,7 @@ class SliderWebSocketClient:
     """Client WebSocket pour recevoir les positions du slider en temps réel."""
     
     def __init__(self, slider_ip: str, on_position_update_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-                 on_connection_status_callback: Optional[Callable[[bool, str], None]] = None):
+                 on_connection_status_callback: Optional[Callable[[bool, str], None]] = None, auto_reconnect_enabled: bool = True):
         """
         Initialise le client WebSocket pour le slider.
         
@@ -26,6 +26,7 @@ class SliderWebSocketClient:
             slider_ip: Adresse IP ou hostname du slider (ex: "192.168.1.37" ou "slider1.local")
             on_position_update_callback: Fonction appelée quand les positions changent (data dict)
             on_connection_status_callback: Fonction appelée quand l'état de connexion change (connected: bool, message: str)
+            auto_reconnect_enabled: Si False, n'essaie pas de se reconnecter automatiquement
         """
         self.slider_ip = slider_ip.strip() if slider_ip else ""
         # Construire l'URL WebSocket
@@ -42,7 +43,9 @@ class SliderWebSocketClient:
         
         self.on_position_update_callback = on_position_update_callback
         self.on_connection_status_callback = on_connection_status_callback
+        self.auto_reconnect_enabled = bool(auto_reconnect_enabled)  # Flag pour activer/désactiver la reconnexion automatique
         self.websocket: Optional[WebSocketClientProtocol] = None
+        self.connected = False  # Flag pour suivre l'état de connexion
         self.running = False
         self.reconnect_delay = 2  # Secondes avant reconnexion
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -51,7 +54,7 @@ class SliderWebSocketClient:
         self.logger.setLevel(logging.INFO)
         
         if self.ws_url:
-            self.logger.info(f"Initialisation WebSocket slider client - URL: {self.ws_url}")
+            self.logger.info(f"Initialisation WebSocket slider client - URL: {self.ws_url} (auto_reconnect: {self.auto_reconnect_enabled})")
         else:
             self.logger.warning("Slider IP non configuré, WebSocket non disponible")
     
@@ -98,6 +101,7 @@ class SliderWebSocketClient:
             except Exception:
                 pass
             self.websocket = None
+            self.connected = False
     
     async def _connect_and_listen(self):
         """Se connecte et écoute les messages WebSocket avec reconnexion automatique."""
@@ -111,7 +115,7 @@ class SliderWebSocketClient:
             except Exception:
                 pass
         
-        while self.running:
+        while self.running and self.auto_reconnect_enabled:
             try:
                 self.logger.info(f"Tentative de connexion WebSocket slider à {self.ws_url}")
                 
@@ -127,6 +131,7 @@ class SliderWebSocketClient:
                 
                 async with websocket:
                     self.websocket = websocket
+                    self.connected = True
                     self.logger.info(f"✓ WebSocket slider connecté avec succès à {self.ws_url}")
                     
                     # Notifier la connexion réussie
@@ -148,7 +153,7 @@ class SliderWebSocketClient:
                         raise
                         
             except websockets.exceptions.InvalidURI as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.error(f"URL WebSocket invalide: {e}")
                     self.logger.error(f"URL utilisée: {self.ws_url}")
                     if self.on_connection_status_callback:
@@ -157,8 +162,12 @@ class SliderWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except asyncio.TimeoutError:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.warning(f"Timeout lors de la connexion WebSocket à {self.ws_url}")
                     if self.on_connection_status_callback:
                         try:
@@ -166,26 +175,40 @@ class SliderWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except websockets.exceptions.ConnectionClosed as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.warning(f"WebSocket slider fermé: {e}")
                     self.websocket = None
+                    self.connected = False
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Connexion fermée: {e}")
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except Exception as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.error(f"Erreur WebSocket slider: {e}")
                     self.websocket = None
+                    self.connected = False
                     if self.on_connection_status_callback:
                         try:
                             self.on_connection_status_callback(False, f"Erreur: {e}")
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
     
     async def _handle_message(self, message: str):
         """Traite un message reçu du WebSocket."""

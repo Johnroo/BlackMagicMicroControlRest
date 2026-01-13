@@ -91,7 +91,7 @@ def resolve_hostname_to_ip(url: str, max_retries: int = 3, retry_delay: float = 
 class BlackmagicWebSocketClient:
     """Client WebSocket pour s'abonner aux changements de paramètres de la caméra Blackmagic."""
     
-    def __init__(self, base_url: str, username: str = "roo", password: str = "koko", on_change_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None, on_connection_status_callback: Optional[Callable[[bool, str], None]] = None):
+    def __init__(self, base_url: str, username: str = "roo", password: str = "koko", on_change_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None, on_connection_status_callback: Optional[Callable[[bool, str], None]] = None, auto_reconnect_enabled: bool = True):
         """
         Initialise le client WebSocket.
         
@@ -101,6 +101,7 @@ class BlackmagicWebSocketClient:
             password: Mot de passe pour l'authentification basique
             on_change_callback: Fonction appelée quand un paramètre change (param_name, data)
             on_connection_status_callback: Fonction appelée quand l'état de connexion change (connected: bool, message: str)
+            auto_reconnect_enabled: Si False, n'essaie pas de se reconnecter automatiquement
         """
         self.base_url = base_url.rstrip('/')
         
@@ -118,6 +119,7 @@ class BlackmagicWebSocketClient:
         self.password = password
         self.on_change_callback = on_change_callback
         self.on_connection_status_callback = on_connection_status_callback
+        self.auto_reconnect_enabled = bool(auto_reconnect_enabled)  # Flag pour activer/désactiver la reconnexion automatique
         self.websocket: Optional[WebSocketClientProtocol] = None
         self.running = False
         self.reconnect_delay = 2  # Secondes avant reconnexion (réduit de 5s à 2s)
@@ -134,7 +136,7 @@ class BlackmagicWebSocketClient:
             'Authorization': f'Basic {credentials}'
         }
         
-        self.logger.info(f"Initialisation WebSocket client - URL: {self.ws_url}")
+        self.logger.info(f"Initialisation WebSocket client - URL: {self.ws_url} (auto_reconnect: {self.auto_reconnect_enabled})")
     
     def start(self):
         """Démarre le client WebSocket dans un thread séparé."""
@@ -187,7 +189,7 @@ class BlackmagicWebSocketClient:
             except Exception:
                 pass
         
-        while self.running:
+        while self.running and self.auto_reconnect_enabled:
             try:
                 self.logger.info(f"Tentative de connexion WebSocket à {self.ws_url}")
                 
@@ -214,7 +216,7 @@ class BlackmagicWebSocketClient:
                     
                 except asyncio.TimeoutError:
                     # Timeout de connexion - réessayer avec backoff exponentiel
-                    if self.running:
+                    if self.running and self.auto_reconnect_enabled:
                         # Calculer le délai avec backoff exponentiel
                         delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
                         self.reconnect_attempts += 1
@@ -227,6 +229,15 @@ class BlackmagicWebSocketClient:
                                 pass
                         await asyncio.sleep(delay)
                         continue  # Réessayer la connexion
+                    else:
+                        # Arrêter si auto_reconnect est désactivé
+                        if not self.auto_reconnect_enabled:
+                            self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                            if self.on_connection_status_callback:
+                                try:
+                                    self.on_connection_status_callback(False, "Reconnexion automatique désactivée")
+                                except Exception:
+                                    pass
                     break
                 
                 async with websocket:
@@ -256,7 +267,7 @@ class BlackmagicWebSocketClient:
                         raise
                         
             except websockets.exceptions.InvalidURI as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.error(f"URL WebSocket invalide: {e}")
                     self.logger.error(f"URL utilisée: {self.ws_url}")
                     self.logger.error("Vérifiez que l'endpoint WebSocket est correct selon la documentation (page 71)")
@@ -266,8 +277,12 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except websockets.exceptions.InvalidHandshake as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     self.logger.error(f"Échec du handshake WebSocket: {e}")
                     self.logger.error("Vérifiez l'authentification et l'endpoint WebSocket")
                     if self.on_connection_status_callback:
@@ -276,8 +291,12 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(self.reconnect_delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except websockets.exceptions.ConnectionClosed as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     # Calculer le délai avec backoff exponentiel pour erreurs transitoires
                     delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
                     self.reconnect_attempts += 1
@@ -288,8 +307,12 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except websockets.exceptions.ConnectionClosedError as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     # Calculer le délai avec backoff exponentiel pour erreurs transitoires
                     delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
                     self.reconnect_attempts += 1
@@ -300,8 +323,12 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except OSError as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     # Calculer le délai avec backoff exponentiel pour erreurs réseau
                     delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
                     self.reconnect_attempts += 1
@@ -313,8 +340,12 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             except Exception as e:
-                if self.running:
+                if self.running and self.auto_reconnect_enabled:
                     # Calculer le délai avec backoff exponentiel pour erreurs inattendues
                     delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempts, 4)), self.max_reconnect_delay)
                     self.reconnect_attempts += 1
@@ -327,6 +358,10 @@ class BlackmagicWebSocketClient:
                         except Exception:
                             pass
                     await asyncio.sleep(delay)
+                else:
+                    if not self.auto_reconnect_enabled:
+                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
+                        break
             finally:
                 was_connected = self.websocket is not None
                 self.websocket = None
