@@ -328,8 +328,74 @@ class AtemController:
         return self.connected
     
     def get_last_camera_id(self):
-        """Retourne l'ID de la dernière caméra sélectionnée."""
+        """Retourne l'ID de la dernière caméra sélectionnée (via AUX / switch_to_camera)."""
         return self.last_camera_id
+
+    def _video_source_to_camera_id(self, source):
+        """
+        Convertit une source ATEM (ex: 'input3', 3, ATEMVideoSources.input3) en ID caméra 1-8.
+        Retourne None si ce n'est pas une entrée caméra.
+        """
+        if source is None:
+            return None
+
+        # Enum / objet avec .name ou .value
+        raw = source
+        if hasattr(source, "name"):
+            raw = source.name
+        elif hasattr(source, "value"):
+            raw = source.value
+
+        text = str(raw).strip().lower()
+
+        # Formats courants: "input3", "ATEMVideoSources.input3", "3"
+        if text.startswith("atemvideosources."):
+            text = text.split(".", 1)[1]
+
+        if text.startswith("input"):
+            digits = "".join(ch for ch in text[5:] if ch.isdigit())
+            if digits:
+                cam_id = int(digits)
+                if 1 <= cam_id <= 8:
+                    return cam_id
+                return None
+
+        try:
+            cam_id = int(text)
+            if 1 <= cam_id <= 8:
+                return cam_id
+        except (TypeError, ValueError):
+            pass
+
+        return None
+
+    def get_program_camera_id(self):
+        """
+        Lit le bus Program (ME1) de l'ATEM et retourne l'ID caméra (1-8), ou None.
+        """
+        if not self.connected or not self.atem:
+            return None
+        try:
+            with self.lock:
+                source = self.atem.programInput[0].videoSource
+            return self._video_source_to_camera_id(source)
+        except Exception as e:
+            logger.debug(f"Impossible de lire le Program ATEM: {e}")
+            return None
+
+    def get_preview_camera_id(self):
+        """
+        Lit le bus Preview (ME1) de l'ATEM et retourne l'ID caméra (1-8), ou None.
+        """
+        if not self.connected or not self.atem:
+            return None
+        try:
+            with self.lock:
+                source = self.atem.previewInput[0].videoSource
+            return self._video_source_to_camera_id(source)
+        except Exception as e:
+            logger.debug(f"Impossible de lire le Preview ATEM: {e}")
+            return None
     
     def __del__(self):
         """

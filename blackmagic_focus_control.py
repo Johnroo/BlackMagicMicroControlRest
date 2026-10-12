@@ -27,6 +27,38 @@ DEFAULT_POLLING_FREQUENCY = 4  # fois par seconde
 DEFAULT_TARGET_VALUE = None  # Aucune valeur cible par défaut
 CONFIG_FILE = "focus_config.json"
 
+# Fallbacks for cameras whose REST API omits supported* endpoints (404).
+# Verified against Micro Studio Camera / similar BM bodies.
+FALLBACK_SUPPORTED_GAINS = list(range(-12, 37, 2))  # -12..36 dB step 2
+FALLBACK_SUPPORTED_SHUTTER_SPEEDS = [
+    25, 30, 33, 40, 48, 50, 60, 66, 96, 100, 120, 125, 150, 180, 200,
+    240, 250, 300, 360, 500, 750, 1000, 1500, 2000, 3000, 4000,
+]
+# ~1 full stop on BMD apertureNumber scale for this camera family
+IRIS_APERTURE_NUMBER_STOP_STEP = 64
+FALLBACK_WHITEBALANCE_MIN = 2500
+FALLBACK_WHITEBALANCE_MAX = 10000
+
+
+def normalize_camera_base_url(url: str) -> str:
+    """Ensure camera base URL has an http(s) scheme (config often stores bare IPs)."""
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url
+
+
+def http_base_to_ws_base(base_url: str) -> str:
+    """Convert an http(s) camera base URL to ws(s)."""
+    base = normalize_camera_base_url(base_url)
+    if base.startswith("https://"):
+        return "wss://" + base[len("https://"):]
+    if base.startswith("http://"):
+        return "ws://" + base[len("http://"):]
+    return f"ws://{base}"
+
 
 def resolve_hostname_to_ip(url: str, max_retries: int = 3, retry_delay: float = 2.0) -> Optional[str]:
     """
@@ -41,6 +73,7 @@ def resolve_hostname_to_ip(url: str, max_retries: int = 3, retry_delay: float = 
         URL avec l'IP à la place du hostname, ou None si la résolution échoue
     """
     try:
+        url = normalize_camera_base_url(url)
         parsed = urlparse(url)
         hostname = parsed.hostname
         
@@ -103,15 +136,15 @@ class BlackmagicWebSocketClient:
             on_connection_status_callback: Fonction appelée quand l'état de connexion change (connected: bool, message: str)
             auto_reconnect_enabled: Si False, n'essaie pas de se reconnecter automatiquement
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = normalize_camera_base_url(base_url)
         
         # Essayer de résoudre les noms .local en IP pour améliorer la stabilité
         # On garde l'URL originale en backup si la résolution échoue
         resolved_url = resolve_hostname_to_ip(self.base_url, max_retries=2, retry_delay=1.0)
         self.resolved_base_url = resolved_url if resolved_url != self.base_url else None
         
-        # Convertir http:// en ws:// ou https:// en wss://
-        ws_base = (self.resolved_base_url if self.resolved_base_url else self.base_url).replace('http://', 'ws://').replace('https://', 'wss://')
+        # Convertir http(s):// en ws(s):// (also handles bare IPs via normalize)
+        ws_base = http_base_to_ws_base(self.resolved_base_url if self.resolved_base_url else self.base_url)
         # Endpoint WebSocket selon la documentation Blackmagic Design
         # Format: /control/api/v1/event/websocket
         self.ws_url = f"{ws_base}/control/api/v1/event/websocket"
@@ -592,7 +625,7 @@ class BlackmagicFocusController:
             username: Nom d'utilisateur pour l'authentification basique
             password: Mot de passe pour l'authentification basique
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = normalize_camera_base_url(base_url)
         
         # Essayer de résoudre les noms .local en IP pour améliorer la stabilité des connexions HTTP
         resolved_url = resolve_hostname_to_ip(self.base_url, max_retries=2, retry_delay=1.0)
@@ -1096,7 +1129,7 @@ class BlackmagicFocusController:
         Récupère la liste des gains supportés en décibels.
         
         Returns:
-            Liste d'entiers représentant les gains supportés en dB, ou None en cas d'erreur
+            Liste d'entiers représentant les gains supportés en dB (fallback if API 404)
         """
         try:
             if self.debug:
@@ -1115,20 +1148,15 @@ class BlackmagicFocusController:
             
             response.raise_for_status()
             data = response.json()
-            return data.get('supportedGains', [])
-        except requests.exceptions.SSLError as e:
-            print(f"Erreur SSL lors de la récupération des gains supportés: {e}")
-            return None
-        except requests.exceptions.ConnectionError as e:
-            print(f"Erreur de connexion lors de la récupération des gains supportés: {e}")
-            print(f"Vérifiez que la caméra est accessible à: {self.supported_gains_endpoint}")
-            return None
+            gains = data.get('supportedGains', [])
+            if gains:
+                return gains
+            return list(FALLBACK_SUPPORTED_GAINS)
         except requests.exceptions.RequestException as e:
-            print(f"Erreur lors de la récupération des gains supportés: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                print(f"Status code: {e.response.status_code}")
-                print(f"Response: {e.response.text}")
-            return None
+            # Many BM cameras return 404 for this endpoint; use known working values.
+            if not (hasattr(e, 'response') and e.response is not None and e.response.status_code == 404):
+                print(f"Erreur lors de la récupération des gains supportés: {e}")
+            return list(FALLBACK_SUPPORTED_GAINS)
     
     def get_gain(self) -> Optional[int]:
         """
@@ -1302,7 +1330,7 @@ class BlackmagicFocusController:
         Récupère les valeurs de shutter supportées.
         
         Returns:
-            Dictionnaire avec shutterAngles (array) et shutterSpeeds (array), ou None en cas d'erreur
+            Dictionnaire avec shutterAngles / shutterSpeeds (fallback if API 404)
         """
         try:
             if self.debug:
@@ -1320,15 +1348,23 @@ class BlackmagicFocusController:
             
             response.raise_for_status()
             data = response.json()
+            speeds = data.get('shutterSpeeds', [])
+            if speeds:
+                return {
+                    'shutterAngles': data.get('shutterAngles', []),
+                    'shutterSpeeds': speeds,
+                }
             return {
-                'shutterAngles': data.get('shutterAngles', []),
-                'shutterSpeeds': data.get('shutterSpeeds', [])
+                'shutterAngles': [],
+                'shutterSpeeds': list(FALLBACK_SUPPORTED_SHUTTER_SPEEDS),
             }
         except requests.exceptions.RequestException as e:
-            print(f"Erreur lors de la récupération des shutters supportés: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                print(f"Status code: {e.response.status_code}")
-            return None
+            if not (hasattr(e, 'response') and e.response is not None and e.response.status_code == 404):
+                print(f"Erreur lors de la récupération des shutters supportés: {e}")
+            return {
+                'shutterAngles': [],
+                'shutterSpeeds': list(FALLBACK_SUPPORTED_SHUTTER_SPEEDS),
+            }
     
     def get_shutter(self) -> Optional[dict]:
         """

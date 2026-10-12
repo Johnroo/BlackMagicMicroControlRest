@@ -91,21 +91,14 @@ class CommandHandler:
         
         try:
             if param == "focus":
-                # Pour focus, il faut changer temporairement la caméra active et contourner la vérification focus_slider_user_touching
+                # Pour focus, changer temporairement la caméra active si besoin
                 original_active_cam = main_window.active_camera_id
                 if main_window.active_camera_id != cam:
                     main_window.switch_active_camera(cam)
                 
-                original_touching = main_window.focus_slider_user_touching
-                main_window.focus_slider_user_touching = True
-                
                 try:
-                    # Appeler _send_focus_value_now
-                    main_window._send_focus_value_now(float(value))
+                    main_window._send_focus_value_now(float(value), force=True)
                 finally:
-                    # Remettre l'état original
-                    main_window.focus_slider_user_touching = original_touching
-                    # Restaurer la caméra active si nécessaire
                     if original_active_cam != cam:
                         main_window.switch_active_camera(original_active_cam)
                 

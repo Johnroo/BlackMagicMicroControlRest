@@ -19,12 +19,20 @@ from PySide6.QtWidgets import (
     QLabel, QSlider, QPushButton, QLineEdit, QDialog, QGridLayout,
     QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QCheckBox,
-    QComboBox, QScrollArea, QGroupBox, QSpinBox
+    QComboBox, QScrollArea, QGroupBox, QSpinBox, QInputDialog, QFrame,
+    QButtonGroup
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
 from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent, QDoubleValidator
 
-from blackmagic_focus_control import BlackmagicFocusController, BlackmagicWebSocketClient
+from blackmagic_focus_control import (
+    BlackmagicFocusController,
+    BlackmagicWebSocketClient,
+    normalize_camera_base_url,
+    IRIS_APERTURE_NUMBER_STOP_STEP,
+    FALLBACK_WHITEBALANCE_MIN,
+    FALLBACK_WHITEBALANCE_MAX,
+)
 from state_store import StateStore
 from ws_server import CompanionWsServer
 from command_handler import CommandHandler
@@ -437,6 +445,169 @@ class RotaryKnobWidget(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255), 1))
         painter.setBrush(QBrush(QColor(255, 255, 255)))
         painter.drawEllipse(int(center_x - 3), int(center_y - 3), 6, 6)
+
+
+class StepPresetLineEdit(QLineEdit):
+    """QLineEdit personnalisé pour les presets des steps avec gestion Backspace."""
+    
+    def __init__(self, parent=None, seq_idx=None, step_num=None, callback=None):
+        super().__init__(parent)
+        self.seq_idx = seq_idx
+        self.step_num = step_num
+        self.callback = callback
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        """Gère les événements clavier, notamment Backspace pour supprimer le preset."""
+        if event.key() == Qt.Key_Backspace and not self.text().strip():
+            # Backspace sur un champ vide - supprimer le preset
+            if self.callback:
+                self.callback(self.seq_idx, self.step_num)
+            event.accept()
+            return
+        
+        # Comportement par défaut pour les autres touches
+        super().keyPressEvent(event)
+
+
+class SequenceStepSlider(QWidget):
+    """Widget personnalisé pour afficher un slider avec des boules colorées déplaçables pour les steps."""
+    
+    # Signal émis quand une boule est déplacée (step_index, position)
+    stepPositionChanged = Signal(int, float)
+    
+    # Couleurs des steps (1-6)
+    STEP_COLORS = {
+        1: QColor(0, 255, 0),      # Vert
+        2: QColor(85, 85, 255),    # Bleu
+        3: QColor(255, 165, 0),    # Jaune/Orange
+        4: QColor(165, 95, 170),   # Mauve
+        5: QColor(136, 136, 136),  # Gris
+        6: QColor(170, 0, 0)       # Rouge
+    }
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.steps_data = {}  # {step_index: {"preset": int, "position": float}}
+        self.dragging_step = None  # step_index de la boule en cours de déplacement
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+    
+    def setStepsData(self, steps_data: dict):
+        """Met à jour les données des steps. Format: {step_index: {"preset": int, "position": float}}"""
+        # S'assurer que les clés sont des entiers (1-6) pour la correspondance avec STEP_COLORS
+        self.steps_data = {}
+        for key, value in steps_data.items():
+            # Convertir la clé en entier si nécessaire
+            if isinstance(key, str):
+                try:
+                    int_key = int(key)
+                except ValueError:
+                    int_key = key
+            else:
+                int_key = int(key) if isinstance(key, (int, float)) else key
+            self.steps_data[int_key] = value
+        self.update()
+    
+    def getStepsData(self) -> dict:
+        """Retourne les données des steps."""
+        return self.steps_data.copy()
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        """Détecte le clic sur une boule pour commencer le drag."""
+        if event.button() == Qt.LeftButton:
+            clicked_step = self._getStepAtPosition(event.x())
+            if clicked_step:
+                self.dragging_step = clicked_step
+                self.setCursor(Qt.ClosedHandCursor)
+    
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Met à jour la position de la boule en cours de déplacement."""
+        if self.dragging_step is not None:
+            # Calculer la nouvelle position (0.0-1.0)
+            width = self.width()
+            margin = 20
+            slider_width = width - 2 * margin
+            if slider_width > 0:
+                x_pos = event.x() - margin
+                position = max(0.0, min(1.0, x_pos / slider_width))
+                
+                # Mettre à jour la position
+                if self.dragging_step in self.steps_data:
+                    self.steps_data[self.dragging_step]["position"] = position
+                    self.update()
+                    # Émettre le signal
+                    self.stepPositionChanged.emit(self.dragging_step, position)
+        else:
+            # Vérifier si on survole une boule pour changer le curseur
+            hovered_step = self._getStepAtPosition(event.x())
+            if hovered_step:
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Termine le drag de la boule."""
+        if event.button() == Qt.LeftButton:
+            self.dragging_step = None
+            self.setCursor(Qt.ArrowCursor)
+    
+    def _getStepAtPosition(self, x: int) -> Optional[int]:
+        """Retourne le step_index de la boule à la position x, ou None si aucune."""
+        width = self.width()
+        margin = 20
+        slider_width = width - 2 * margin
+        if slider_width <= 0:
+            return None
+        
+        ball_radius = 8
+        for step_index, step_data in self.steps_data.items():
+            preset = step_data.get("preset")
+            # Ne considérer que les steps avec un preset valide
+            if preset is not None and preset != 0:
+                # Position de la boule sur le slider
+                ball_x = margin + step_data.get("position", 0.0) * slider_width
+                # Vérifier si le clic est dans la boule
+                if abs(x - ball_x) <= ball_radius:
+                    return step_index
+        return None
+    
+    def paintEvent(self, event):
+        """Dessine le slider et les boules."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        margin = 20
+        slider_width = width - 2 * margin
+        slider_y = height / 2
+        
+        # Dessiner le slider (ligne horizontale)
+        slider_pen = QPen(QColor(100, 100, 100), 2)
+        painter.setPen(slider_pen)
+        painter.drawLine(margin, slider_y, width - margin, slider_y)
+        
+        # Dessiner les boules pour chaque step avec preset (uniquement si preset est assigné)
+        ball_radius = 8
+        for step_index, step_data in self.steps_data.items():
+            preset = step_data.get("preset")
+            # Ne dessiner la boule que si un preset valide est assigné (pas None, pas 0, pas vide)
+            if preset is not None and preset != 0:
+                position = step_data.get("position", 0.0)
+                ball_x = margin + position * slider_width
+                
+                # Couleur de la boule selon le step (1-6)
+                # step_index est maintenant garanti d'être un entier (1-6) grâce à setStepsData
+                # Récupérer directement la couleur du step
+                color = self.STEP_COLORS.get(step_index, QColor(128, 128, 128))
+                
+                # Dessiner la boule avec la couleur du step
+                ball_rect = QRect(int(ball_x - ball_radius), int(slider_y - ball_radius),
+                                int(ball_radius * 2), int(ball_radius * 2))
+                painter.setPen(QPen(color.darker(), 2))
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(ball_rect)
 
 
 @dataclass
@@ -875,22 +1046,22 @@ class ConnectionDialog(QDialog):
                 self.connect_btn.setText("Connecter")
                 self.connect_btn.setEnabled(True)
                 self.connect_btn.setStyleSheet("""
-                    QPushButton {
+                QPushButton {
                         padding: 10px 20px;
-                        background-color: #0a5;
-                        border: none;
+                    background-color: #0a5;
+                    border: none;
                         border-radius: 6px;
                         color: #fff;
                         font-size: 14px;
                         font-weight: bold;
-                    }
-                    QPushButton:hover {
+                }
+                QPushButton:hover {
                         background-color: #0b6;
                     }
                     QPushButton:pressed {
                         background-color: #094;
-                    }
-                """)
+                }
+            """)
         
         # Mettre à jour les informations
         ip = self.parent().atem_config.get("ip", "")
@@ -1101,11 +1272,13 @@ class MainWindow(QMainWindow):
         self.focus_slider_user_touching = False  # True seulement quand l'utilisateur touche physiquement le slider
         self.focus_send_sequence = 0  # Compteur pour annuler les envois différés
         self.focus_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
+        self.focus_pending_value = None  # Dernière valeur à envoyer si un PUT est déjà en cours
         self.focus_keyboard_adjusting = False  # True quand on ajuste avec les flèches clavier
         
         
         # Variables pour white balance
         self.whitebalance_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
+        self.whitebalance_pending_value = None  # Dernière valeur à envoyer si un PUT est déjà en cours
         self.tint_sending = False  # True pendant qu'une requête PUT est en cours ou en attente de délai
         
         # Variables pour la répétition des touches flèches
@@ -1130,10 +1303,17 @@ class MainWindow(QMainWindow):
         # Champs distance pour les presets (initialisé dans create_presets_panel)
         self.preset_distance_inputs: list = []
         
-        # Sequences data (20 séquences)
+        # Sequences data (20 séquences) - nouvelle structure avec steps
         self.sequences_data: list = [{
             "name": "",
-            "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+            "steps": {
+                1: {"preset": None, "position": self.get_default_step_position(1)},
+                2: {"preset": None, "position": self.get_default_step_position(2)},
+                3: {"preset": None, "position": self.get_default_step_position(3)},
+                4: {"preset": None, "position": self.get_default_step_position(4)},
+                5: {"preset": None, "position": self.get_default_step_position(5)},
+                6: {"preset": None, "position": self.get_default_step_position(6)}
+            },
             "duration": 5.0,
             "baked": False
         } for _ in range(20)]
@@ -1668,18 +1848,20 @@ class MainWindow(QMainWindow):
         workspace_label.setStyleSheet(f"font-size: {self._scale_font(12)}; color: #aaa;")
         top_bar_layout.addWidget(workspace_label)
         
-        # Créer 2 boutons pour les workspaces
+        # Créer les boutons pour les workspaces (groupe exclusif pour un switch fiable)
         self.workspace_buttons = []
-        for i in range(1, 5):
-            btn = QPushButton(f"Workspace {i}")
-            btn_width = self._scale_value(100)
+        self.workspace_button_group = QButtonGroup(self)
+        self.workspace_button_group.setExclusive(True)
+        for i in range(1, 6):
+            btn = QPushButton(f"WS{i}")
+            btn_width = self._scale_value(52)
             btn_height = self._scale_value(30)
             btn.setMinimumSize(btn_width, btn_height)
             btn.setMaximumSize(btn_width, btn_height)
             btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.NoFocus)
             if i == self.active_workspace_id:
                 btn.setChecked(True)
-            btn.clicked.connect(lambda checked, ws_id=i: self.switch_workspace(ws_id))
             btn.setStyleSheet(self._scale_style("""
                 QPushButton {
                     padding: 5px;
@@ -1699,12 +1881,15 @@ class MainWindow(QMainWindow):
                 }
             """))
             self.workspace_buttons.append(btn)
+            self.workspace_button_group.addButton(btn, i)
             top_bar_layout.addWidget(btn)
+        self.workspace_button_group.idClicked.connect(self.switch_workspace)
         
         top_bar_widget = QWidget()
         top_bar_widget.setLayout(top_bar_layout)
+        top_bar_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         top_bar_widget.setStyleSheet("background-color: #1a1a1a; border-bottom: 1px solid #444;")
-        main_layout.addWidget(top_bar_widget)
+        main_layout.addWidget(top_bar_widget, stretch=0)
         
         # Widget central avec layout horizontal
         central_widget = QWidget()
@@ -1811,6 +1996,10 @@ class MainWindow(QMainWindow):
         workspace_4_page = self.create_workspace_4_page()
         self.workspace_stack.addWidget(workspace_4_page)
         
+        # Page 5 (Workspace 5) : Recall multi-caméras (captation)
+        workspace_5_page = self.create_workspace_5_page()
+        self.workspace_stack.addWidget(workspace_5_page)
+        
         # Connecter les signaux du panneau joystick et LFO
         if hasattr(workspace_2_page, 'layout') and workspace_2_page.layout():
             # Trouver les panneaux dans la page
@@ -1842,9 +2031,10 @@ class MainWindow(QMainWindow):
         
         # Définir la page active (Workspace 1)
         self.workspace_stack.setCurrentIndex(0)
+        self.workspace_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # Ajouter le QStackedWidget au layout principal
-        main_layout.addWidget(self.workspace_stack)
+        # Ajouter le QStackedWidget au layout principal (sous la barre d'onglets)
+        main_layout.addWidget(self.workspace_stack, stretch=1)
         
         # Créer le widget principal et le définir comme central widget
         main_widget = QWidget()
@@ -1928,7 +2118,7 @@ class MainWindow(QMainWindow):
     
     def switch_workspace(self, workspace_id: int):
         """Change l'onglet workspace actif."""
-        if workspace_id < 1 or workspace_id > 4:
+        if workspace_id < 1 or workspace_id > 5:
             logger.warning(f"ID de workspace invalide: {workspace_id}")
             return
         
@@ -1940,9 +2130,24 @@ class MainWindow(QMainWindow):
         # Changer la page affichée dans le QStackedWidget (index 0-based)
         self.workspace_stack.setCurrentIndex(workspace_id - 1)
         
-        # Mettre à jour l'état des boutons d'onglets
-        for i, btn in enumerate(self.workspace_buttons, start=1):
-            btn.setChecked(i == workspace_id)
+        # Mettre à jour l'état des boutons d'onglets (sans réémettre les signaux)
+        if hasattr(self, 'workspace_button_group'):
+            btn = self.workspace_button_group.button(workspace_id)
+            if btn and not btn.isChecked():
+                btn.setChecked(True)
+        else:
+            for i, btn in enumerate(self.workspace_buttons, start=1):
+                btn.blockSignals(True)
+                btn.setChecked(i == workspace_id)
+                btn.blockSignals(False)
+        
+        # Timer statut WS5 uniquement quand on est sur cet onglet
+        if hasattr(self, 'workspace_5_status_timer'):
+            if workspace_id == 5:
+                if not self.workspace_5_status_timer.isActive():
+                    self.workspace_5_status_timer.start(1000)
+            else:
+                self.workspace_5_status_timer.stop()
         
         # Mettre à jour l'affichage du Workspace 3 si on y accède
         if workspace_id == 3:
@@ -1956,7 +2161,11 @@ class MainWindow(QMainWindow):
             # Recharger les paramètres de la caméra active
             self.update_workspace_4_for_active_camera()
         
-        logger.debug(f"Workspace changé vers {workspace_id}")
+        # Mettre à jour l'affichage du Workspace 5 (recall multi-cam)
+        if workspace_id == 5:
+            self.update_workspace_5_display()
+        
+        logger.info(f"Workspace changé vers {workspace_id}")
     
     def _check_atem_status(self):
         """Vérifie périodiquement l'état de connexion ATEM et met à jour l'affichage."""
@@ -2134,6 +2343,26 @@ class MainWindow(QMainWindow):
         # Mettre à jour les séquences
         if hasattr(self, 'sequences_table') and self.sequences_table:
             self.load_sequences_from_config()
+    
+    @staticmethod
+    def get_default_step_position(step_num: int) -> float:
+        """Retourne la position par défaut d'un step (0.0 à 1.0).
+        
+        Args:
+            step_num: Numéro du step (1-6)
+            
+        Returns:
+            Position normalisée entre 0.0 et 1.0
+        """
+        positions = {
+            1: 0.0,    # 0%
+            2: 0.25,   # 25%
+            3: 0.5,    # 50%
+            4: 0.75,   # 75%
+            5: 1.0,    # 100%
+            6: 1.0     # 100%
+        }
+        return positions.get(step_num, 0.5)  # Fallback à 0.5 si step_num invalide
     
     def _scale_value(self, value: float) -> int:
         """Helper pour obtenir une valeur scaled."""
@@ -2886,57 +3115,65 @@ class MainWindow(QMainWindow):
         
         return panel
     
-    def increment_iris(self, camera_id: Optional[int] = None):
-        """Incrémente l'iris d'un stop d'aperture pour la caméra spécifiée ou active."""
-        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
+    def _adjust_iris_by_stop(self, direction: int, camera_id: Optional[int] = None):
+        """Ajuste l'iris d'environ 1 stop via apertureNumber (adjustmentStep est ignoré sur certaines BM)."""
         if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
             if camera_id < 1 or camera_id > 8:
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
             cam_data = self.cameras[camera_id]
+            actual_camera_id = camera_id
         else:
             cam_data = self.get_active_camera_data()
+            actual_camera_id = self.active_camera_id
         
         if not cam_data.connected or not cam_data.controller:
             return
         
-        # Utiliser adjustmentStep pour incrémenter d'un stop
         try:
-            success = cam_data.controller.set_iris(adjustment_step=1, silent=True)
-            if success:
-                # La valeur sera mise à jour via WebSocket, mais on peut aussi faire un GET pour avoir la nouvelle valeur immédiatement
-                # Pour l'instant, on attend le WebSocket
-                pass
+            iris = cam_data.controller.get_iris() or {}
+            current_number = iris.get('apertureNumber')
+            if current_number is None:
+                # Fallback: step normalised
+                current_norm = float(iris.get('normalised') or cam_data.iris_actual_value or 0.0)
+                new_norm = max(0.0, min(1.0, current_norm + (0.167 * direction)))
+                success = cam_data.controller.set_iris(value=new_norm, silent=True)
             else:
-                logger.error(f"Erreur lors de l'incrémentation de l'iris")
+                new_number = int(current_number) + (IRIS_APERTURE_NUMBER_STOP_STEP * direction)
+                new_number = max(0, new_number)
+                success = cam_data.controller.set_iris(aperture_number=new_number, silent=True)
+            
+            if not success:
+                logger.error("Erreur lors de l'ajustement de l'iris")
+                return
+            
+            # Refresh local/UI state immediately (WS can be slow/missing)
+            updated = cam_data.controller.get_iris()
+            if updated:
+                if actual_camera_id == self.active_camera_id:
+                    self.on_iris_changed(updated)
+                else:
+                    if 'normalised' in updated:
+                        cam_data.iris_actual_value = float(updated['normalised'])
+                        cam_data.iris_sent_value = cam_data.iris_actual_value
+                    if 'apertureStop' in updated:
+                        cam_data.iris_aperture_stop = float(updated['apertureStop'])
+                    if 'apertureNumber' in updated:
+                        cam_data.iris_aperture_number = int(updated['apertureNumber'])
+                logger.info(
+                    f"Iris cam{actual_camera_id}: "
+                    f"f/{updated.get('apertureStop')} (num={updated.get('apertureNumber')})"
+                )
         except Exception as e:
-            logger.error(f"Erreur lors de l'incrémentation de l'iris: {e}")
+            logger.error(f"Erreur lors de l'ajustement de l'iris: {e}")
+    
+    def increment_iris(self, camera_id: Optional[int] = None):
+        """Incrémente l'iris d'un stop d'aperture pour la caméra spécifiée ou active."""
+        self._adjust_iris_by_stop(1, camera_id=camera_id)
     
     def decrement_iris(self, camera_id: Optional[int] = None):
         """Décrémente l'iris d'un stop d'aperture pour la caméra spécifiée ou active."""
-        # Le signal clicked de QPushButton émet un booléen, donc on doit ignorer False
-        if camera_id is not None and camera_id is not False and isinstance(camera_id, int):
-            if camera_id < 1 or camera_id > 8:
-                logger.error(f"ID de caméra invalide: {camera_id}")
-                return
-            cam_data = self.cameras[camera_id]
-        else:
-            cam_data = self.get_active_camera_data()
-        
-        if not cam_data.connected or not cam_data.controller:
-            return
-        
-        # Utiliser adjustmentStep pour décrémenter d'un stop
-        try:
-            success = cam_data.controller.set_iris(adjustment_step=-1, silent=True)
-            if success:
-                # La valeur sera mise à jour via WebSocket, mais on peut aussi faire un GET pour avoir la nouvelle valeur immédiatement
-                # Pour l'instant, on attend le WebSocket
-                pass
-            else:
-                logger.error(f"Erreur lors de la décrémentation de l'iris")
-        except Exception as e:
-            logger.error(f"Erreur lors de la décrémentation de l'iris: {e}")
+        self._adjust_iris_by_stop(-1, camera_id=camera_id)
     
     def update_iris_value(self, value: float, camera_id: Optional[int] = None):
         """Met à jour la valeur de l'iris pour la caméra spécifiée ou active."""
@@ -3221,6 +3458,8 @@ class MainWindow(QMainWindow):
             if gains:
                 cam_data.supported_gains = sorted(gains)
                 logger.info(f"Caméra {camera_id} - Gains supportés chargés: {cam_data.supported_gains}")
+            else:
+                logger.warning(f"Caméra {camera_id} - Aucun gain supporté disponible")
         except Exception as e:
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement des gains supportés: {e}")
     
@@ -3314,7 +3553,13 @@ class MainWindow(QMainWindow):
         
         try:
             success = cam_data.controller.set_gain(value, silent=True)
-            if not success:
+            if success:
+                cam_data.gain_sent_value = value
+                cam_data.gain_actual_value = value
+                if camera_id is None or camera_id == self.active_camera_id or not isinstance(camera_id, int):
+                    self.on_gain_changed(value)
+                logger.info(f"Gain envoyé cam{self.active_camera_id if not isinstance(camera_id, int) else camera_id}: {value} dB")
+            else:
                 logger.error(f"Erreur lors de l'envoi du gain")
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi du gain: {e}")
@@ -3330,10 +3575,19 @@ class MainWindow(QMainWindow):
         try:
             desc = cam_data.controller.get_whitebalance_description()
             if desc:
-                cam_data.whitebalance_min = desc.get('min', 0)
-                cam_data.whitebalance_max = desc.get('max', 0)
+                cam_data.whitebalance_min = desc.get('min', FALLBACK_WHITEBALANCE_MIN)
+                cam_data.whitebalance_max = desc.get('max', FALLBACK_WHITEBALANCE_MAX)
                 logger.info(f"Caméra {camera_id} - White balance range chargé: {cam_data.whitebalance_min}K - {cam_data.whitebalance_max}K")
+            else:
+                cam_data.whitebalance_min = FALLBACK_WHITEBALANCE_MIN
+                cam_data.whitebalance_max = FALLBACK_WHITEBALANCE_MAX
+                logger.info(
+                    f"Caméra {camera_id} - White balance range fallback: "
+                    f"{cam_data.whitebalance_min}K - {cam_data.whitebalance_max}K"
+                )
         except Exception as e:
+            cam_data.whitebalance_min = FALLBACK_WHITEBALANCE_MIN
+            cam_data.whitebalance_max = FALLBACK_WHITEBALANCE_MAX
             logger.error(f"Caméra {camera_id} - Erreur lors du chargement de la description du white balance: {e}")
         
         # Charger la description du tint
@@ -3356,13 +3610,17 @@ class MainWindow(QMainWindow):
             cam_data = self.cameras[camera_id]
         else:
             cam_data = self.get_active_camera_data()
+            camera_id = None
         
         if not cam_data.connected or not cam_data.controller:
             return
         
-        current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
-        if current_value == 0:
-            current_value = 3200  # Valeur par défaut si pas encore chargée
+        # Toujours stepper depuis la dernière valeur ENVOYÉE (l'actual WS arrive en retard)
+        current_value = (
+            cam_data.whitebalance_sent_value
+            if cam_data.whitebalance_sent_value > 0
+            else (cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else 3200)
+        )
         
         increment = 100  # Incrément de 100K
         new_value = current_value + increment
@@ -3383,13 +3641,17 @@ class MainWindow(QMainWindow):
             cam_data = self.cameras[camera_id]
         else:
             cam_data = self.get_active_camera_data()
+            camera_id = None
         
         if not cam_data.connected or not cam_data.controller:
             return
         
-        current_value = cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else cam_data.whitebalance_sent_value
-        if current_value == 0:
-            current_value = 3200  # Valeur par défaut si pas encore chargée
+        # Toujours stepper depuis la dernière valeur ENVOYÉE (l'actual WS arrive en retard)
+        current_value = (
+            cam_data.whitebalance_sent_value
+            if cam_data.whitebalance_sent_value > 0
+            else (cam_data.whitebalance_actual_value if cam_data.whitebalance_actual_value > 0 else 3200)
+        )
         
         decrement = 100  # Décrément de 100K
         new_value = current_value - decrement
@@ -3410,11 +3672,14 @@ class MainWindow(QMainWindow):
             cam_data = self.cameras[camera_id]
         else:
             cam_data = self.get_active_camera_data()
+            camera_id = None
         
         cam_data.whitebalance_sent_value = value
-        # Passer None au lieu de False pour send_whitebalance_value
-        actual_camera_id = camera_id if (camera_id is not None and camera_id is not False and isinstance(camera_id, int)) else None
-        self.send_whitebalance_value(value, camera_id=actual_camera_id)
+        # Feedback UI immédiat (l'actual WS suivra)
+        if camera_id is None or camera_id == self.active_camera_id:
+            if hasattr(self, 'whitebalance_value_actual'):
+                self.whitebalance_value_actual.setText(f"{value}K")
+        self.send_whitebalance_value(value, camera_id=camera_id)
     
     def send_whitebalance_value(self, value: int, camera_id: Optional[int] = None):
         """Envoie la valeur du white balance directement (utilisé par Companion)."""
@@ -3424,17 +3689,21 @@ class MainWindow(QMainWindow):
                 logger.error(f"ID de caméra invalide: {camera_id}")
                 return
             cam_data = self.cameras[camera_id]
+            target_id = camera_id
         else:
             cam_data = self.get_active_camera_data()
+            target_id = self.active_camera_id
         
         if not cam_data.connected or not cam_data.controller:
             return
         
-        # Vérifier si un envoi est déjà en cours
-        if hasattr(self, 'whitebalance_sending') and self.whitebalance_sending:
+        # Si un envoi est déjà en cours, garder la dernière valeur et l'envoyer après
+        if self.whitebalance_sending:
+            self.whitebalance_pending_value = (target_id, value)
             return
         
         self.whitebalance_sending = True
+        self.whitebalance_pending_value = None
         
         try:
             success = cam_data.controller.set_whitebalance(value, silent=True)
@@ -3448,29 +3717,16 @@ class MainWindow(QMainWindow):
     
     def _send_whitebalance_value_now(self, value: int):
         """Envoie la valeur du white balance avec gestion du lock."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
-            return
-        
-        # Vérifier si un envoi est déjà en cours
-        if hasattr(self, 'whitebalance_sending') and self.whitebalance_sending:
-            return
-        
-        self.whitebalance_sending = True
-        
-        try:
-            success = cam_data.controller.set_whitebalance(value, silent=True)
-            if not success:
-                logger.error(f"Erreur lors de l'envoi du white balance")
-        except Exception as e:
-            logger.error(f"Erreur lors de l'envoi du white balance: {e}")
-        finally:
-            # Attendre 50ms après l'envoi avant de permettre le suivant
-            QTimer.singleShot(50, self._on_whitebalance_send_complete)
+        self.send_whitebalance_value(value)
     
     def _on_whitebalance_send_complete(self):
-        """Callback après l'envoi du white balance."""
+        """Callback après l'envoi du white balance — flush la valeur en attente si besoin."""
         self.whitebalance_sending = False
+        pending = self.whitebalance_pending_value
+        self.whitebalance_pending_value = None
+        if pending is not None:
+            target_id, value = pending
+            self.send_whitebalance_value(value, camera_id=target_id)
     
     def do_auto_whitebalance(self, camera_id: Optional[int] = None):
         """Déclenche l'auto white balance pour la caméra spécifiée ou la caméra active."""
@@ -3831,7 +4087,13 @@ class MainWindow(QMainWindow):
         
         try:
             success = cam_data.controller.set_shutter(shutter_speed=value, silent=True)
-            if not success:
+            if success:
+                cam_data.shutter_sent_value = value
+                cam_data.shutter_actual_value = value
+                if camera_id is None or camera_id == self.active_camera_id or not isinstance(camera_id, int):
+                    self.on_shutter_changed({'shutterSpeed': value})
+                logger.info(f"Shutter envoyé cam{self.active_camera_id if not isinstance(camera_id, int) else camera_id}: 1/{value}")
+            else:
                 logger.error(f"Erreur lors de l'envoi du shutter")
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi du shutter: {e}")
@@ -4335,6 +4597,9 @@ class MainWindow(QMainWindow):
                 if hasattr(self.slide_panel, 'steps_label'):
                     self.slide_panel.steps_label.setText(f"{cam_data.slider_slide_steps}")
             
+            # Distance sous focus = LUT(focus caméra, zoom slider) — refresh when zoom moves
+            self._update_focus_distance_label(cam_data)
+            
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour des positions du slider via WebSocket: {e}")
     
@@ -4427,9 +4692,8 @@ class MainWindow(QMainWindow):
         
         # Créer le panneau Sequences
         sequences_panel = self.create_sequences_panel()
-        layout.addWidget(sequences_panel)
-        
-        layout.addStretch()
+        # Le panneau sequences prend tout l'espace restant
+        layout.addWidget(sequences_panel, stretch=1)
         
         return page
     
@@ -6195,13 +6459,11 @@ class MainWindow(QMainWindow):
         return panel
     
     def create_sequences_panel(self):
-        """Crée le panneau Sequences avec un tableau de 20 séquences."""
+        """Crée le panneau Sequences avec un tableau de 20 séquences (40 lignes: 2 par séquence)."""
         panel = QWidget()
-        # Doubler la largeur du panneau
-        panel_width = self._scale_value(600)  # Doublé (était ~300)
-        panel.setMinimumWidth(panel_width)
-        panel.setMaximumWidth(panel_width)
-        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        # Le panneau peut maintenant s'étendre pour occuper tout l'espace restant
+        panel.setMinimumWidth(self._scale_value(400))  # Largeur minimale
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         panel.setStyleSheet(self._scale_style("""
             QWidget {
                 background-color: #1a1a1a;
@@ -6220,9 +6482,9 @@ class MainWindow(QMainWindow):
         title.setStyleSheet(f"font-size: {self._scale_font(20)}; font-weight: bold; color: #fff;")
         layout.addWidget(title)
         
-        # Tableau
-        table = QTableWidget(20, 9)
-        table.setHorizontalHeaderLabels(["Name", "0%", "25%", "50%", "75%", "100%", "Duration", "Save", "Erase"])
+        # Tableau: 40 lignes (2 par séquence) et 10 colonnes
+        table = QTableWidget(40, 10)
+        table.setHorizontalHeaderLabels(["Name", "1", "2", "3", "4", "5", "6", "Duration", "Save", "Erase"])
         table.horizontalHeader().setStretchLastSection(False)
         table.verticalHeader().setVisible(True)
         table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -6268,11 +6530,25 @@ class MainWindow(QMainWindow):
         # Connecter le double-clic sur la colonne Name
         table.cellDoubleClicked.connect(self.on_sequence_cell_double_clicked)
         
-        # Créer les widgets pour chaque cellule
-        for row in range(20):
-            # Colonne Name - rendre cliquable pour envoyer
+        # Couleurs des steps (en hex pour CSS)
+        step_colors = {
+            1: "#00ff00",  # Vert
+            2: "#5555ff",  # Bleu
+            3: "#ffa500",  # Jaune/Orange
+            4: "#a55faa",  # Mauve
+            5: "#888888",  # Gris
+            6: "#aa0000"   # Rouge
+        }
+        
+        # Créer les widgets pour chaque séquence (20 séquences = 40 lignes)
+        for seq_idx in range(20):
+            row_steps = seq_idx * 2  # Ligne paire: ligne des steps
+            row_slider = seq_idx * 2 + 1  # Ligne impaire: ligne du slider
+            
+            # === LIGNE PAIRE (ligne des steps) ===
+            # Colonne Name
             name_edit = QLineEdit()
-            name_edit.setPlaceholderText(f"Seq {row + 1}")
+            name_edit.setPlaceholderText(f"Seq {seq_idx + 1}")
             name_edit.setStyleSheet(self._scale_style("""
                 QLineEdit {
                     background-color: #2a2a2a;
@@ -6285,28 +6561,35 @@ class MainWindow(QMainWindow):
                     background-color: #3a3a3a;
                 }
             """))
-            table.setCellWidget(row, 0, name_edit)
-            name_edit.textChanged.connect(lambda text, r=row: self.on_sequence_name_changed(r, text))
+            table.setCellWidget(row_steps, 0, name_edit)
+            name_edit.textChanged.connect(lambda text, s=seq_idx: self.on_sequence_name_changed(s, text))
             
-            # Colonnes 0%, 25%, 50%, 75%, 100%
-            fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
-            for col_idx, fraction in enumerate(fractions, start=1):
-                preset_edit = QLineEdit()
+            # Colonnes Step 1 à Step 6 avec QLineEdit colorés
+            for step_num in range(1, 7):
+                col_idx = step_num  # Colonnes 1-6
+                step_color = step_colors[step_num]
+                preset_edit = StepPresetLineEdit(
+                    seq_idx=seq_idx,
+                    step_num=step_num,
+                    callback=self._on_step_preset_backspace
+                )
                 preset_edit.setPlaceholderText("Preset")
-                preset_edit.setStyleSheet(self._scale_style("""
-                    QLineEdit {
-                        background-color: #2a2a2a;
-                        border: 1px solid #555;
+                preset_edit.setStyleSheet(self._scale_style(f"""
+                    QLineEdit {{
+                        background-color: {step_color};
+                        border: 1px solid {step_color};
                         color: #fff;
                         padding: 4px;
                         text-align: center;
-                    }
-                    QLineEdit:focus {
-                        border: 1px solid #0a5;
-                    }
+                    }}
+                    QLineEdit:focus {{
+                        border: 2px solid {step_color};
+                        background-color: {step_color};
+                    }}
                 """))
-                table.setCellWidget(row, col_idx, preset_edit)
-                preset_edit.editingFinished.connect(lambda r=row, f=fraction: self.on_sequence_preset_changed(r, f))
+                table.setCellWidget(row_steps, col_idx, preset_edit)
+                # Connecter l'événement editingFinished avec step_num
+                preset_edit.editingFinished.connect(lambda s=seq_idx, sn=step_num: self.on_sequence_step_preset_changed(s, sn))
             
             # Colonne Duration
             duration_edit = QLineEdit()
@@ -6327,8 +6610,8 @@ class MainWindow(QMainWindow):
                     border: 1px solid #0a5;
                 }
             """))
-            table.setCellWidget(row, 6, duration_edit)
-            duration_edit.editingFinished.connect(lambda r=row: self.on_sequence_duration_changed(r))
+            table.setCellWidget(row_steps, 7, duration_edit)
+            duration_edit.editingFinished.connect(lambda s=seq_idx: self.on_sequence_duration_changed(s))
             
             # Colonne Save - bouton qui devient rouge quand bakeé
             save_btn = QPushButton("Save")
@@ -6349,10 +6632,9 @@ class MainWindow(QMainWindow):
                     background-color: #4a2a2a;
                 }
             """))
-            save_btn.clicked.connect(lambda checked, r=row: self.bake_sequence(r))
-            table.setCellWidget(row, 7, save_btn)
-            # Stocker la référence au bouton pour pouvoir changer sa couleur
-            save_btn.setProperty("row_index", row)
+            save_btn.clicked.connect(lambda checked, s=seq_idx: self.bake_sequence(s))
+            table.setCellWidget(row_steps, 8, save_btn)
+            save_btn.setProperty("row_index", seq_idx)
             
             # Colonne Erase - bouton pour effacer la séquence
             erase_btn = QPushButton("Erase")
@@ -6373,8 +6655,70 @@ class MainWindow(QMainWindow):
                     background-color: #4a2a2a;
                 }
             """))
-            erase_btn.clicked.connect(lambda checked, r=row: self.erase_sequence(r))
-            table.setCellWidget(row, 8, erase_btn)
+            erase_btn.clicked.connect(lambda checked, s=seq_idx: self.erase_sequence(s))
+            table.setCellWidget(row_steps, 9, erase_btn)
+            
+            # === LIGNE IMPAIRE (ligne du slider) ===
+            # Colonne Name - fusionner sur 2 lignes
+            table.setSpan(row_slider, 0, 1, 1)  # Pas de fusion verticale, juste une cellule vide
+            # Créer un item vide pour la cellule Name sur la ligne slider
+            name_item = QTableWidgetItem("")
+            name_item.setFlags(Qt.NoItemFlags)  # Non éditable
+            table.setItem(row_slider, 0, name_item)
+            
+            # SequenceStepSlider - fusionner sur 6 colonnes (Step 1 à Step 6)
+            step_slider = SequenceStepSlider()
+            step_slider.setStepsData({})  # Initialiser vide
+            # Connecter le signal de changement de position
+            step_slider.stepPositionChanged.connect(lambda step_idx, pos, s=seq_idx: self.on_sequence_step_slider_changed(s, step_idx, pos))
+            # Créer un widget conteneur pour centrer verticalement le slider
+            slider_container = QWidget()
+            slider_layout = QVBoxLayout(slider_container)
+            slider_layout.setContentsMargins(0, 0, 0, 0)
+            slider_layout.addWidget(step_slider)
+            slider_layout.setAlignment(Qt.AlignVCenter)
+            table.setCellWidget(row_slider, 1, slider_container)
+            table.setSpan(row_slider, 1, 1, 6)  # Fusionner sur 6 colonnes (row, col, rowSpan, colSpan)
+            
+            # Colonnes Step 2-6: masquer (fusionnées)
+            for col in range(2, 7):
+                table.setSpan(row_slider, col, 1, 1)
+                empty_item = QTableWidgetItem("")
+                empty_item.setFlags(Qt.NoItemFlags)
+                table.setItem(row_slider, col, empty_item)
+            
+            # Colonne Duration - fusionner sur 2 lignes
+            table.setSpan(row_slider, 7, 1, 1)
+            duration_item = QTableWidgetItem("")
+            duration_item.setFlags(Qt.NoItemFlags)
+            table.setItem(row_slider, 7, duration_item)
+            
+            # Colonne Save - fusionner sur 2 lignes
+            table.setSpan(row_slider, 8, 1, 1)
+            save_item = QTableWidgetItem("")
+            save_item.setFlags(Qt.NoItemFlags)
+            table.setItem(row_slider, 8, save_item)
+            
+            # Colonne Erase - fusionner sur 2 lignes
+            table.setSpan(row_slider, 9, 1, 1)
+            erase_item = QTableWidgetItem("")
+            erase_item.setFlags(Qt.NoItemFlags)
+            table.setItem(row_slider, 9, erase_item)
+        
+        # Masquer les numéros des lignes impaires (slider) - ne garder que les lignes paires (steps)
+        for row in range(1, 40, 2):  # Lignes impaires : 1, 3, 5, ..., 39
+            empty_header = QTableWidgetItem("")
+            table.setVerticalHeaderItem(row, empty_header)
+        
+        # Ajuster la hauteur des lignes : lignes impaires (slider) plus hautes pour centrer verticalement
+        slider_row_height = self._scale_value(50)  # Hauteur pour les lignes slider
+        standard_row_height = self._scale_value(30)  # Hauteur standard pour les lignes steps
+        
+        for row in range(40):
+            if row % 2 == 0:  # Ligne paire (steps)
+                table.setRowHeight(row, standard_row_height)
+            else:  # Ligne impaire (slider)
+                table.setRowHeight(row, slider_row_height)
         
         layout.addWidget(table)
         self.sequences_table = table
@@ -6413,14 +6757,20 @@ class MainWindow(QMainWindow):
     
     def on_sequence_row_clicked(self, row: int):
         """Appelé quand on clique sur le numéro de ligne (en-tête vertical)."""
-        if 0 <= row < 20:
-            self.send_sequence(row)
+        # Mapper la ligne vers seq_idx (ligne paire = séquence)
+        if 0 <= row < 40:
+            seq_idx = row // 2
+            if seq_idx < 20:
+                self.send_sequence(seq_idx)
     
     def on_sequence_cell_double_clicked(self, row: int, col: int):
         """Appelé quand on double-clique sur une cellule."""
-        # Si c'est la colonne Name (col 0), envoyer la séquence
-        if col == 0 and 0 <= row < 20:
-            self.send_sequence(row)
+        # Mapper la ligne vers seq_idx (ligne paire = séquence)
+        if 0 <= row < 40:
+            seq_idx = row // 2
+            # Si c'est la colonne Name (col 0) sur une ligne paire, envoyer la séquence
+            if col == 0 and seq_idx < 20 and row % 2 == 0:
+                self.send_sequence(seq_idx)
     
     def on_sequence_context_menu(self, position):
         """Affiche le menu contextuel pour les séquences."""
@@ -6503,28 +6853,150 @@ class MainWindow(QMainWindow):
             
             self.save_sequences_to_config()
     
-    def on_sequence_duration_changed(self, row: int):
-        """Appelé quand la durée d'une séquence change."""
-        if not self.sequences_table or row < 0 or row >= 20:
+    def on_sequence_step_preset_changed(self, seq_idx: int, step_num: int):
+        """Appelé quand un preset d'un step change."""
+        if not self.sequences_table or seq_idx < 0 or seq_idx >= 20:
             return
         
-        widget = self.sequences_table.cellWidget(row, 6)
+        row_steps = seq_idx * 2  # Ligne des steps
+        col_idx = step_num  # Colonne correspondant au step (1-6)
+        
+        widget = self.sequences_table.cellWidget(row_steps, col_idx)
         if not isinstance(widget, QLineEdit):
             return
         
         text = widget.text().strip()
         
-        if 0 <= row < len(self.sequences_data):
+        if 0 <= seq_idx < len(self.sequences_data):
+            if text:
+                # Vérifier si c'est un numéro de preset (1-10)
+                try:
+                    preset_num = int(text)
+                    if 1 <= preset_num <= 10:
+                        # Mettre à jour la structure steps
+                        if "steps" not in self.sequences_data[seq_idx]:
+                            self.sequences_data[seq_idx]["steps"] = {
+                                i: {"preset": None, "position": self.get_default_step_position(i)}
+                                for i in range(1, 7)
+                            }
+                        
+                        # Si le preset n'existait pas, initialiser la position à la position par défaut du step
+                        if self.sequences_data[seq_idx]["steps"][step_num]["preset"] is None:
+                            self.sequences_data[seq_idx]["steps"][step_num]["position"] = self.get_default_step_position(step_num)
+                        
+                        self.sequences_data[seq_idx]["steps"][step_num]["preset"] = preset_num
+                        
+                        # Mettre à jour le slider
+                        row_slider = seq_idx * 2 + 1
+                        slider_widget = self.sequences_table.cellWidget(row_slider, 1)
+                        # Le slider peut être dans un conteneur maintenant
+                        if isinstance(slider_widget, QWidget):
+                            # Chercher le SequenceStepSlider dans le conteneur
+                            for child in slider_widget.findChildren(SequenceStepSlider):
+                                child.setStepsData(self.sequences_data[seq_idx]["steps"])
+                                child.update()
+                                break
+                        elif isinstance(slider_widget, SequenceStepSlider):
+                            slider_widget.setStepsData(self.sequences_data[seq_idx]["steps"])
+                            slider_widget.update()
+                    else:
+                        # Valeur invalide
+                        widget.clear()
+                        if "steps" in self.sequences_data[seq_idx]:
+                            self.sequences_data[seq_idx]["steps"][step_num]["preset"] = None
+                except ValueError:
+                    # Ce n'est pas un nombre
+                    widget.clear()
+                    if "steps" in self.sequences_data[seq_idx]:
+                        self.sequences_data[seq_idx]["steps"][step_num]["preset"] = None
+            else:
+                # Texte vide - supprimer le preset
+                if "steps" in self.sequences_data[seq_idx]:
+                    self.sequences_data[seq_idx]["steps"][step_num]["preset"] = None
+                
+                # Mettre à jour le slider
+                row_slider = seq_idx * 2 + 1
+                slider_widget = self.sequences_table.cellWidget(row_slider, 1)
+                # Le slider peut être dans un conteneur maintenant
+                if isinstance(slider_widget, QWidget):
+                    # Chercher le SequenceStepSlider dans le conteneur
+                    for child in slider_widget.findChildren(SequenceStepSlider):
+                        child.setStepsData(self.sequences_data[seq_idx]["steps"])
+                        child.update()
+                        break
+                elif isinstance(slider_widget, SequenceStepSlider):
+                    slider_widget.setStepsData(self.sequences_data[seq_idx]["steps"])
+                    slider_widget.update()
+            
+            self.save_sequences_to_config()
+    
+    def on_sequence_step_slider_changed(self, seq_idx: int, step_num: int, position: float):
+        """Appelé quand une boule est déplacée sur le slider."""
+        if seq_idx < 0 or seq_idx >= len(self.sequences_data):
+            return
+        
+        if "steps" not in self.sequences_data[seq_idx]:
+            self.sequences_data[seq_idx]["steps"] = {
+                i: {"preset": None, "position": self.get_default_step_position(i)}
+                for i in range(1, 7)
+            }
+        
+        # Mettre à jour la position du step
+        self.sequences_data[seq_idx]["steps"][step_num]["position"] = position
+        self.save_sequences_to_config()
+    
+    def _on_step_preset_backspace(self, seq_idx: int, step_num: int):
+        """Appelé quand Backspace est pressé sur un QLineEdit de step vide."""
+        if 0 <= seq_idx < len(self.sequences_data):
+            if "steps" not in self.sequences_data[seq_idx]:
+                self.sequences_data[seq_idx]["steps"] = {
+                    i: {"preset": None, "position": self.get_default_step_position(i)}
+                    for i in range(1, 7)
+                }
+            
+            # Supprimer le preset
+            self.sequences_data[seq_idx]["steps"][step_num]["preset"] = None
+            self.sequences_data[seq_idx]["steps"][step_num]["position"] = self.get_default_step_position(step_num)
+            
+            # Mettre à jour le slider
+            row_slider = seq_idx * 2 + 1
+            slider_widget = self.sequences_table.cellWidget(row_slider, 1)
+            # Le slider peut être dans un conteneur maintenant
+            if isinstance(slider_widget, QWidget):
+                # Chercher le SequenceStepSlider dans le conteneur
+                for child in slider_widget.findChildren(SequenceStepSlider):
+                    child.setStepsData(self.sequences_data[seq_idx]["steps"])
+                    child.update()
+                    break
+            elif isinstance(slider_widget, SequenceStepSlider):
+                slider_widget.setStepsData(self.sequences_data[seq_idx]["steps"])
+                slider_widget.update()
+            
+            self.save_sequences_to_config()
+    
+    def on_sequence_duration_changed(self, seq_idx: int):
+        """Appelé quand la durée d'une séquence change."""
+        if not self.sequences_table or seq_idx < 0 or seq_idx >= 20:
+            return
+        
+        row_steps = seq_idx * 2  # Ligne des steps
+        widget = self.sequences_table.cellWidget(row_steps, 7)  # Colonne Duration
+        if not isinstance(widget, QLineEdit):
+            return
+        
+        text = widget.text().strip()
+        
+        if 0 <= seq_idx < len(self.sequences_data):
             try:
                 duration = float(text.replace(',', '.'))
                 if 0.1 <= duration <= 600.0:
-                    self.sequences_data[row]["duration"] = duration
+                    self.sequences_data[seq_idx]["duration"] = duration
                 else:
                     # Valeur invalide, remettre la valeur précédente
-                    widget.setText(f"{self.sequences_data[row]['duration']:.1f}")
+                    widget.setText(f"{self.sequences_data[seq_idx]['duration']:.1f}")
             except ValueError:
                 # Valeur invalide, remettre la valeur précédente
-                widget.setText(f"{self.sequences_data[row]['duration']:.1f}")
+                widget.setText(f"{self.sequences_data[seq_idx]['duration']:.1f}")
             
             self.save_sequences_to_config()
     
@@ -6546,46 +7018,66 @@ class MainWindow(QMainWindow):
         sequence = self.sequences_data[row_index]
         points = []
         
-        # Construire les points de la séquence
-        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
-            point_data = sequence["points"].get(fraction)
-            # Debug: vérifier les clés disponibles si point_data est None
-            if point_data is None:
-                available_keys = list(sequence["points"].keys())
-                logger.debug(f"Séquence {row_index + 1}, fraction {fraction}: point_data=None, clés disponibles: {available_keys}")
-            if point_data is None:
-                continue  # Case vide, on ignore
-            
-            if point_data["type"] == "preset":
+        # Construire les points de la séquence depuis les steps
+        # Vérifier si on a l'ancienne structure (points) ou la nouvelle (steps)
+        if "steps" in sequence:
+            # Nouvelle structure avec steps
+            for step_num in range(1, 7):
+                step_data = sequence["steps"].get(step_num, {})
+                preset_num = step_data.get("preset")
+                position = step_data.get("position", self.get_default_step_position(step_num))
+                
+                if preset_num is None:
+                    continue  # Step vide, on ignore
+                
                 # Récupérer les valeurs du preset
-                preset_num = point_data["value"]
                 preset_key = f"preset_{preset_num}"
                 if preset_key not in cam_data.presets:
-                    logger.warning(f"Preset {preset_num} introuvable pour la séquence {row_index + 1}")
+                    logger.warning(f"Preset {preset_num} introuvable pour la séquence {row_index + 1}, step {step_num}")
                     continue
                 
                 preset_data = cam_data.presets[preset_key]
                 point = {
-                    "fraction": fraction,
+                    "fraction": position,  # Utiliser la position du step comme fraction
                     "pan": preset_data.get("pan", 0.5),
                     "tilt": preset_data.get("tilt", 0.5),
                     "zoom": preset_data.get("zoom_motor", 0.0),
                     "slide": preset_data.get("slide", 0.5)
                 }
-            elif point_data["type"] == "baked":
-                # Utiliser directement les valeurs bakeées
-                baked_values = point_data["value"]
-                point = {
-                    "fraction": fraction,
-                    "pan": baked_values.get("pan", 0.5),
-                    "tilt": baked_values.get("tilt", 0.5),
-                    "zoom": baked_values.get("zoom", 0.0),
-                    "slide": baked_values.get("slide", 0.5)
-                }
-            else:
-                continue
+                points.append(point)
+        else:
+            # Ancienne structure avec points (pour compatibilité)
+            for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                point_data = sequence.get("points", {}).get(fraction)
+                if point_data is None:
+                    continue
             
-            points.append(point)
+                if point_data.get("type") == "preset":
+                    preset_num = point_data["value"]
+                    preset_key = f"preset_{preset_num}"
+                    if preset_key not in cam_data.presets:
+                        continue
+                    preset_data = cam_data.presets[preset_key]
+                    point = {
+                        "fraction": fraction,
+                        "pan": preset_data.get("pan", 0.5),
+                        "tilt": preset_data.get("tilt", 0.5),
+                        "zoom": preset_data.get("zoom_motor", 0.0),
+                        "slide": preset_data.get("slide", 0.5)
+                    }
+                    points.append(point)
+                elif point_data.get("type") == "baked":
+                    baked_values = point_data["value"]
+                    point = {
+                        "fraction": fraction,
+                        "pan": baked_values.get("pan", 0.5),
+                        "tilt": baked_values.get("tilt", 0.5),
+                        "zoom": baked_values.get("zoom", 0.0),
+                        "slide": baked_values.get("slide", 0.5)
+                    }
+                    points.append(point)
+                else:
+                    continue
         
         if not points:
             logger.warning(f"Séquence {row_index + 1} vide, rien à envoyer")
@@ -6594,23 +7086,38 @@ class MainWindow(QMainWindow):
         # Trier les points par fraction
         points.sort(key=lambda p: p["fraction"])
         
-        # Appliquer le focus du premier point (fraction 0.0)
+        # Appliquer le focus du premier point (fraction la plus petite)
         first_point_focus = None
-        first_point_data = sequence["points"].get(0.0)
-        if first_point_data is not None:
-            if first_point_data["type"] == "preset":
-                # Récupérer le focus du preset
-                preset_num = first_point_data["value"]
-                preset_key = f"preset_{preset_num}"
-                if preset_key in cam_data.presets:
-                    preset_data = cam_data.presets[preset_key]
-                    if "focus" in preset_data:
-                        first_point_focus = float(preset_data["focus"])
-            elif first_point_data["type"] == "baked":
-                # Récupérer le focus bakeé
-                baked_values = first_point_data["value"]
-                if "focus" in baked_values:
-                    first_point_focus = float(baked_values["focus"])
+        if points:
+            first_fraction = points[0]["fraction"]
+            # Trouver le step correspondant à cette fraction
+            if "steps" in sequence:
+                for step_num in range(1, 7):
+                    step_data = sequence["steps"].get(step_num, {})
+                    if abs(step_data.get("position", 0.0) - first_fraction) < 0.001:
+                        preset_num = step_data.get("preset")
+                        if preset_num:
+                            preset_key = f"preset_{preset_num}"
+                            if preset_key in cam_data.presets:
+                                preset_data = cam_data.presets[preset_key]
+                                if "focus" in preset_data:
+                                    first_point_focus = float(preset_data["focus"])
+                        break
+            else:
+                # Ancienne structure
+                first_point_data = sequence.get("points", {}).get(first_fraction)
+                if first_point_data:
+                    if first_point_data.get("type") == "preset":
+                        preset_num = first_point_data["value"]
+                        preset_key = f"preset_{preset_num}"
+                        if preset_key in cam_data.presets:
+                            preset_data = cam_data.presets[preset_key]
+                            if "focus" in preset_data:
+                                first_point_focus = float(preset_data["focus"])
+                    elif first_point_data.get("type") == "baked":
+                        baked_values = first_point_data["value"]
+                        if "focus" in baked_values:
+                            first_point_focus = float(baked_values["focus"])
         
         # Appliquer le focus à la caméra avec transition de 3 secondes
         if first_point_focus is not None and cam_data.controller:
@@ -6668,22 +7175,30 @@ class MainWindow(QMainWindow):
         sequence = self.sequences_data[row_index]
         baked_count = 0
         
-        # Pour chaque point de la séquence
-        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
-            point_data = sequence["points"].get(fraction)
-            if point_data is None:
-                continue
+        # Vérifier si on a l'ancienne structure (points) ou la nouvelle (steps)
+        if "steps" in sequence:
+            # Nouvelle structure avec steps
+            if "steps" not in sequence:
+                sequence["steps"] = {
+                    i: {"preset": None, "position": self.get_default_step_position(i)}
+                    for i in range(1, 7)
+                }
             
-            if point_data["type"] == "preset":
+            for step_num in range(1, 7):
+                step_data = sequence["steps"].get(step_num, {})
+                preset_num = step_data.get("preset")
+                
+                if preset_num is None:
+                    continue
+            
                 # Récupérer les valeurs du preset
-                preset_num = point_data["value"]
                 preset_key = f"preset_{preset_num}"
                 if preset_key not in cam_data.presets:
-                    logger.warning(f"Preset {preset_num} introuvable pour le bake de la séquence {row_index + 1}")
+                    logger.warning(f"Preset {preset_num} introuvable pour le bake de la séquence {row_index + 1}, step {step_num}")
                     continue
                 
                 preset_data = cam_data.presets[preset_key]
-                # Remplacer par une valeur bakeée (inclure le focus)
+                # Remplacer le preset par une valeur bakeée (inclure le focus)
                 baked_value = {
                     "pan": preset_data.get("pan", 0.5),
                     "tilt": preset_data.get("tilt", 0.5),
@@ -6694,37 +7209,78 @@ class MainWindow(QMainWindow):
                 if "focus" in preset_data:
                     baked_value["focus"] = preset_data["focus"]
                 
-                sequence["points"][fraction] = {
-                    "type": "baked",
-                    "value": baked_value
-                }
+                # Remplacer le preset par les valeurs bakeées
+                sequence["steps"][step_num]["preset"] = None
+                sequence["steps"][step_num]["baked"] = baked_value
                 baked_count += 1
                 
                 # Mettre à jour l'affichage dans le tableau
-                fraction_to_col = {0.0: 1, 0.25: 2, 0.5: 3, 0.75: 4, 1.0: 5}
-                col = fraction_to_col.get(fraction)
-                if col is not None and self.sequences_table:
-                    widget = self.sequences_table.cellWidget(row_index, col)
+                row_steps = row_index * 2
+                col_idx = step_num  # Colonne correspondant au step (1-6)
+                if self.sequences_table:
+                    widget = self.sequences_table.cellWidget(row_steps, col_idx)
                     if isinstance(widget, QLineEdit):
                         widget.setText("✗")
-                        widget.setStyleSheet(self._scale_style("""
-                            QLineEdit {
-                                background-color: #3a2a2a;
-                                border: 1px solid #8a4a4a;
+                        # Garder la couleur du step mais avec style bakeé
+                        step_colors = {
+                            1: "#00ff00", 2: "#5555ff", 3: "#ffa500",
+                            4: "#a55faa", 5: "#888888", 6: "#aa0000"
+                        }
+                        step_color = step_colors.get(step_num, "#888888")
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QLineEdit {{
+                                background-color: {step_color};
+                                border: 2px solid {step_color};
                                 color: #faa;
                                 padding: 4px;
                                 text-align: center;
-                            }
-                            QLineEdit:focus {
-                                border: 1px solid #faa;
-                            }
+                            }}
+                            QLineEdit:focus {{
+                                border: 2px solid {step_color};
+                            }}
                         """))
+        else:
+            # Ancienne structure avec points (pour compatibilité)
+            for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                point_data = sequence.get("points", {}).get(fraction)
+                if point_data is None:
+                    continue
+                
+                if point_data.get("type") == "preset":
+                    preset_num = point_data["value"]
+                    preset_key = f"preset_{preset_num}"
+                    if preset_key not in cam_data.presets:
+                        continue
+                    
+                    preset_data = cam_data.presets[preset_key]
+                    baked_value = {
+                        "pan": preset_data.get("pan", 0.5),
+                        "tilt": preset_data.get("tilt", 0.5),
+                        "zoom": preset_data.get("zoom_motor", 0.0),
+                        "slide": preset_data.get("slide", 0.5)
+                    }
+                    if "focus" in preset_data:
+                        baked_value["focus"] = preset_data["focus"]
+                    
+                    sequence["points"][fraction] = {
+                        "type": "baked",
+                        "value": baked_value
+                    }
+                    baked_count += 1
         
         if baked_count > 0:
-            # Vérifier si tous les points sont bakeés
-            all_baked = all(
+            # Vérifier si tous les steps sont bakeés (nouvelle structure)
+            if "steps" in sequence:
+                all_baked = all(
+                    step_data.get("preset") is None and step_data.get("baked") is not None
+                    for step_data in sequence["steps"].values()
+                    if step_data.get("preset") is not None or step_data.get("baked") is not None
+                )
+            else:
+                # Ancienne structure
+                all_baked = all(
                 p is None or (isinstance(p, dict) and p.get("type") == "baked")
-                for p in sequence["points"].values()
+                    for p in sequence.get("points", {}).values()
             )
             sequence["baked"] = all_baked
             
@@ -6776,52 +7332,77 @@ class MainWindow(QMainWindow):
         else:
             logger.info(f"Séquence {row_index + 1} : aucun preset à baker")
     
-    def erase_sequence(self, row_index: int):
+    def erase_sequence(self, seq_idx: int):
         """Efface une séquence en réinitialisant tous ses champs."""
-        if row_index < 0 or row_index >= len(self.sequences_data):
+        if seq_idx < 0 or seq_idx >= len(self.sequences_data):
             return
         
-        sequence = self.sequences_data[row_index]
+        sequence = self.sequences_data[seq_idx]
         
-        # Réinitialiser la séquence
+        # Réinitialiser la séquence avec la nouvelle structure
         sequence["name"] = ""
-        sequence["points"] = {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None}
+        sequence["steps"] = {
+            i: {"preset": None, "position": self.get_default_step_position(i)}
+            for i in range(1, 7)
+        }
         sequence["duration"] = 5.0
         sequence["baked"] = False
         
         # Mettre à jour l'UI
         if self.sequences_table:
+            row_steps = seq_idx * 2  # Ligne paire
+            row_slider = seq_idx * 2 + 1  # Ligne impaire
+            
             # Nom
-            name_widget = self.sequences_table.cellWidget(row_index, 0)
+            name_widget = self.sequences_table.cellWidget(row_steps, 0)
             if isinstance(name_widget, QLineEdit):
                 name_widget.setText("")
             
-            # Points (0%, 25%, 50%, 75%, 100%)
-            fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
-            for col_idx, fraction in enumerate(fractions, start=1):
-                preset_widget = self.sequences_table.cellWidget(row_index, col_idx)
-                if isinstance(preset_widget, QLineEdit):
-                    preset_widget.setText("")
-                    preset_widget.setStyleSheet(self._scale_style("""
-                        QLineEdit {
-                            background-color: #2a2a2a;
-                            border: 1px solid #555;
+            # Steps 1-6
+            step_colors = {
+                1: "#00ff00", 2: "#5555ff", 3: "#ffa500",
+                4: "#a55faa", 5: "#888888", 6: "#aa0000"
+            }
+            for step_num in range(1, 7):
+                col_idx = step_num
+                preset_widget = self.sequences_table.cellWidget(row_steps, col_idx)
+                if isinstance(preset_widget, (QLineEdit, StepPresetLineEdit)):
+                    preset_widget.clear()
+                    step_color = step_colors[step_num]
+                    preset_widget.setStyleSheet(self._scale_style(f"""
+                        QLineEdit {{
+                            background-color: {step_color};
+                            border: 1px solid {step_color};
                             color: #fff;
                             padding: 4px;
                             text-align: center;
-                        }
-                        QLineEdit:focus {
-                            border: 1px solid #0a5;
-                        }
+                        }}
+                        QLineEdit:focus {{
+                            border: 2px solid {step_color};
+                            background-color: {step_color};
+                        }}
                     """))
             
             # Durée
-            duration_widget = self.sequences_table.cellWidget(row_index, 6)
+            duration_widget = self.sequences_table.cellWidget(row_steps, 7)
             if isinstance(duration_widget, QLineEdit):
                 duration_widget.setText("5.0")
             
+            # Mettre à jour le slider
+            slider_widget = self.sequences_table.cellWidget(row_slider, 1)
+            # Le slider peut être dans un conteneur maintenant
+            if isinstance(slider_widget, QWidget):
+                # Chercher le SequenceStepSlider dans le conteneur
+                for child in slider_widget.findChildren(SequenceStepSlider):
+                    child.setStepsData(sequence["steps"])
+                    child.update()
+                    break
+            elif isinstance(slider_widget, SequenceStepSlider):
+                slider_widget.setStepsData(sequence["steps"])
+                slider_widget.update()
+            
             # Bouton Save - réinitialiser à l'état normal
-            save_btn = self.sequences_table.cellWidget(row_index, 7)
+            save_btn = self.sequences_table.cellWidget(row_steps, 8)
             if isinstance(save_btn, QPushButton):
                 save_btn.setStyleSheet(self._scale_style("""
                     QPushButton {
@@ -6842,14 +7423,57 @@ class MainWindow(QMainWindow):
                 """))
         
         # Si cette séquence était active, la désactiver
-        if self.active_sequence_row == row_index:
-            self._update_sequence_row_style(row_index, active=False)
+        if self.active_sequence_row == seq_idx:
+            self._update_sequence_row_style(seq_idx, active=False)
             self.active_sequence_row = None
         
-        logger.info(f"Séquence {row_index + 1} effacée")
+        logger.info(f"Séquence {seq_idx + 1} effacée")
         
         # Sauvegarder
         self.save_sequences_to_config()
+    
+    def _migrate_points_to_steps(self, sequence: dict) -> dict:
+        """Migre une séquence de l'ancienne structure (points) vers la nouvelle (steps)."""
+        if "steps" in sequence:
+            # Déjà migré
+            return sequence
+        
+        # Créer la nouvelle structure steps
+        steps = {
+            i: {"preset": None, "position": self.get_default_step_position(i)}
+            for i in range(1, 7)
+        }
+        
+        # Mapping des fractions vers les steps (approximatif)
+        fraction_to_step = {
+            0.0: 1,   # Step 1 à 0.0
+            0.25: 2,  # Step 2 à 0.25
+            0.5: 3,   # Step 3 à 0.5
+            0.75: 4,  # Step 4 à 0.75
+            1.0: 5    # Step 5 à 1.0 (Step 6 reste à 1.0 aussi)
+        }
+        
+        # Migrer les points vers les steps
+        points = sequence.get("points", {})
+        for fraction, step_num in fraction_to_step.items():
+            point_data = points.get(fraction)
+            if point_data is not None:
+                if point_data.get("type") == "preset":
+                    steps[step_num]["preset"] = point_data["value"]
+                    steps[step_num]["position"] = fraction
+                elif point_data.get("type") == "baked":
+                    steps[step_num]["baked"] = point_data["value"]
+                    steps[step_num]["position"] = fraction
+        
+        # Créer une nouvelle séquence avec steps
+        new_sequence = {
+            "name": sequence.get("name", ""),
+            "steps": steps,
+            "duration": sequence.get("duration", 5.0),
+            "baked": sequence.get("baked", False)
+        }
+        
+        return new_sequence
     
     def load_sequences_from_config(self):
         """Charge les séquences depuis la config et met à jour le tableau."""
@@ -6863,36 +7487,50 @@ class MainWindow(QMainWindow):
             while len(cam_data.sequences) < 20:
                 cam_data.sequences.append({
                     "name": "",
-                    "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                    "steps": {
+                        i: {"preset": None, "position": self.get_default_step_position(i)}
+                        for i in range(1, 7)
+                    },
                     "duration": 5.0,
                     "baked": False
                 })
             
-            # Copier les séquences (on prend les 20 premières)
+            # Copier les séquences (on prend les 20 premières) et migrer si nécessaire
             self.sequences_data = []
             for i in range(20):
                 if i < len(cam_data.sequences):
                     # Faire une copie profonde pour éviter les références partagées
                     seq = cam_data.sequences[i].copy()
-                    # Normaliser les clés des points : convertir les strings en float
-                    points_normalized = {}
-                    for key, value in seq["points"].items():
-                        # Convertir la clé string en float si nécessaire
-                        if isinstance(key, str):
-                            try:
-                                float_key = float(key)
-                                points_normalized[float_key] = value
-                            except ValueError:
-                                # Si la conversion échoue, garder la clé originale
-                                points_normalized[key] = value
-                        else:
-                            points_normalized[key] = value
-                    seq["points"] = points_normalized
+                    # Migrer si nécessaire (ancienne structure avec points)
+                    if "points" in seq and "steps" not in seq:
+                        seq = self._migrate_points_to_steps(seq)
+                    # S'assurer que steps existe
+                    if "steps" not in seq:
+                        seq["steps"] = {
+                            j: {"preset": None, "position": self.get_default_step_position(j)}
+                            for j in range(1, 7)
+                        }
+                    else:
+                        # S'assurer que tous les presets sont None si non définis ou invalides
+                        for j in range(1, 7):
+                            if j not in seq["steps"]:
+                                seq["steps"][j] = {"preset": None, "position": self.get_default_step_position(j)}
+                            else:
+                                # Vérifier et nettoyer le preset
+                                preset = seq["steps"][j].get("preset")
+                                if preset is None or preset == 0:
+                                    seq["steps"][j]["preset"] = None
+                                # S'assurer que la position existe
+                                if "position" not in seq["steps"][j]:
+                                    seq["steps"][j]["position"] = self.get_default_step_position(j)
                     self.sequences_data.append(seq)
                 else:
                     self.sequences_data.append({
                         "name": "",
-                        "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                        "steps": {
+                            j: {"preset": None, "position": self.get_default_step_position(j)}
+                            for j in range(1, 7)
+                        },
                         "duration": 5.0,
                         "baked": False
                     })
@@ -6903,88 +7541,138 @@ class MainWindow(QMainWindow):
             while len(cam_data.sequences) < 20:
                 cam_data.sequences.append({
                     "name": "",
-                    "points": {0.0: None, 0.25: None, 0.5: None, 0.75: None, 1.0: None},
+                    "steps": {
+                        i: {"preset": None, "position": self.get_default_step_position(i)}
+                        for i in range(1, 7)
+                    },
                     "duration": 5.0,
                     "baked": False
                 })
-            # Copier dans self.sequences_data
+            # Copier dans self.sequences_data et migrer si nécessaire
             self.sequences_data = []
             for seq in cam_data.sequences[:20]:
                 seq_copy = seq.copy()
-                # Normaliser les clés des points : convertir les strings en float
-                points_normalized = {}
-                for key, value in seq["points"].items():
-                    # Convertir la clé string en float si nécessaire
-                    if isinstance(key, str):
-                        try:
-                            float_key = float(key)
-                            points_normalized[float_key] = value
-                        except ValueError:
-                            # Si la conversion échoue, garder la clé originale
-                            points_normalized[key] = value
-                    else:
-                        points_normalized[key] = value
-                seq_copy["points"] = points_normalized
+                # Migrer si nécessaire
+                if "points" in seq_copy and "steps" not in seq_copy:
+                    seq_copy = self._migrate_points_to_steps(seq_copy)
+                # S'assurer que steps existe
+                if "steps" not in seq_copy:
+                    seq_copy["steps"] = {
+                        j: {"preset": None, "position": self.get_default_step_position(j)}
+                        for j in range(1, 7)
+                    }
+                else:
+                    # S'assurer que tous les presets sont None si non définis ou invalides
+                    for j in range(1, 7):
+                        if j not in seq_copy["steps"]:
+                            seq_copy["steps"][j] = {"preset": None, "position": self.get_default_step_position(j)}
+                        else:
+                            # Vérifier et nettoyer le preset
+                            preset = seq_copy["steps"][j].get("preset")
+                            if preset is None or preset == 0:
+                                seq_copy["steps"][j]["preset"] = None
+                            # S'assurer que la position existe
+                            if "position" not in seq_copy["steps"][j]:
+                                seq_copy["steps"][j]["position"] = self.get_default_step_position(j)
                 self.sequences_data.append(seq_copy)
         
-        # Mettre à jour le tableau
-        for row in range(20):
-            if row >= len(self.sequences_data):
+        # Couleurs des steps (en hex pour CSS)
+        step_colors = {
+            1: "#00ff00",  # Vert
+            2: "#5555ff",  # Bleu
+            3: "#ffa500",  # Jaune/Orange
+            4: "#a55faa",  # Mauve
+            5: "#888888",  # Gris
+            6: "#aa0000"   # Rouge
+        }
+        
+        # Mettre à jour le tableau avec la nouvelle structure (40 lignes, 10 colonnes)
+        for seq_idx in range(20):
+            if seq_idx >= len(self.sequences_data):
                 break
             
-            sequence = self.sequences_data[row]
+            sequence = self.sequences_data[seq_idx]
+            row_steps = seq_idx * 2  # Ligne paire: ligne des steps
+            row_slider = seq_idx * 2 + 1  # Ligne impaire: ligne du slider
             
+            # === LIGNE PAIRE (ligne des steps) ===
             # Nom
-            name_widget = self.sequences_table.cellWidget(row, 0)
+            name_widget = self.sequences_table.cellWidget(row_steps, 0)
             if isinstance(name_widget, QLineEdit):
                 name_widget.setText(sequence.get("name", ""))
             
-            # Points (0%, 25%, 50%, 75%, 100%)
-            fraction_to_col = {0.0: 1, 0.25: 2, 0.5: 3, 0.75: 4, 1.0: 5}
-            for fraction, col in fraction_to_col.items():
-                widget = self.sequences_table.cellWidget(row, col)
-                if isinstance(widget, QLineEdit):
-                    point_data = sequence["points"].get(fraction)
-                    if point_data is None:
-                        widget.clear()
-                    elif point_data["type"] == "preset":
-                        widget.setText(str(point_data["value"]))
-                        widget.setStyleSheet(self._scale_style("""
-                            QLineEdit {
-                                background-color: #2a2a2a;
-                                border: 1px solid #555;
+            # Steps 1-6
+            steps = sequence.get("steps", {})
+            for step_num in range(1, 7):
+                col_idx = step_num  # Colonnes 1-6
+                step_data = steps.get(step_num, {})
+                preset_num = step_data.get("preset")
+                baked = step_data.get("baked")
+                
+                widget = self.sequences_table.cellWidget(row_steps, col_idx)
+                if isinstance(widget, (QLineEdit, StepPresetLineEdit)):
+                    step_color = step_colors[step_num]
+                    if preset_num is not None:
+                        widget.setText(str(preset_num))
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QLineEdit {{
+                                background-color: {step_color};
+                                border: 1px solid {step_color};
                                 color: #fff;
                                 padding: 4px;
                                 text-align: center;
-                            }
-                            QLineEdit:focus {
-                                border: 1px solid #0a5;
-                            }
+                            }}
+                            QLineEdit:focus {{
+                                border: 2px solid {step_color};
+                                background-color: {step_color};
+                            }}
                         """))
-                    elif point_data["type"] == "baked":
+                    elif baked is not None:
                         widget.setText("✗")
-                        widget.setStyleSheet(self._scale_style("""
-                            QLineEdit {
-                                background-color: #3a2a2a;
-                                border: 1px solid #8a4a4a;
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QLineEdit {{
+                                background-color: {step_color};
+                                border: 2px solid {step_color};
                                 color: #faa;
                                 padding: 4px;
                                 text-align: center;
-                            }
-                            QLineEdit:focus {
-                                border: 1px solid #faa;
-                            }
+                            }}
+                            QLineEdit:focus {{
+                                border: 2px solid {step_color};
+                            }}
+                        """))
+                    else:
+                        widget.clear()
+                        widget.setStyleSheet(self._scale_style(f"""
+                            QLineEdit {{
+                                background-color: {step_color};
+                                border: 1px solid {step_color};
+                                color: #fff;
+                                padding: 4px;
+                                text-align: center;
+                            }}
+                            QLineEdit:focus {{
+                                border: 2px solid {step_color};
+                                background-color: {step_color};
+                            }}
                         """))
             
             # Durée
-            duration_widget = self.sequences_table.cellWidget(row, 6)
+            duration_widget = self.sequences_table.cellWidget(row_steps, 7)
             if isinstance(duration_widget, QLineEdit):
                 duration_widget.setText(f"{sequence.get('duration', 5.0):.1f}")
             
             # Bouton Save - mettre à jour la couleur selon l'état
-            save_btn = self.sequences_table.cellWidget(row, 7)
+            save_btn = self.sequences_table.cellWidget(row_steps, 8)
             if isinstance(save_btn, QPushButton):
-                if sequence.get("baked", False):
+                # Vérifier si tous les steps sont bakeés
+                all_baked = all(
+                    step_data.get("preset") is None and step_data.get("baked") is not None
+                    for step_data in steps.values()
+                    if step_data.get("preset") is not None or step_data.get("baked") is not None
+                ) if steps else False
+                
+                if all_baked or sequence.get("baked", False):
                     # Bouton rouge quand bakeé
                     save_btn.setStyleSheet(self._scale_style("""
                         QPushButton {
@@ -7022,6 +7710,38 @@ class MainWindow(QMainWindow):
                             background-color: #4a2a2a;
                         }
                     """))
+            
+            # === LIGNE IMPAIRE (ligne du slider) ===
+            # Mettre à jour le slider avec les données des steps
+            # S'assurer que tous les steps ont bien preset=None si non défini
+            cleaned_steps = {}
+            for step_num in range(1, 7):
+                step_data = steps.get(step_num, {})
+                preset = step_data.get("preset")
+                # S'assurer que preset est None si non défini ou invalide
+                if preset is None or preset == 0:
+                    cleaned_steps[step_num] = {
+                        "preset": None,
+                        "position": step_data.get("position", self.get_default_step_position(step_num))
+                    }
+                else:
+                    # Garder le step avec son preset valide
+                    cleaned_steps[step_num] = {
+                        "preset": preset,
+                        "position": step_data.get("position", self.get_default_step_position(step_num))
+                    }
+            
+            slider_widget = self.sequences_table.cellWidget(row_slider, 1)
+            # Le slider peut être dans un conteneur maintenant
+            if isinstance(slider_widget, QWidget):
+                # Chercher le SequenceStepSlider dans le conteneur
+                for child in slider_widget.findChildren(SequenceStepSlider):
+                    child.setStepsData(cleaned_steps)
+                    child.update()
+                    break
+            elif isinstance(slider_widget, SequenceStepSlider):
+                slider_widget.setStepsData(cleaned_steps)
+                slider_widget.update()
     
     def save_sequences_to_config(self):
         """Sauvegarde les séquences dans la config."""
@@ -7051,7 +7771,7 @@ class MainWindow(QMainWindow):
         
         column_widths = {}
         scale_factor = self.ui_scaler.scale if self.ui_scaler else 1.0
-        for i in range(9):
+        for i in range(10):  # 10 colonnes maintenant
             width = self.sequences_table.columnWidth(i)
             # Convertir en valeur non-scalée pour la sauvegarde
             unscaled_width = width / scale_factor
@@ -7073,7 +7793,7 @@ class MainWindow(QMainWindow):
         if self.sequences_column_widths:
             column_widths = self.sequences_column_widths
             logger.info(f"Chargement des largeurs de colonnes sauvegardées (global): {column_widths}")
-            for i in range(9):
+            for i in range(10):  # 10 colonnes maintenant
                 if str(i) in column_widths:
                     unscaled_width = column_widths[str(i)]
                     scaled_width = self._scale_value(unscaled_width)
@@ -7102,18 +7822,23 @@ class MainWindow(QMainWindow):
         self._sequences_column_widths_save_timer.stop()
         self._sequences_column_widths_save_timer.start(500)  # Sauvegarder après 500ms d'inactivité
     
-    def _update_sequence_row_style(self, row: int, active: bool):
-        """Met à jour le style d'une ligne de séquence (surbrillance jaune si active)."""
-        if not self.sequences_table or row < 0 or row >= 20:
+    def _update_sequence_row_style(self, seq_idx: int, active: bool):
+        """Met à jour le style d'une séquence (surbrillance jaune si active)."""
+        if not self.sequences_table or seq_idx < 0 or seq_idx >= 20:
             return
         
-        # Couleur de fond pour la ligne
+        # Couleur de fond pour les lignes
         bg_color = "#ffaa00" if active else "#2a2a2a"
         text_color = "#000" if active else "#fff"
         
-        for col in range(9):  # 9 colonnes
-            # Mettre à jour le style des widgets dans les cellules
-            widget = self.sequences_table.cellWidget(row, col)
+        row_steps = seq_idx * 2  # Ligne paire
+        row_slider = seq_idx * 2 + 1  # Ligne impaire
+        
+        # Mettre à jour les deux lignes (paire et impaire)
+        for row in [row_steps, row_slider]:
+            for col in range(10):  # 10 colonnes
+                # Mettre à jour le style des widgets dans les cellules
+                widget = self.sequences_table.cellWidget(row, col)
             if widget:
                 if active:
                     # Style actif : fond jaune
@@ -7161,20 +7886,10 @@ class MainWindow(QMainWindow):
                                     background-color: #3a3a3a;
                                 }
                             """))
-                        elif col in range(1, 6):  # 0%, 25%, 50%, 75%, 100%
-                            widget.setStyleSheet(self._scale_style("""
-                                QLineEdit {
-                                    background-color: #2a2a2a;
-                                    border: 1px solid #555;
-                                    color: #fff;
-                                    padding: 4px;
-                                    text-align: center;
-                                }
-                                QLineEdit:focus {
-                                    border: 1px solid #0a5;
-                                }
-                            """))
-                        elif col == 6:  # Duration
+                        elif col in range(1, 7):  # Steps 1-6
+                                # Garder le style coloré du step (sera géré par load_sequences_from_config)
+                                pass
+                        elif col == 7:  # Duration
                             widget.setStyleSheet(self._scale_style("""
                                 QLineEdit {
                                     background-color: #2a2a2a;
@@ -7835,19 +8550,8 @@ class MainWindow(QMainWindow):
                         
                         # Synchroniser automatiquement le D du LFO avec le focus
                         self.sync_lfo_distance_from_focus(focus_value)
-                        
-                        # Mettre à jour l'affichage de la distance même si la synchronisation LFO est désactivée
-                        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
-                            # Obtenir le zoom actuel pour la conversion (valeur du slider pour la LUT 3D)
-                            zoom_normalised = None
-                            if cam_data and hasattr(cam_data, 'slider_zoom_value') and cam_data.slider_zoom_value is not None:
-                                zoom_normalised = cam_data.slider_zoom_value  # Valeur normalisée du slider
-                            
-                            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(focus_value, zoom_normalised)
-                            if distance_meters is not None:
-                                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
-                            else:
-                                self.focus_distance_label.setText("Distance: -- m")
+                        # Distance label: lecture caméra + zoom slider
+                        self._update_focus_distance_label(cam_data)
                 else:
                     logger.warning("Aucune valeur de focus récupérée après l'autofocus")
         except Exception as e:
@@ -7970,15 +8674,15 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, 1, max_attempts))
                 return
             
-                import requests
-                from requests.auth import HTTPBasicAuth
+            import requests
+            from requests.auth import HTTPBasicAuth
             import socket
             from urllib.parse import urlparse
             
             # Résoudre le hostname .local en IP si nécessaire (pour améliorer la stabilité)
-            test_url = cam_data.url
+            test_url = normalize_camera_base_url(cam_data.url)
             try:
-                parsed = urlparse(cam_data.url)
+                parsed = urlparse(test_url)
                 hostname = parsed.hostname
                 if hostname and hostname.endswith('.local'):
                     # Essayer de résoudre le .local en IP
@@ -7987,7 +8691,7 @@ class MainWindow(QMainWindow):
                         if addr_info:
                             ip_address = addr_info[0][4][0]
                             logger.info(f"Résolution DNS pour connexion auto: {hostname} -> {ip_address}")
-                            test_url = cam_data.url.replace(hostname, ip_address)
+                            test_url = test_url.replace(hostname, ip_address)
                     except (socket.gaierror, OSError) as e:
                         logger.debug(f"Résolution DNS échouée pour {hostname}, utilisation du nom original: {e}")
             except Exception as e:
@@ -8056,8 +8760,8 @@ class MainWindow(QMainWindow):
         cam_data = self.cameras[camera_id]
         
         try:
-            # Mettre à jour les valeurs de connexion
-            cam_data.url = camera_url.rstrip('/')
+            # Mettre à jour les valeurs de connexion (bare IPs need http:// for REST/WS)
+            cam_data.url = normalize_camera_base_url(camera_url)
             cam_data.username = username
             cam_data.password = password
             
@@ -9064,19 +9768,8 @@ class MainWindow(QMainWindow):
                         self.focus_slider.setValue(slider_value)
                         self.focus_slider.blockSignals(False)
                         
-                        # Mettre à jour l'affichage de la distance
-                        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
-                            # Obtenir le zoom actuel pour la conversion (valeur du slider pour la LUT 3D)
-                            zoom_normalised = None
-                            cam_data = self.get_active_camera_data()
-                            if cam_data and hasattr(cam_data, 'slider_zoom_value') and cam_data.slider_zoom_value is not None:
-                                zoom_normalised = cam_data.slider_zoom_value  # Valeur normalisée du slider
-                            
-                            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(value, zoom_normalised)
-                            if distance_meters is not None:
-                                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
-                            else:
-                                self.focus_distance_label.setText("Distance: -- m")
+                        # Distance = lecture caméra + zoom slider
+                        self._update_focus_distance_label(cam_data)
             
             # Iris
             iris_data = cam_data.controller.get_iris()
@@ -9236,43 +9929,62 @@ class MainWindow(QMainWindow):
             logger.info(f"Fallback: Chargement des valeurs initiales via GET pour la caméra {camera_id}")
             self.load_initial_values(camera_id)
     
+    def _update_focus_distance_label(self, cam_data=None):
+        """Met à jour le label Distance sous le focus.
+        
+        Distance = LUT 3D(focus lu caméra, zoom moteur slider).
+        Ne jamais utiliser la valeur focus 'envoyée' — uniquement focus_actual_value.
+        """
+        if not hasattr(self, 'focus_distance_label') or not self.focus_distance_label:
+            return
+        
+        if cam_data is None:
+            cam_data = self.get_active_camera_data()
+        if cam_data is None:
+            self.focus_distance_label.setText("Distance: -- m")
+            return
+        
+        focus_normalised = cam_data.focus_actual_value
+        if focus_normalised is None:
+            self.focus_distance_label.setText("Distance: -- m")
+            return
+        
+        zoom_normalised = getattr(cam_data, 'slider_zoom_value', None)
+        if zoom_normalised is None:
+            self.focus_distance_label.setText("Distance: -- m")
+            return
+        
+        distance_meters = self.focus_lut.normalised_to_distance_with_zoom(
+            float(focus_normalised), float(zoom_normalised)
+        )
+        if distance_meters is not None:
+            self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
+        else:
+            self.focus_distance_label.setText("Distance: -- m")
+    
     # Slots pour les signaux
     def on_focus_changed(self, value: float):
-        """Slot appelé quand le focus change."""
+        """Slot appelé quand le focus change (lecture caméra via WebSocket)."""
         # Arrondir la valeur à la même précision que le slider (0.001)
-        # Cela garantit une résolution cohérente entre le fader et les flèches
-        value_rounded = round(value, 3)# TOUJOURS accepter les mises à jour socket et les afficher en bleu
-        # Les valeurs socket reflètent l'état réel de la caméra et doivent toujours être affichées
+        value_rounded = round(value, 3)
+        # Les valeurs socket reflètent l'état réel de la caméra
         self.focus_actual_value = value_rounded
+        cam_data = self.get_active_camera_data()
+        if cam_data is not None:
+            cam_data.focus_actual_value = value_rounded
         
-        # Mettre à jour l'affichage de la valeur réelle avec la valeur arrondie (affichage bleu)
         self.focus_value_actual.setText(f"{value_rounded:.3f}")
         
-        # Mettre à jour le slider avec la valeur socket
-        # Même pendant l'ajustement clavier, on peut mettre à jour le slider pour refléter la valeur réelle
-        # Le flag focus_keyboard_adjusting n'empêche plus les mises à jour
+        # Mettre à jour le slider avec la valeur socket (sauf si l'utilisateur le tient)
         if not self.focus_slider_user_touching:
             slider_value = int(value_rounded * 1000)
             self.focus_slider.blockSignals(True)
             self.focus_slider.setValue(slider_value)
             self.focus_slider.blockSignals(False)
         
-        # Synchroniser automatiquement le D du LFO avec le focus
+        # LFO D sync (optionnel) + label Distance (toujours, depuis lecture caméra)
         self.sync_lfo_distance_from_focus(value_rounded)
-        
-        # Mettre à jour l'affichage de la distance même si la synchronisation LFO est désactivée
-        if hasattr(self, 'focus_distance_label') and self.focus_distance_label:
-            # Obtenir le zoom actuel pour la conversion (valeur du slider pour la LUT 3D)
-            zoom_normalised = None
-            cam_data = self.get_active_camera_data()
-            if cam_data and hasattr(cam_data, 'slider_zoom_value') and cam_data.slider_zoom_value is not None:
-                zoom_normalised = cam_data.slider_zoom_value  # Valeur normalisée du slider
-            
-            distance_meters = self.focus_lut.normalised_to_distance_with_zoom(value_rounded, zoom_normalised)
-            if distance_meters is not None:
-                self.focus_distance_label.setText(f"Distance: {distance_meters:.2f} m")
-            else:
-                self.focus_distance_label.setText("Distance: -- m")
+        self._update_focus_distance_label(cam_data)
     
     def on_focus_slider_pressed(self):
         """Appelé quand on appuie sur le slider."""
@@ -9289,22 +10001,22 @@ class MainWindow(QMainWindow):
         cam_data.focus_sent_value = current_focus_value
         self.focus_value_sent.setText(f"{current_focus_value:.3f}")
         
-        # Envoyer immédiatement la valeur sur laquelle l'utilisateur a cliqué (si le verrou est ouvert)
-        if not self.focus_sending:
-            self._send_focus_value_now(current_focus_value)
+        # Envoyer immédiatement (ou mettre en file si un PUT est déjà en cours)
+        self._send_focus_value_now(current_focus_value)
     
     def on_focus_slider_released(self):
         """Appelé quand on relâche le slider."""
         cam_data = self.get_active_camera_data()
         
+        # Toujours envoyer la valeur finale au relâchement (les drags intermédiaires
+        # peuvent avoir été coalesceés pendant focus_sending).
+        final_value = self.focus_slider.value() / 1000.0
+        cam_data.focus_sent_value = final_value
+        self.focus_value_sent.setText(f"{final_value:.3f}")
+        self._send_focus_value_now(final_value, force=True)
+        
         # Marquer que l'utilisateur ne touche plus le slider
         self.focus_slider_user_touching = False
-        
-        # Remettre immédiatement le slider à la valeur réelle du focus
-        slider_value = int(cam_data.focus_actual_value * 1000)
-        self.focus_slider.blockSignals(True)
-        self.focus_slider.setValue(slider_value)
-        self.focus_slider.blockSignals(False)
     
     def on_focus_slider_value_changed(self, value: int):
         """Appelé quand la valeur du slider change."""
@@ -9319,35 +10031,81 @@ class MainWindow(QMainWindow):
         cam_data.focus_sent_value = focus_value
         self.focus_value_sent.setText(f"{focus_value:.3f}")
         
-        # Envoyer seulement si le verrou est ouvert (pas de requête en cours)
-        if not self.focus_sending:
-            self._send_focus_value_now(focus_value)
+        # Envoyer, ou garder la dernière valeur en attente si un PUT est en cours
+        self._send_focus_value_now(focus_value)
     
-    def _send_focus_value_now(self, value: float):
-        """Envoie la valeur du focus à la caméra active, attend la réponse, puis 50ms avant de permettre le prochain envoi."""
+    def _send_focus_value_now(self, value: float, force: bool = False):
+        """Envoie la valeur du focus à la caméra active.
+        
+        Si un PUT est déjà en cours, mémorise la dernière valeur et l'envoie ensuite.
+        force=True permet d'envoyer hors interaction slider (relâchement, Companion, etc.).
+        """
         cam_data = self.get_active_camera_data()
         if not cam_data.connected or not cam_data.controller:
             return
-        if not self.focus_slider_user_touching:
-            self.focus_sending = False
+        if not force and not self.focus_slider_user_touching:
+            return
+        
+        value = max(0.0, min(1.0, float(value)))
+        
+        # Coalesce: ne pas perdre la dernière position pendant un PUT
+        if self.focus_sending:
+            self.focus_pending_value = value
             return
         
         self.focus_sending = True
+        self.focus_pending_value = None
         
         try:
-            # Envoyer la requête (synchrone, attend la réponse)
             success = cam_data.controller.set_focus(value, silent=True)
+            if success:
+                # Only mark as sent — actual + Distance come from camera readback
+                cam_data.focus_sent_value = value
+                if hasattr(self, 'focus_value_sent'):
+                    self.focus_value_sent.setText(f"{value:.3f}")
+                logger.info(f"Focus envoyé cam{self.active_camera_id}: {value:.3f}")
+                # Refresh actual focus + Distance from camera GET (WS may be quiet)
+                camera_id = self.active_camera_id
+                QTimer.singleShot(80, lambda cid=camera_id: self._refresh_focus_actual_from_camera(cid))
+            else:
+                logger.error(f"Erreur lors de l'envoi du focus ({value:.3f})")
             
-            if not success:
-                logger.error(f"Erreur lors de l'envoi du focus")
-            
-            # Attendre 50ms après la réponse avant de permettre le prochain envoi
             QTimer.singleShot(50, self._on_focus_send_complete)
             
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi du focus: {e}")
-            # En cas d'erreur, attendre quand même 50ms
             QTimer.singleShot(50, self._on_focus_send_complete)
+    
+    def _refresh_focus_actual_from_camera(self, camera_id: int):
+        """GET focus caméra puis maj focus_actual + label Distance (LUT zoom slider)."""
+        if camera_id < 1 or camera_id > 8:
+            return
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data or not cam_data.controller:
+            return
+        try:
+            focus_data = cam_data.controller.get_focus()
+            if not focus_data:
+                return
+            if isinstance(focus_data, dict) and 'normalised' in focus_data:
+                value = float(focus_data['normalised'])
+            elif isinstance(focus_data, (int, float)):
+                value = float(focus_data)
+            else:
+                return
+            
+            cam_data.focus_actual_value = value
+            if camera_id == self.active_camera_id:
+                self.focus_actual_value = value
+                self.focus_value_actual.setText(f"{value:.3f}")
+                if not self.focus_slider_user_touching:
+                    self.focus_slider.blockSignals(True)
+                    self.focus_slider.setValue(int(round(value, 3) * 1000))
+                    self.focus_slider.blockSignals(False)
+                self.sync_lfo_distance_from_focus(value)
+                self._update_focus_distance_label(cam_data)
+        except Exception as e:
+            logger.debug(f"Refresh focus actual cam{camera_id} échoué: {e}")
     
     def on_pan_tilt_matrix_changed(self, pan: float, tilt: float):
         """Appelé quand la position de la matrice XY pan/tilt change."""
@@ -9418,6 +10176,7 @@ class MainWindow(QMainWindow):
                     cam_data.slider_tilt_value = normalized_value
                 elif axis_name == 'zoom':
                     cam_data.slider_zoom_value = normalized_value
+                    self._update_focus_distance_label(cam_data)
                 elif axis_name == 'slide':
                     cam_data.slider_slide_value = normalized_value
                 
@@ -9444,6 +10203,8 @@ class MainWindow(QMainWindow):
             cam_data.slider_tilt_value = normalized_value
         elif axis_name == 'zoom':
             cam_data.slider_zoom_value = normalized_value
+            # Recalc distance from camera focus + new slider zoom
+            self._update_focus_distance_label(cam_data)
         elif axis_name == 'slide':
             cam_data.slider_slide_value = normalized_value
         
@@ -9619,6 +10380,8 @@ class MainWindow(QMainWindow):
         
         self.state_store.update_cam(actual_camera_id, zoom_motor=new_value)
         slider_controller.move_zoom(new_value, silent=True)
+        if actual_camera_id == self.active_camera_id:
+            self._update_focus_distance_label(cam_data)
     
     def decrement_slider_zoom(self, camera_id: Optional[int] = None):
         """Décrémente le zoom du slider de 1% (0.01) pour la caméra spécifiée ou active."""
@@ -9645,6 +10408,8 @@ class MainWindow(QMainWindow):
         
         self.state_store.update_cam(actual_camera_id, zoom_motor=new_value)
         slider_controller.move_zoom(new_value, silent=True)
+        if actual_camera_id == self.active_camera_id:
+            self._update_focus_distance_label(cam_data)
     
     def increment_slider_slide(self, camera_id: Optional[int] = None):
         """Incrémente le slide du slider de 1% (0.01) pour la caméra spécifiée ou active."""
@@ -9699,19 +10464,25 @@ class MainWindow(QMainWindow):
         slider_controller.move_slide(new_value, silent=True)
     
     def _on_focus_send_complete(self):
-        """Appelé après le délai de 50ms, lit la position actuelle du fader si l'utilisateur le touche encore."""
+        """Appelé après le délai de 50ms: envoie la valeur en attente ou la position slider courante."""
         self.focus_sending = False
+        
+        pending = self.focus_pending_value
+        self.focus_pending_value = None
+        
+        if pending is not None:
+            self._send_focus_value_now(pending, force=True)
+            return
         
         # Si l'utilisateur touche toujours le slider, lire la position actuelle et l'envoyer
         if self.focus_slider_user_touching:
             cam_data = self.get_active_camera_data()
-            current_slider_value = self.focus_slider.value()
-            current_focus_value = current_slider_value / 1000.0
+            current_focus_value = self.focus_slider.value() / 1000.0
             cam_data.focus_sent_value = current_focus_value
             self.focus_value_sent.setText(f"{current_focus_value:.3f}")
             self._send_focus_value_now(current_focus_value)
     
-    
+
     def on_iris_changed(self, data: dict):
         """Slot appelé quand l'iris change."""
         logger.debug(f"on_iris_changed appelé avec données: {data}")
@@ -9762,9 +10533,7 @@ class MainWindow(QMainWindow):
             # IMPORTANT: Cette valeur vient de l'API caméra (WebSocket ou GET /lens/zoom), pas du slider
             cam_data.zoom_actual_value = zoom_value  # Valeur normalisée API caméra
             cam_data.zoom_sent_value = zoom_value
-            
-            # Synchroniser automatiquement le D du LFO avec le zoom
-            self.sync_lfo_distance_from_zoom(zoom_value)
+            # Distance LUT uses slider zoom, not camera lens zoom — no label update here
     
     def on_zebra_changed(self, enabled: bool):
         """Slot appelé quand le zebra change."""
@@ -9910,11 +10679,19 @@ class MainWindow(QMainWindow):
                 preset_data["zoom_motor"] = cam_data.slider_zoom_value
                 preset_data["slide"] = cam_data.slider_slide_value
             
+            # Préserver le nom et la distance LFO s'ils existaient déjà
+            preset_key = f"preset_{preset_number}"
+            existing = cam_data.presets.get(preset_key, {})
+            if existing.get("name"):
+                preset_data["name"] = existing["name"]
+            if "lfo_distance" in existing:
+                preset_data["lfo_distance"] = existing["lfo_distance"]
+            
             # Sauvegarder le preset dans la caméra active
-            cam_data.presets[f"preset_{preset_number}"] = preset_data
+            cam_data.presets[preset_key] = preset_data
             
             # Mettre à jour le StateStore
-            self.state_store.set_preset(self.active_camera_id, f"preset_{preset_number}", preset_data)
+            self.state_store.set_preset(self.active_camera_id, preset_key, preset_data)
             
             # Sauvegarder dans le fichier
             self.save_cameras_config()
@@ -9923,6 +10700,11 @@ class MainWindow(QMainWindow):
             
             # Faire clignoter le bouton en rouge pour confirmer la sauvegarde
             self._flash_preset_save_button(preset_number)
+            
+            # Rafraîchir les labels / enable du Workspace 5
+            if hasattr(self, 'workspace_5_recall_buttons'):
+                self._refresh_workspace_5_preset_labels()
+                self.update_workspace_5_preset_highlight(self.active_camera_id)
         except Exception as e:
             logger.error(f"Erreur lors de la sauvegarde du preset {preset_number}: {e}")
     
@@ -10027,26 +10809,41 @@ class MainWindow(QMainWindow):
         self.smooth_transition_toggle.setText(f"Transition\nProgressive\n{state_text}")
         logger.info(f"Transition progressive: {state_text}")
     
-    def recall_preset(self, preset_number: int):
-        """Rappelle et applique un preset sauvegardé pour la caméra active."""
-        cam_data = self.get_active_camera_data()
-        if not cam_data.connected or not cam_data.controller:
-            logger.warning("Impossible de rappeler le preset : non connecté")
+    def recall_preset(self, preset_number: int, camera_id: Optional[int] = None):
+        """Rappelle et applique un preset sauvegardé.
+        
+        Args:
+            preset_number: Numéro du preset (1-10)
+            camera_id: Caméra cible. Si None, utilise la caméra active.
+                       Ne change jamais la caméra active ni l'ATEM.
+        """
+        target_camera_id = camera_id if isinstance(camera_id, int) else self.active_camera_id
+        if target_camera_id < 1 or target_camera_id > 8:
+            logger.warning(f"ID de caméra invalide pour recall: {target_camera_id}")
             return
+        
+        cam_data = self.cameras.get(target_camera_id)
+        if not cam_data or not cam_data.connected or not cam_data.controller:
+            logger.warning(f"Impossible de rappeler le preset : caméra {target_camera_id} non connectée")
+            return
+        
+        is_active_camera = (target_camera_id == self.active_camera_id)
         
         try:
             preset_key = f"preset_{preset_number}"
             if preset_key not in cam_data.presets:
-                logger.warning(f"Preset {preset_number} introuvable pour la caméra {self.active_camera_id}")
+                logger.warning(f"Preset {preset_number} introuvable pour la caméra {target_camera_id}")
                 return
             
             preset_data = cam_data.presets[preset_key]
             
-            # Séparer les valeurs slider des autres valeurs
+            # Séparer les valeurs slider des autres valeurs (ignorer métadonnées name/lfo_distance)
             slider_values = {}
             camera_values = {}
             
             for param, value in preset_data.items():
+                if param in ('name', 'lfo_distance'):
+                    continue
                 if param in ['pan', 'tilt', 'zoom_motor', 'slide']:
                     slider_values[param] = value
                 else:
@@ -10067,8 +10864,9 @@ class MainWindow(QMainWindow):
             )
             
             # NOUVEAU: Si LFO actif et preset contient des valeurs slider, recalculer la séquence LFO
-            if self.lfo_active and should_send_slider and slider_values:
-                slider_controller = self.slider_controllers.get(self.active_camera_id)
+            # (uniquement pour la caméra active — le LFO est lié à celle-ci)
+            if is_active_camera and self.lfo_active and should_send_slider and slider_values:
+                slider_controller = self.slider_controllers.get(target_camera_id)
                 if slider_controller and slider_controller.is_configured():
                     # 1. BAKER: Intégrer les offsets actuels dans la position de base
                     if slider_controller.bake_offsets(silent=True):
@@ -10169,25 +10967,25 @@ class MainWindow(QMainWindow):
                     # 9. Empêcher l'envoi normal de move_axes() car la séquence LFO gère déjà le mouvement
                     should_send_slider = False
             
-            # Arrêter toute transition en cours
-            if self.preset_transition_timer:
+            # Arrêter toute transition en cours (uniquement si on cible la cam active)
+            if is_active_camera and self.preset_transition_timer:
                 self.preset_transition_timer.stop()
                 self.preset_transition_timer = None
             
-            # Si transition progressive activée, faire une transition
-            if self.smooth_preset_transition:
+            # Transition progressive uniquement pour la caméra active
+            if is_active_camera and self.smooth_preset_transition:
                 try:
-                    self._start_smooth_preset_transition(filtered_camera_data, preset_number)
+                    self._start_smooth_preset_transition(filtered_camera_data, preset_number, camera_id=target_camera_id)
                 except Exception as e:
                     logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
                     raise
             else:
-                # Appliquer les valeurs instantanément
-                self._apply_preset_values_instant(filtered_camera_data, preset_number)
+                # Appliquer les valeurs instantanément (toujours pour les cams non actives)
+                self._apply_preset_values_instant(filtered_camera_data, preset_number, camera_id=target_camera_id)
             
-            # Envoyer les valeurs slider si nécessaire
+            # Envoyer les valeurs slider si nécessaire (slider de la caméra cible)
             if should_send_slider:
-                slider_controller = self.slider_controllers.get(self.active_camera_id)
+                slider_controller = self.slider_controllers.get(target_camera_id)
                 # Vérifier si le slider est configuré (IP non vide) même si is_configured() retourne False
                 slider_configured = slider_controller is not None and (
                     slider_controller.is_configured() or 
@@ -10211,49 +11009,59 @@ class MainWindow(QMainWindow):
                             duration=cam_data.crossfade_duration,
                             silent=True
                         )
-                        logger.info(f"Preset {preset_number} - Valeurs slider envoyées: pan={pan}, tilt={tilt}, zoom={zoom}, slide={slide}")
+                        logger.info(f"Cam{target_camera_id} Preset {preset_number} - Valeurs slider envoyées: pan={pan}, tilt={tilt}, zoom={zoom}, slide={slide}")
                     except Exception as e:
                         logger.error(f"Erreur lors de l'envoi des valeurs slider du preset {preset_number}: {e}")
                 else:
-                    logger.warning(f"Preset {preset_number} - Slider non configuré, valeurs slider ignorées")
+                    logger.warning(f"Cam{target_camera_id} Preset {preset_number} - Slider non configuré, valeurs slider ignorées")
+            
+            # Feedback visuel Workspace 5
+            self._flash_workspace_5_recall_button(target_camera_id, preset_number)
+            self.update_workspace_5_preset_highlight(target_camera_id)
             
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
     
-    def _apply_preset_values_instant(self, preset_data: dict, preset_number: int):
+    def _apply_preset_values_instant(self, preset_data: dict, preset_number: int, camera_id: Optional[int] = None):
         """Applique les valeurs du preset instantanément (sauf focus si transition progressive activée)."""
-        cam_data = self.get_active_camera_data()
+        target_camera_id = camera_id if isinstance(camera_id, int) else self.active_camera_id
+        cam_data = self.cameras.get(target_camera_id)
+        if not cam_data or not cam_data.controller:
+            return
+        
+        is_active_camera = (target_camera_id == self.active_camera_id)
         
         # Focus - seulement si transition progressive désactivée
-        if 'focus' in preset_data and not self.smooth_preset_transition:
+        if 'focus' in preset_data and not (is_active_camera and self.smooth_preset_transition):
             focus_value = float(preset_data['focus'])
             cam_data.controller.set_focus(focus_value, silent=True)
             cam_data.focus_sent_value = focus_value
-            self.focus_value_sent.setText(f"{focus_value:.3f}")
-            slider_value = int(focus_value * 1000)
-            self.focus_slider.blockSignals(True)
-            self.focus_slider.setValue(slider_value)
-            self.focus_slider.blockSignals(False)
+            if is_active_camera:
+                self.focus_value_sent.setText(f"{focus_value:.3f}")
+                slider_value = int(focus_value * 1000)
+                self.focus_slider.blockSignals(True)
+                self.focus_slider.setValue(slider_value)
+                self.focus_slider.blockSignals(False)
         
         # Iris - toujours instantané
         if 'iris' in preset_data:
             iris_value = float(preset_data['iris'])
-            self.update_iris_value(iris_value)
+            self.update_iris_value(iris_value, camera_id=target_camera_id)
         
         # Gain - toujours instantané
         if 'gain' in preset_data:
             gain_value = int(preset_data['gain'])
-            self.update_gain_value(gain_value)
+            self.update_gain_value(gain_value, camera_id=target_camera_id)
         
         # Shutter - toujours instantané
         if 'shutter' in preset_data:
             shutter_value = int(preset_data['shutter'])
-            self.update_shutter_value(shutter_value)
+            self.update_shutter_value(shutter_value, camera_id=target_camera_id)
         
         # White Balance - toujours instantané
         if 'whitebalance' in preset_data:
             whitebalance_value = int(preset_data['whitebalance'])
-            self.update_whitebalance_value(whitebalance_value)
+            self.update_whitebalance_value(whitebalance_value, camera_id=target_camera_id)
         
         # Zoom - toujours instantané
         if 'zoom' in preset_data:
@@ -10261,7 +11069,7 @@ class MainWindow(QMainWindow):
             try:
                 if hasattr(cam_data.controller, 'set_zoom'):
                     cam_data.controller.set_zoom(zoom_value, silent=True)
-            except:
+            except Exception:
                 pass
         
         # Marquer ce preset comme actif
@@ -10269,33 +11077,37 @@ class MainWindow(QMainWindow):
         
         # Mettre à jour le label du preset dans le panneau LFO si présent
         self.save_cameras_config()
-        self.update_preset_highlight()
+        if is_active_camera:
+            self.update_preset_highlight()
         
-        logger.info(f"Caméra {self.active_camera_id} - Preset {preset_number} rappelé instantanément")
+        logger.info(f"Caméra {target_camera_id} - Preset {preset_number} rappelé instantanément")
     
-    def _start_smooth_preset_transition(self, preset_data: dict, preset_number: int):
+    def _start_smooth_preset_transition(self, preset_data: dict, preset_number: int, camera_id: Optional[int] = None):
         """Démarre une transition progressive vers les valeurs du preset (focus uniquement)."""
-        cam_data = self.get_active_camera_data()
+        target_camera_id = camera_id if isinstance(camera_id, int) else self.active_camera_id
+        cam_data = self.cameras.get(target_camera_id)
+        if not cam_data or not cam_data.controller:
+            return
         
         # Appliquer les autres paramètres instantanément (iris, gain, shutter, zoom)
         if 'iris' in preset_data:
             iris_value = float(preset_data['iris'])
-            self.update_iris_value(iris_value)
+            self.update_iris_value(iris_value, camera_id=target_camera_id)
         
         if 'gain' in preset_data:
             gain_value = int(preset_data['gain'])
-            self.update_gain_value(gain_value)
+            self.update_gain_value(gain_value, camera_id=target_camera_id)
         
         if 'shutter' in preset_data:
             shutter_value = int(preset_data['shutter'])
-            self.update_shutter_value(shutter_value)
+            self.update_shutter_value(shutter_value, camera_id=target_camera_id)
         
         if 'zoom' in preset_data:
             zoom_value = float(preset_data['zoom'])
             try:
                 if hasattr(cam_data.controller, 'set_zoom'):
                     cam_data.controller.set_zoom(zoom_value, silent=True)
-            except:
+            except Exception:
                 pass
         
         # Stocker les valeurs de départ et cibles pour le focus uniquement
@@ -10327,7 +11139,7 @@ class MainWindow(QMainWindow):
         self.save_cameras_config()
         self.update_preset_highlight()
         
-        logger.info(f"Caméra {self.active_camera_id} - Début transition progressive du focus vers preset {preset_number}")
+        logger.info(f"Caméra {target_camera_id} - Début transition progressive du focus vers preset {preset_number}")
     
     def _update_smooth_preset_transition(self):
         """Met à jour la transition progressive du focus uniquement (appelé par le timer)."""
@@ -10427,6 +11239,14 @@ class MainWindow(QMainWindow):
         # Sauvegarder la configuration
         self.save_cameras_config()
         
+        # Sync spinbox WS5 de la cam active
+        if hasattr(self, 'workspace_5_duration_spinboxes'):
+            spin = self.workspace_5_duration_spinboxes.get(self.active_camera_id)
+            if spin:
+                spin.blockSignals(True)
+                spin.setValue(float(value))
+                spin.blockSignals(False)
+        
         logger.info(f"Crossfade duration pour caméra {self.active_camera_id}: {value}s")
     
     def update_crossfade_duration_ui(self):
@@ -10438,6 +11258,14 @@ class MainWindow(QMainWindow):
         self.crossfade_duration_spinbox.blockSignals(True)
         self.crossfade_duration_spinbox.setValue(cam_data.crossfade_duration)
         self.crossfade_duration_spinbox.blockSignals(False)
+        
+        # Sync aussi le spinbox WS5 de la cam active
+        if hasattr(self, 'workspace_5_duration_spinboxes'):
+            spin = self.workspace_5_duration_spinboxes.get(self.active_camera_id)
+            if spin:
+                spin.blockSignals(True)
+                spin.setValue(cam_data.crossfade_duration)
+                spin.blockSignals(False)
     
     def update_workspace_3_camera_display(self):
         """Met à jour l'affichage de la caméra dans le Workspace 3."""
@@ -10516,6 +11344,10 @@ class MainWindow(QMainWindow):
             # Le bouton Recall du Workspace 3 n'a pas besoin de mise à jour visuelle
             # car il est toujours disponible pour le preset sélectionné
             pass
+        
+        # Mettre à jour le highlight Workspace 5 pour la caméra active
+        if hasattr(self, 'workspace_5_recall_buttons'):
+            self.update_workspace_5_preset_highlight(self.active_camera_id)
     
     # ========== Workspace 3 - Gestion musiciens et plans ==========
     
@@ -10789,6 +11621,493 @@ class MainWindow(QMainWindow):
     def workspace_3_save_current_preset(self):
         """Sauvegarde le preset actuellement sélectionné dans le Workspace 3."""
         self.save_preset(self.workspace_3_selected_preset_id)
+    
+    def create_workspace_5_page(self):
+        """Crée la page Workspace 5 : recall-only multi-caméras pour captation fluide."""
+        page = QWidget()
+        page.setObjectName("workspace5Page")
+        page.setStyleSheet("""
+            QWidget#workspace5Page {
+                background-color: #1e1e1e;
+            }
+        """)
+        
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(
+            self._scale_value(12), self._scale_value(12),
+            self._scale_value(12), self._scale_value(12)
+        )
+        main_layout.setSpacing(self._scale_value(10))
+        
+        title = QLabel("Recall Multi-Cam — Captation")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"""
+            font-size: {self._scale_font(18)}px;
+            font-weight: bold;
+            color: #fff;
+            padding-bottom: {self._scale_value(4)}px;
+        """)
+        main_layout.addWidget(title)
+        
+        hint = QLabel("Clic = recall · Clic droit = renommer · Pas de switch ATEM / cam active")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(f"font-size: {self._scale_font(11)}px; color: #888;")
+        main_layout.addWidget(hint)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #1e1e1e;
+            }
+        """)
+        
+        columns_widget = QWidget()
+        columns_layout = QHBoxLayout(columns_widget)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.setSpacing(self._scale_value(8))
+        
+        self.workspace_5_columns = {}
+        self.workspace_5_recall_buttons = {}  # {camera_id: [btn1..btn10]}
+        self.workspace_5_status_labels = {}
+        self.workspace_5_slider_labels = {}
+        self.workspace_5_on_air_labels = {}
+        self.workspace_5_duration_spinboxes = {}  # {camera_id: QDoubleSpinBox}
+        
+        recall_btn_style = self._scale_style("""
+            QPushButton {
+                padding: 4px 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background-color: #0a5;
+                color: #fff;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: #0c7;
+            }
+            QPushButton:disabled {
+                background-color: #333;
+                color: #666;
+            }
+        """)
+        
+        for cam_id in range(1, 9):
+            col = QFrame()
+            col.setFrameShape(QFrame.StyledPanel)
+            col.setStyleSheet(self._scale_style("""
+                QFrame {
+                    background-color: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                }
+            """))
+            col_layout = QVBoxLayout(col)
+            col_layout.setContentsMargins(
+                self._scale_value(8), self._scale_value(8),
+                self._scale_value(8), self._scale_value(8)
+            )
+            col_layout.setSpacing(self._scale_value(4))
+            
+            header = QLabel(f"Cam {cam_id}")
+            header.setAlignment(Qt.AlignCenter)
+            header.setStyleSheet(f"""
+                font-size: {self._scale_font(14)}px;
+                font-weight: bold;
+                color: #fff;
+                border: none;
+                background: transparent;
+            """)
+            col_layout.addWidget(header)
+            
+            status = QLabel("● offline")
+            status.setAlignment(Qt.AlignCenter)
+            status.setStyleSheet(f"font-size: {self._scale_font(11)}px; color: #666; border: none; background: transparent;")
+            col_layout.addWidget(status)
+            self.workspace_5_status_labels[cam_id] = status
+            
+            slider_badge = QLabel("NO SLIDER")
+            slider_badge.setAlignment(Qt.AlignCenter)
+            slider_badge.setStyleSheet(f"""
+                font-size: {self._scale_font(10)}px;
+                font-weight: bold;
+                color: #666;
+                border: none;
+                background: transparent;
+                min-height: {self._scale_value(16)}px;
+            """)
+            col_layout.addWidget(slider_badge)
+            self.workspace_5_slider_labels[cam_id] = slider_badge
+            
+            on_air = QLabel("")
+            on_air.setAlignment(Qt.AlignCenter)
+            on_air.setStyleSheet(f"""
+                font-size: {self._scale_font(10)}px;
+                font-weight: bold;
+                color: #f44;
+                border: none;
+                background: transparent;
+                min-height: {self._scale_value(16)}px;
+            """)
+            col_layout.addWidget(on_air)
+            self.workspace_5_on_air_labels[cam_id] = on_air
+            
+            buttons = []
+            for preset_num in range(1, 11):
+                btn = QPushButton(str(preset_num))
+                btn.setStyleSheet(recall_btn_style)
+                btn.setFixedHeight(self._scale_value(28))
+                btn.setToolTip(f"Cam {cam_id} — Preset {preset_num}\nClic droit pour renommer")
+                btn.clicked.connect(
+                    lambda checked=False, c=cam_id, p=preset_num: self._workspace_5_recall_clicked(c, p)
+                )
+                btn.setContextMenuPolicy(Qt.CustomContextMenu)
+                btn.customContextMenuRequested.connect(
+                    lambda pos, c=cam_id, p=preset_num, b=btn: self._workspace_5_rename_preset(c, p, b)
+                )
+                col_layout.addWidget(btn)
+                buttons.append(btn)
+            
+            col_layout.addStretch()
+            
+            # Temps de recall (crossfade) éditable par caméra
+            duration_label = QLabel("Recall (s)")
+            duration_label.setAlignment(Qt.AlignCenter)
+            duration_label.setStyleSheet(f"""
+                font-size: {self._scale_font(10)}px;
+                font-weight: bold;
+                color: #aaa;
+                border: none;
+                background: transparent;
+            """)
+            col_layout.addWidget(duration_label)
+            
+            duration_spin = QDoubleSpinBox()
+            duration_spin.setMinimum(0.0)
+            duration_spin.setMaximum(30.0)
+            duration_spin.setSingleStep(0.1)
+            duration_spin.setDecimals(1)
+            duration_spin.setValue(2.0)
+            duration_spin.setAlignment(Qt.AlignCenter)
+            duration_spin.setFixedHeight(self._scale_value(28))
+            duration_spin.setToolTip(f"Durée de recall / crossfade pour Cam {cam_id}")
+            duration_spin.setStyleSheet(self._scale_style("""
+                QDoubleSpinBox {
+                    padding: 2px 4px;
+                    font-size: 11px;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    background-color: #333;
+                    color: #fff;
+                }
+                QDoubleSpinBox:focus {
+                    border: 1px solid #0a5;
+                }
+            """))
+            duration_spin.valueChanged.connect(
+                lambda value, c=cam_id: self._workspace_5_duration_changed(c, value)
+            )
+            col_layout.addWidget(duration_spin)
+            self.workspace_5_duration_spinboxes[cam_id] = duration_spin
+            
+            columns_layout.addWidget(col, stretch=1)
+            self.workspace_5_columns[cam_id] = col
+            self.workspace_5_recall_buttons[cam_id] = buttons
+        
+        scroll.setWidget(columns_widget)
+        main_layout.addWidget(scroll, stretch=1)
+        
+        # Timer de rafraîchissement statut (connected / on-air) — démarré seulement sur WS5
+        self.workspace_5_status_timer = QTimer(self)
+        self.workspace_5_status_timer.timeout.connect(self._refresh_workspace_5_status)
+        
+        # Remplir les noms au premier affichage
+        QTimer.singleShot(200, self.update_workspace_5_display)
+        
+        return page
+    
+    def update_workspace_5_display(self):
+        """Rafraîchit labels de noms, highlights et statuts du Workspace 5."""
+        if not hasattr(self, 'workspace_5_recall_buttons'):
+            return
+        self._refresh_workspace_5_preset_labels()
+        self._refresh_workspace_5_status()
+        self._refresh_workspace_5_durations()
+        for cam_id in range(1, 9):
+            self.update_workspace_5_preset_highlight(cam_id)
+    
+    def _refresh_workspace_5_durations(self):
+        """Synchronise les spinboxes de durée recall avec les valeurs caméra."""
+        if not hasattr(self, 'workspace_5_duration_spinboxes'):
+            return
+        for cam_id, spin in self.workspace_5_duration_spinboxes.items():
+            cam_data = self.cameras.get(cam_id)
+            value = cam_data.crossfade_duration if cam_data else 2.0
+            spin.blockSignals(True)
+            spin.setValue(float(value))
+            spin.blockSignals(False)
+    
+    def _workspace_5_duration_changed(self, camera_id: int, value: float):
+        """Met à jour le temps de recall (crossfade) d'une caméra depuis le WS5."""
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data:
+            return
+        cam_data.crossfade_duration = float(value)
+        self.save_cameras_config()
+        
+        # Garder le spinbox WS1 synchronisé si c'est la cam active
+        if camera_id == self.active_camera_id:
+            self.update_crossfade_duration_ui()
+        
+        logger.info(f"WS5: Crossfade duration Cam {camera_id}: {value}s")
+    
+    def _workspace_5_preset_is_recallable(self, cam_data: Optional[CameraData], preset_number: int) -> bool:
+        """True si le preset contient des valeurs rappelables (pas seulement un nom)."""
+        if not cam_data:
+            return False
+        preset = cam_data.presets.get(f"preset_{preset_number}")
+        if not isinstance(preset, dict):
+            return False
+        return any(k not in ('name',) for k in preset.keys())
+    
+    def _workspace_5_preset_button_text(self, preset_number: int, name: str = "") -> str:
+        """Texte bouton WS5 : garde le numéro, ajoute le nom custom à côté."""
+        name = (name or "").strip()
+        return f"{preset_number} {name}" if name else str(preset_number)
+    
+    def _refresh_workspace_5_preset_labels(self):
+        """Met à jour le texte des boutons recall avec les noms de presets."""
+        if not hasattr(self, 'workspace_5_recall_buttons'):
+            return
+        for cam_id, buttons in self.workspace_5_recall_buttons.items():
+            cam_data = self.cameras.get(cam_id)
+            for i, btn in enumerate(buttons, start=1):
+                name = ""
+                if cam_data:
+                    preset = cam_data.presets.get(f"preset_{i}", {})
+                    name = (preset.get("name") or "").strip()
+                btn.setText(self._workspace_5_preset_button_text(i, name))
+                self._workspace_5_style_recall_button(cam_id, i, btn)
+    
+    def _workspace_5_recall_clicked(self, camera_id: int, preset_number: int):
+        """Recall depuis WS5 : ignore si cam offline ou preset vide."""
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data or not cam_data.connected:
+            logger.warning(f"WS5: Cam {camera_id} non connectée — recall ignoré")
+            return
+        if not self._workspace_5_preset_is_recallable(cam_data, preset_number):
+            logger.warning(f"WS5: Cam {camera_id} Preset {preset_number} vide — recall ignoré")
+            return
+        self.recall_preset(preset_number, camera_id=camera_id)
+    
+    def _workspace_5_style_recall_button(self, camera_id: int, preset_number: int, btn: QPushButton):
+        """Grise visuellement un bouton non rappelable / offline (reste cliquable pour le rename)."""
+        cam_data = self.cameras.get(camera_id)
+        recallable = self._workspace_5_preset_is_recallable(cam_data, preset_number)
+        connected = bool(cam_data and cam_data.connected)
+        usable = recallable and connected
+        
+        cam_data_active = cam_data.active_preset if cam_data else None
+        is_active = (cam_data_active == preset_number)
+        
+        if usable and is_active:
+            style = """
+                QPushButton {
+                    padding: 4px 6px; font-size: 11px; font-weight: bold;
+                    border: 2px solid #ff0; border-radius: 4px;
+                    background-color: #0a5; color: #fff; text-align: left;
+                }
+                QPushButton:hover { background-color: #0c7; border-color: #ffa; }
+            """
+        elif usable:
+            style = """
+                QPushButton {
+                    padding: 4px 6px; font-size: 11px; font-weight: bold;
+                    border: 1px solid #555; border-radius: 4px;
+                    background-color: #0a5; color: #fff; text-align: left;
+                }
+                QPushButton:hover { background-color: #0c7; }
+            """
+        else:
+            style = """
+                QPushButton {
+                    padding: 4px 6px; font-size: 11px; font-weight: bold;
+                    border: 1px solid #444; border-radius: 4px;
+                    background-color: #333; color: #777; text-align: left;
+                }
+                QPushButton:hover { background-color: #3a3a3a; }
+            """
+        btn.setStyleSheet(self._scale_style(style))
+    
+    def _refresh_workspace_5_status(self):
+        """Met à jour connected / on-air pour chaque colonne du Workspace 5."""
+        if not hasattr(self, 'workspace_5_status_labels'):
+            return
+        
+        # Lire le vrai bus Program/Preview ATEM (pas last_camera_id AUX)
+        on_air_cam = None
+        preview_cam = None
+        if self.atem_controller and self.atem_controller.is_connected():
+            try:
+                on_air_cam = self.atem_controller.get_program_camera_id()
+                preview_cam = self.atem_controller.get_preview_camera_id()
+            except Exception as e:
+                logger.debug(f"WS5: lecture ATEM PGM/PVW échouée: {e}")
+        
+        for cam_id in range(1, 9):
+            cam_data = self.cameras.get(cam_id)
+            status_label = self.workspace_5_status_labels.get(cam_id)
+            slider_label = self.workspace_5_slider_labels.get(cam_id) if hasattr(self, 'workspace_5_slider_labels') else None
+            on_air_label = self.workspace_5_on_air_labels.get(cam_id)
+            if not status_label:
+                continue
+            
+            if cam_data and cam_data.connected:
+                status_label.setText("● connected")
+                status_label.setStyleSheet(
+                    f"font-size: {self._scale_font(11)}px; color: #0c7; border: none; background: transparent;"
+                )
+            elif cam_data and cam_data.url:
+                status_label.setText("● offline")
+                status_label.setStyleSheet(
+                    f"font-size: {self._scale_font(11)}px; color: #f44; border: none; background: transparent;"
+                )
+            else:
+                status_label.setText("● —")
+                status_label.setStyleSheet(
+                    f"font-size: {self._scale_font(11)}px; color: #555; border: none; background: transparent;"
+                )
+            
+            if slider_label:
+                slider_ip = (cam_data.slider_ip or "").strip() if cam_data else ""
+                if slider_ip:
+                    slider_ws = cam_data.slider_websocket_client if cam_data else None
+                    slider_connected = bool(slider_ws and getattr(slider_ws, 'connected', False))
+                    if slider_connected:
+                        slider_label.setText("SLIDER ●")
+                        slider_color = "#0c7"
+                    else:
+                        slider_label.setText("SLIDER ○")
+                        slider_color = "#fc0"
+                    slider_label.setToolTip(f"Slider: {slider_ip}")
+                else:
+                    slider_label.setText("NO SLIDER")
+                    slider_color = "#666"
+                    slider_label.setToolTip("Pas de slider configuré")
+                slider_label.setStyleSheet(f"""
+                    font-size: {self._scale_font(10)}px;
+                    font-weight: bold;
+                    color: {slider_color};
+                    border: none;
+                    background: transparent;
+                    min-height: {self._scale_value(16)}px;
+                """)
+            
+            if on_air_label:
+                if on_air_cam == cam_id:
+                    on_air_label.setText("ON AIR")
+                    on_air_label.setStyleSheet(f"""
+                        font-size: {self._scale_font(10)}px;
+                        font-weight: bold;
+                        color: #f44;
+                        border: none;
+                        background: transparent;
+                        min-height: {self._scale_value(16)}px;
+                    """)
+                elif preview_cam == cam_id:
+                    on_air_label.setText("PREVIEW")
+                    on_air_label.setStyleSheet(f"""
+                        font-size: {self._scale_font(10)}px;
+                        font-weight: bold;
+                        color: #0c7;
+                        border: none;
+                        background: transparent;
+                        min-height: {self._scale_value(16)}px;
+                    """)
+                else:
+                    on_air_label.setText("")
+            
+            # Style gris / vert selon connexion + valeurs rappelables
+            if hasattr(self, 'workspace_5_recall_buttons'):
+                buttons = self.workspace_5_recall_buttons.get(cam_id, [])
+                for i, btn in enumerate(buttons, start=1):
+                    self._workspace_5_style_recall_button(cam_id, i, btn)
+    
+    def update_workspace_5_preset_highlight(self, camera_id: int):
+        """Surligne le preset actif d'une caméra dans le Workspace 5."""
+        if not hasattr(self, 'workspace_5_recall_buttons'):
+            return
+        buttons = self.workspace_5_recall_buttons.get(camera_id)
+        if not buttons:
+            return
+        for i, btn in enumerate(buttons, start=1):
+            self._workspace_5_style_recall_button(camera_id, i, btn)
+    
+    def _flash_workspace_5_recall_button(self, camera_id: int, preset_number: int):
+        """Flash court sur le bouton recall du Workspace 5."""
+        if not hasattr(self, 'workspace_5_recall_buttons'):
+            return
+        buttons = self.workspace_5_recall_buttons.get(camera_id)
+        if not buttons or preset_number < 1 or preset_number > len(buttons):
+            return
+        
+        btn = buttons[preset_number - 1]
+        flash_style = self._scale_style("""
+            QPushButton {
+                padding: 4px 6px;
+                font-size: 11px;
+                font-weight: bold;
+                border: 2px solid #ff0;
+                border-radius: 4px;
+                background-color: #fc0;
+                color: #000;
+                text-align: left;
+            }
+        """)
+        btn.setStyleSheet(flash_style)
+        QTimer.singleShot(180, lambda c=camera_id: self.update_workspace_5_preset_highlight(c))
+    
+    def _workspace_5_rename_preset(self, camera_id: int, preset_number: int, button: QPushButton):
+        """Ouvre un dialogue pour nommer un preset (persisté dans cameras_config)."""
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data:
+            return
+        
+        preset_key = f"preset_{preset_number}"
+        if preset_key not in cam_data.presets:
+            # Créer une entrée minimale pour stocker le nom avant le store des valeurs
+            cam_data.presets[preset_key] = {}
+        
+        current_name = (cam_data.presets[preset_key].get("name") or "").strip()
+        new_name, ok = QInputDialog.getText(
+            self,
+            f"Nommer Preset {preset_number}",
+            f"Cam {camera_id} — Preset {preset_number}:",
+            QLineEdit.Normal,
+            current_name
+        )
+        if not ok:
+            return
+        
+        new_name = new_name.strip()
+        if new_name:
+            cam_data.presets[preset_key]["name"] = new_name
+        else:
+            cam_data.presets[preset_key].pop("name", None)
+            # Si le preset ne contient plus que rien d'utile, le retirer
+            remaining = {k: v for k, v in cam_data.presets[preset_key].items() if k != "name"}
+            if not remaining:
+                del cam_data.presets[preset_key]
+        
+        button.setText(self._workspace_5_preset_button_text(preset_number, new_name))
+        
+        self.state_store.set_preset(camera_id, preset_key, cam_data.presets.get(preset_key, {}))
+        self.save_cameras_config()
+        self._refresh_workspace_5_status()
+        logger.info(f"Cam{camera_id} Preset {preset_number} renommé: '{new_name}'")
     
     def create_workspace_4_page(self):
         """Crée la page pour le Workspace 4 avec la configuration des caméras."""

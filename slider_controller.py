@@ -66,15 +66,29 @@ class SliderController:
             return None
         
         try:
-            url = f"{self.base_url}/api/v1/status"
-            response = self.session.get(
-                url,
-                timeout=self.timeout,
-                headers={'Accept': 'application/json'}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
+            # Certains firmwares exposent /api/v1/status, d'autres /api/status
+            data = None
+            last_status = None
+            for path in ("/api/v1/status", "/api/status"):
+                try:
+                    response = self.session.get(
+                        f"{self.base_url}{path}",
+                        timeout=self.timeout,
+                        headers={'Accept': 'application/json'}
+                    )
+                    last_status = response.status_code
+                    if response.status_code == 200:
+                        payload = response.json()
+                        # Ignorer les pages HTML / réponses non-status
+                        if isinstance(payload, dict) and (
+                            'motors_percent' in payload or 'motors' in payload
+                        ):
+                            data = payload
+                            break
+                except Exception:
+                    continue
+
+            if data is not None:
                 motors_percent = data.get('motors_percent', {})
                 
                 # Extraire les valeurs normalisées (elles sont déjà en pourcentage 0-100, convertir en 0.0-1.0)
@@ -90,10 +104,10 @@ class SliderController:
                     result[key] = max(0.0, min(1.0, result[key]))
                 
                 return result
-            else:
-                if not silent:
-                    logger.warning(f"Slider erreur HTTP {response.status_code}: {response.text}")
-                return None
+
+            if not silent and last_status is not None:
+                logger.warning(f"Slider erreur HTTP {last_status} sur status")
+            return None
                 
         except requests.exceptions.ConnectionError:
             if not silent:
