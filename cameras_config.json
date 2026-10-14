@@ -4,23 +4,31 @@
     "companion_host": "127.0.0.1",
     "companion_port": 16759,
     "sequences_column_widths": {
-      "0": 4302.966239813737,
-      "1": 2024.5890570430734,
-      "2": 2136.6216530849824,
-      "3": 5132.922002328289,
-      "4": 5653.073341094296,
-      "5": 5446.155995343423,
-      "6": 5154.642607683353,
-      "7": 3905.1362048894066,
-      "8": 3806.8218859138533,
-      "9": 3495.8742724097788
+      "0": 54666.190919674045,
+      "1": 25690.90337601863,
+      "2": 27107.31548311991,
+      "3": 65197.25494761351,
+      "4": 71833.47147846334,
+      "5": 69182.41443538999,
+      "6": 65487.625145518046,
+      "7": 49609.86263096624,
+      "8": 48331.776484284055,
+      "9": 44391.20139697323
     },
     "atem": {
       "ip": "192.168.1.210",
       "aux_output": 1
+    },
+    "recall_scope": {
+      "focus": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
+      "slider": false
     }
   },
-  "active_camera": 5,
+  "active_camera": 3,
   "camera_1": {
     "url": "http://192.168.1.202",
     "username": "koko",
@@ -29,121 +37,125 @@
     "companion_page": 1,
     "presets": {
       "preset_1": {
-        "focus": 0.4314537048339844,
-        "iris": 0.0,
-        "gain": 24,
-        "shutter": 1500,
-        "whitebalance": 5600,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.3581653,
-        "tilt": 0.7749782000000001,
-        "zoom_motor": 0.492931,
-        "slide": 0.768,
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0,
         "name": "entree"
       },
       "preset_2": {
-        "focus": 0.4831867814064026,
-        "iris": 0.0,
-        "gain": 24,
-        "shutter": 1500,
-        "whitebalance": 5600,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.36103369999999996,
-        "tilt": 0.3,
-        "zoom_motor": 0.00793103,
-        "slide": 0.9179999999999999
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_4": {
-        "focus": 0.7888621687889099,
-        "iris": 0.0,
-        "gain": 14,
-        "shutter": 50,
-        "whitebalance": 5300,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.7483951000000001,
-        "tilt": 0.3499633,
-        "zoom_motor": 0.297069,
-        "slide": 0.6737744000000001
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_3": {
-        "focus": 0.8701496124267578,
-        "iris": 0.0,
-        "gain": 14,
-        "shutter": 50,
-        "whitebalance": 5300,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.7335263999999999,
-        "tilt": 0.4,
-        "zoom_motor": 0.9779310999999999,
-        "slide": 0.6737744000000001
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_5": {
-        "focus": 0.6326996088027954,
-        "iris": 0.0,
-        "gain": 14,
-        "shutter": 50,
-        "whitebalance": 5250,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.9455615,
-        "tilt": 0.90625,
-        "zoom_motor": 1.0,
-        "slide": 0.9510033
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_10": {
-        "focus": 0.6024033427238464,
-        "iris": 0.0,
-        "gain": 30,
-        "shutter": 50,
-        "whitebalance": 4100,
-        "zoom": 0.0
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_6": {
-        "focus": 0.7042783498764038,
-        "iris": 0.0,
-        "gain": 8,
-        "shutter": 50,
-        "whitebalance": 4750,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.00699159,
-        "tilt": 0.5289706000000001,
-        "zoom_motor": 0.09413793,
-        "slide": 1.0
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_7": {
-        "focus": 0.6661601066589355,
-        "iris": 0.0,
-        "gain": 8,
-        "shutter": 50,
-        "whitebalance": 4750,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.3410013,
-        "tilt": 0.6810294,
-        "zoom_motor": 1.0,
-        "slide": 0.00700807
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_8": {
-        "focus": 0.7530394792556763,
-        "iris": 0.0,
-        "gain": 8,
-        "shutter": 50,
-        "whitebalance": 4750,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.9779922000000001,
-        "tilt": 0.6160294,
-        "zoom_motor": 1.0,
-        "slide": 1.0
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       },
       "preset_9": {
-        "focus": 0.5491638779640198,
-        "iris": 0.0,
-        "gain": 8,
-        "shutter": 50,
-        "whitebalance": 4750,
+        "focus": 0.8762012720108032,
+        "iris": 0.02467343956232071,
+        "gain": 0,
+        "shutter": 25,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.6230077,
-        "tilt": 0.8039706,
-        "zoom_motor": 0.58,
-        "slide": 0.36999180000000004
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
       }
     },
     "sequences": [
@@ -786,58 +798,149 @@
     "companion_page": 2,
     "presets": {
       "preset_1": {
-        "focus": 0.6942800879478455,
+        "focus": 0.697,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 25,
-        "whitebalance": 3700,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.3438416,
-        "tilt": 0.6687336,
-        "zoom_motor": 0.41,
-        "slide": 0.32
+        "pan": 0.5816624,
+        "tilt": 0.2124891,
+        "zoom_motor": 0.0,
+        "slide": 0.0,
+        "name": "drums"
       },
       "preset_2": {
-        "focus": 0.6942800879478455,
+        "focus": 0.7483806610107422,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 25,
-        "whitebalance": 3700,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.6590267,
-        "tilt": 0.6562445,
-        "zoom_motor": 0.41,
-        "slide": 0.32
+        "pan": 0.6647544000000001,
+        "tilt": 0.1749782,
+        "zoom_motor": 0.0,
+        "slide": 1.0
       },
       "preset_3": {
-        "focus": 0.6942800879478455,
+        "focus": 0.661,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 25,
-        "whitebalance": 3700,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.6246426,
-        "tilt": 0.3312664,
-        "zoom_motor": 0.41,
-        "slide": 0.32
+        "pan": 0.297993,
+        "tilt": 0.3687336,
+        "zoom_motor": 0.0,
+        "slide": 0.0,
+        "name": "keyboard"
       },
       "preset_4": {
-        "focus": 0.6942800879478455,
+        "focus": 0.6970602869987488,
         "iris": 0.0,
-        "gain": 0,
-        "shutter": 25,
-        "whitebalance": 3700,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
         "zoom": 0.0,
-        "pan": 0.3839534,
-        "tilt": 0.3312664,
-        "zoom_motor": 0.41,
-        "slide": 0.32
+        "pan": 0.4613178,
+        "tilt": 0.28126639999999997,
+        "zoom_motor": 0.0,
+        "slide": 1.0
+      },
+      "preset_5": {
+        "focus": 0.895,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.39827710000000005,
+        "tilt": 0.44375549999999997,
+        "zoom_motor": 1.0,
+        "slide": 0.0,
+        "name": "guitare bass"
+      },
+      "preset_6": {
+        "focus": 0.8351648449897766,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.4498534,
+        "tilt": 0.4687336,
+        "zoom_motor": 0.492931,
+        "slide": 0.51,
+        "name": "guitare basse 2"
+      },
+      "preset_7": {
+        "focus": 0.8211835622787476,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.3180536,
+        "tilt": 0.4250218,
+        "zoom_motor": 0.215,
+        "slide": 0.0,
+        "name": "keyboard + guitare"
+      },
+      "preset_8": {
+        "focus": 0.8850253820419312,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.2865285,
+        "tilt": 0.5687336,
+        "zoom_motor": 1.0,
+        "slide": 1.0,
+        "name": "chant"
+      },
+      "preset_9": {
+        "focus": 0.754,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.3209127,
+        "tilt": 0.48126640000000004,
+        "zoom_motor": 0.07103448,
+        "slide": 0.0,
+        "name": "keyboard guitare"
       }
     },
     "sequences": [
       {
         "name": "test",
         "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
           "1": {
             "preset": null,
             "position": 0.0
@@ -892,9 +995,2333 @@
           "6": {
             "preset": null,
             "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
           }
         },
         "duration": 30.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
+    "recall_scope": {
+      "focus": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
+      "slider": false
+    },
+    "crossfade_duration": 15.0
+  },
+  "camera_3": {
+    "url": "http://192.168.1.201",
+    "username": "koko",
+    "password": "Kok0kr3w",
+    "slider_ip": "",
+    "companion_page": 3,
+    "presets": {
+      "preset_1": {
+        "focus": 0.7547138929367065,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
+      },
+      "preset_2": {
+        "focus": 0.7547138929367065,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
+      },
+      "preset_3": {
+        "focus": 0.7547138929367065,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.0,
+        "tilt": 0.0,
+        "zoom_motor": 0.0,
+        "slide": 0.0
+      }
+    },
+    "sequences": [
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          },
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      }
+    ],
+    "recall_scope": {
+      "focus": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
+      "slider": false
+    },
+    "crossfade_duration": 2.0
+  },
+  "camera_4": {
+    "url": "http://192.168.1.204",
+    "username": "koko",
+    "password": "Kok0kr3w",
+    "slider_ip": "192.168.1.213",
+    "companion_page": 4,
+    "presets": {
+      "preset_1": {
+        "focus": 0.624,
+        "iris": 0.03203124925494194,
+        "gain": 0,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.5386787000000001,
+        "tilt": 0.2812222,
+        "zoom_motor": 0.0,
+        "slide": 0.0
+      },
+      "preset_2": {
+        "focus": 0.6239932179450989,
+        "iris": 0.03203124925494194,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.3323742,
+        "tilt": 0.2812222,
+        "zoom_motor": 0.0,
+        "slide": 1.0
+      },
+      "preset_4": {
+        "focus": 0.6239932179450989,
+        "iris": 0.03203124925494194,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.3323742,
+        "tilt": 0.24377780000000002,
+        "zoom_motor": 0.0,
+        "slide": 1.0
+      },
+      "preset_3": {
+        "focus": 0.6239932179450989,
+        "iris": 0.03203124925494194,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.3610373,
+        "tilt": 0.3562222,
+        "zoom_motor": 0.0,
+        "slide": 0.0
+      },
+      "preset_5": {
+        "focus": 0.7970608472824097,
+        "iris": 0.09531249850988388,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.6217722,
+        "tilt": 0.2562222,
+        "zoom_motor": 1.0,
+        "slide": 0.0
+      },
+      "preset_6": {
+        "focus": 0.7781665325164795,
+        "iris": 0.09531249850988388,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.23494910000000002,
+        "tilt": 0.325,
+        "zoom_motor": 1.0,
+        "slide": 1.0
+      }
+    },
+    "sequences": [
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
+          "1": {
+            "preset": null,
+            "position": 0.0
+          },
+          "2": {
+            "preset": null,
+            "position": 0.25
+          },
+          "3": {
+            "preset": null,
+            "position": 0.5
+          },
+          "4": {
+            "preset": null,
+            "position": 0.75
+          },
+          "5": {
+            "preset": null,
+            "position": 1.0
+          },
+          "6": {
+            "preset": null,
+            "position": 1.0
+          }
+        },
+        "duration": 5.0,
         "baked": false
       },
       {
@@ -1464,1765 +3891,7 @@
       "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 0.49999999999999933
-  },
-  "camera_3": {
-    "url": "http://192.168.1.201",
-    "username": "koko",
-    "password": "Kok0kr3w",
-    "slider_ip": "",
-    "companion_page": 3,
-    "presets": {},
-    "sequences": [
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      }
-    ],
-    "recall_scope": {
-      "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
-      "slider": false
-    },
-    "crossfade_duration": 2.0
-  },
-  "camera_4": {
-    "url": "http://192.168.1.204",
-    "username": "koko",
-    "password": "Kok0kr3w",
-    "slider_ip": "192.168.1.213",
-    "companion_page": 4,
-    "presets": {},
-    "sequences": [
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      }
-    ],
-    "recall_scope": {
-      "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
-      "slider": false
-    },
-    "crossfade_duration": 2.0
+    "crossfade_duration": 30.0
   },
   "camera_5": {
     "url": "http://192.168.1.205",
@@ -3230,7 +3899,133 @@
     "password": "Kok0kr3w",
     "slider_ip": "192.168.1.211",
     "companion_page": 5,
-    "presets": {},
+    "presets": {
+      "preset_1": {
+        "focus": 0.855150580406189,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.5444149,
+        "tilt": 0.5125,
+        "zoom_motor": 0.5860316999999999,
+        "slide": 0.0,
+        "name": "drums"
+      },
+      "preset_2": {
+        "focus": 0.8762618899345398,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.4985637,
+        "tilt": 0.5375,
+        "zoom_motor": 0.7439682999999999,
+        "slide": 1.0
+      },
+      "preset_3": {
+        "focus": 0.89519864320755,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.6103193,
+        "tilt": 0.5625,
+        "zoom_motor": 1.0,
+        "slide": 0.0,
+        "name": "keyboard"
+      },
+      "preset_4": {
+        "focus": 0.834,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.5042997,
+        "tilt": 0.5187609,
+        "zoom_motor": 0.395,
+        "slide": 1.0
+      },
+      "preset_5": {
+        "focus": 0.81,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.34957459999999996,
+        "tilt": 0.5,
+        "zoom_motor": 0.2619841,
+        "slide": 1.0,
+        "name": "guitare bass"
+      },
+      "preset_6": {
+        "focus": 0.8273380994796753,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.4097429,
+        "tilt": 0.5187609,
+        "zoom_motor": 0.45,
+        "slide": 0.0
+      },
+      "preset_7": {
+        "focus": 0.838,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.326649,
+        "tilt": 0.525,
+        "zoom_motor": 0.45,
+        "slide": 1.0,
+        "name": "chant guitare"
+      },
+      "preset_8": {
+        "focus": 0.895,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.33523919999999996,
+        "tilt": 0.55,
+        "zoom_motor": 1.0,
+        "slide": 1.0
+      },
+      "preset_9": {
+        "focus": 0.714,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.5071631,
+        "tilt": 0.4437391,
+        "zoom_motor": 0.0,
+        "slide": 0.0,
+        "name": "tout le monde"
+      },
+      "preset_10": {
+        "focus": 0.707,
+        "iris": 0.0,
+        "gain": -6,
+        "shutter": 50,
+        "whitebalance": 4400,
+        "zoom": 0.0,
+        "pan": 0.4183423,
+        "tilt": 0.43123910000000004,
+        "zoom_motor": 0.0,
+        "slide": 1.0
+      }
+    },
     "sequences": [
       {
         "name": "",
@@ -3258,7 +4053,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3313,7 +4115,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3368,7 +4177,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3423,7 +4239,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3478,7 +4301,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3533,7 +4363,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3588,7 +4425,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3643,7 +4487,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3698,7 +4549,14 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
+          }
+        },
+        "duration": 5.0,
+        "baked": false
+      },
+      {
+        "name": "",
+        "steps": {
           "1": {
             "preset": null,
             "position": 0.0
@@ -3753,30 +4611,6 @@
           "6": {
             "preset": null,
             "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
           }
         },
         "duration": 5.0,
@@ -3785,525 +4619,6 @@
       {
         "name": "",
         "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          }
-        },
-        "duration": 5.0,
-        "baked": false
-      },
-      {
-        "name": "",
-        "steps": {
-          "1": {
-            "preset": null,
-            "position": 0.0
-          },
-          "2": {
-            "preset": null,
-            "position": 0.25
-          },
-          "3": {
-            "preset": null,
-            "position": 0.5
-          },
-          "4": {
-            "preset": null,
-            "position": 0.75
-          },
-          "5": {
-            "preset": null,
-            "position": 1.0
-          },
-          "6": {
-            "preset": null,
-            "position": 1.0
-          },
           "1": {
             "preset": null,
             "position": 0.0
@@ -4335,13 +4650,13 @@
     ],
     "recall_scope": {
       "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
       "slider": false
     },
-    "crossfade_duration": 2.0
+    "crossfade_duration": 15.0
   },
   "camera_6": {
     "url": "",
@@ -4594,10 +4909,10 @@
     ],
     "recall_scope": {
       "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
       "slider": false
     },
     "crossfade_duration": 2.0
@@ -4853,10 +5168,10 @@
     ],
     "recall_scope": {
       "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
       "slider": false
     },
     "crossfade_duration": 2.0
@@ -5112,10 +5427,10 @@
     ],
     "recall_scope": {
       "focus": false,
-      "iris": false,
-      "gain": false,
-      "shutter": false,
-      "whitebalance": false,
+      "iris": true,
+      "gain": true,
+      "shutter": true,
+      "whitebalance": true,
       "slider": false
     },
     "crossfade_duration": 2.0

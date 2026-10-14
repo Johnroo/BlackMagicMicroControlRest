@@ -53,6 +53,7 @@ class SliderWebSocketClient:
         self.reconnect_attempts = 0
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
+        self._stopped = False  # empêche les callbacks après stop()
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         
@@ -74,27 +75,84 @@ class SliderWebSocketClient:
         if self.running:
             return
         
+        self._stopped = False
         self.running = True
         self.thread = threading.Thread(target=self._run_event_loop, daemon=True)
         self.thread.start()
     
     def stop(self):
-        """Arrête le client WebSocket."""
+        """Arrête le client WebSocket (non-bloquant pour le thread UI)."""
+        self._stopped = True
         self.running = False
-        if self.loop and self.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._close_websocket(), self.loop)
-        if self.thread:
-            self.thread.join(timeout=2)
+        self.auto_reconnect_enabled = False
+        self.connected = False
+        # Couper les callbacks pour éviter d'écraser un nouveau client
+        self.on_connection_status_callback = None
+        self.on_position_update_callback = None
+        loop = self.loop
+        thread = self.thread
+        self.thread = None
+        if loop and loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(self._close_websocket(), loop)
+                # Stopper la boucle rapidement (évite join 10s sur connect() bloqué)
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
+        # Ne jamais joindre longtemps depuis le thread UI — laisse le daemon mourir
+        if thread and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=0.2)
     
     def is_connected(self) -> bool:
-        """Vérifie si le WebSocket est connecté."""
-        return self.websocket is not None
+        """Vérifie si le WebSocket est connecté (WS ou HTTP fallback)."""
+        return bool(self.connected)
+    
+    def _notify_status(self, connected: bool, message: str):
+        """Notifie le statut uniquement si ce client est encore actif."""
+        if self._stopped:
+            return
+        cb = self.on_connection_status_callback
+        if not cb:
+            return
+        try:
+            cb(connected, message)
+        except Exception as e:
+            self.logger.error(f"Erreur dans on_connection_status_callback: {e}")
+    
+    async def _interruptible_sleep(self, delay: float):
+        """Sleep découpé pour pouvoir s'arrêter rapidement sur stop()."""
+        end = asyncio.get_event_loop().time() + max(0.0, delay)
+        while self.running and self.auto_reconnect_enabled:
+            remaining = end - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(0.25, remaining))
     
     def _run_event_loop(self):
         """Exécute la boucle d'événements asyncio dans un thread séparé."""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._connect_and_listen())
+        try:
+            self.loop.create_task(self._connect_and_listen())
+            self.loop.run_forever()
+        except Exception:
+            pass
+        finally:
+            try:
+                pending = asyncio.all_tasks(self.loop)
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    self.loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception:
+                pass
+            try:
+                self.loop.close()
+            except Exception:
+                pass
+            self.loop = None
     
     async def _close_websocket(self):
         """Ferme la connexion WebSocket."""
@@ -111,25 +169,20 @@ class SliderWebSocketClient:
         if not self.is_configured():
             return
         
-        # Notifier qu'on essaie de se connecter
-        if self.on_connection_status_callback:
-            try:
-                self.on_connection_status_callback(False, "Tentative de connexion au slider...")
-            except Exception:
-                pass
-        
-        while self.running and self.auto_reconnect_enabled:
+        while self.running and self.auto_reconnect_enabled and not self._stopped:
             try:
                 self.logger.info(f"Tentative de connexion WebSocket slider à {self.ws_url}")
                 
-                # Connexion WebSocket (pas d'authentification nécessaire pour le slider)
+                # WiFi ESP souvent lent (RTT 100–400ms) : ping tolérant, connect court
                 websocket = await asyncio.wait_for(
                     websockets.connect(
                         self.ws_url,
-                        ping_interval=30,  # Ping toutes les 30 secondes
-                        ping_timeout=10   # Timeout de 10 secondes
+                        ping_interval=45,
+                        ping_timeout=25,
+                        close_timeout=2,
+                        open_timeout=4,
                     ),
-                    timeout=10.0
+                    timeout=5.0
                 )
                 
                 async with websocket:
@@ -138,28 +191,22 @@ class SliderWebSocketClient:
                     self.reconnect_attempts = 0
                     self.logger.info(f"✓ WebSocket slider connecté avec succès à {self.ws_url}")
                     
-                    # Notifier la connexion réussie
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(True, "WebSocket slider connecté")
-                        except Exception as e:
-                            self.logger.error(f"Erreur dans on_connection_status_callback: {e}")
+                    self._notify_status(True, "WebSocket slider connecté")
                     
                     # Écouter les messages
                     self.logger.info("En attente de messages WebSocket slider...")
                     
                     try:
                         async for message in websocket:
-                            if not self.running:
+                            if not self.running or self._stopped:
                                 break
                             await self._handle_message(message)
-                    except websockets.exceptions.ConnectionClosed as e:
+                    except websockets.exceptions.ConnectionClosed:
                         raise
 
             except (websockets.exceptions.InvalidStatus, websockets.exceptions.InvalidStatusCode) as e:
                 # Souvent HTTP 200 = le firmware sert une page au lieu d'upgrader le WS.
-                # Fallback: polling HTTP /api/status tant que le WS ne marche pas.
-                if self.running and self.auto_reconnect_enabled:
+                if self.running and self.auto_reconnect_enabled and not self._stopped:
                     self.websocket = None
                     self.logger.warning(
                         f"WebSocket slider rejeté par {self.ws_url}: {e} — "
@@ -170,77 +217,45 @@ class SliderWebSocketClient:
                     break
                         
             except websockets.exceptions.InvalidURI as e:
-                if self.running and self.auto_reconnect_enabled:
+                if self.running and self.auto_reconnect_enabled and not self._stopped:
                     self.logger.error(f"URL WebSocket invalide: {e}")
                     self.logger.error(f"URL utilisée: {self.ws_url}")
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(False, f"URL WebSocket invalide: {e}")
-                        except Exception:
-                            pass
-                    await asyncio.sleep(self.reconnect_delay)
+                    self._notify_status(False, f"URL WebSocket invalide: {e}")
+                    await self._interruptible_sleep(self.reconnect_delay)
                 else:
-                    if not self.auto_reconnect_enabled:
-                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
-                        break
-            except asyncio.TimeoutError:
-                if self.running and self.auto_reconnect_enabled:
-                    self.reconnect_attempts += 1
-                    delay = min(
-                        self.reconnect_delay * (2 ** min(self.reconnect_attempts - 1, 4)),
-                        self.max_reconnect_delay,
+                    break
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed, OSError, Exception) as e:
+                if not (self.running and self.auto_reconnect_enabled and not self._stopped):
+                    break
+                self.reconnect_attempts += 1
+                self.websocket = None
+                self.connected = False
+                err_s = str(e)
+                is_timeout = isinstance(e, asyncio.TimeoutError)
+                # Après 2 échecs (ping keepalive, HTTP invalide, timeout…) → HTTP fallback
+                # évite de saturer l'ESP / le thread UI en boucle WS.
+                if self.reconnect_attempts >= 2:
+                    self.logger.warning(
+                        f"WebSocket slider {self.ws_url} instable ({e}) — "
+                        f"bascule en polling HTTP"
                     )
-                    self.logger.warning(f"Timeout lors de la connexion WebSocket à {self.ws_url}, retry dans {delay}s")
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(False, "Timeout de connexion")
-                        except Exception:
-                            pass
-                    await asyncio.sleep(delay)
-                else:
-                    if not self.auto_reconnect_enabled:
-                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
-                        break
-            except websockets.exceptions.ConnectionClosed as e:
-                if self.running and self.auto_reconnect_enabled:
-                    self.reconnect_attempts += 1
-                    delay = min(
-                        self.reconnect_delay * (2 ** min(self.reconnect_attempts - 1, 4)),
-                        self.max_reconnect_delay,
+                    self._notify_status(False, f"WS instable, fallback HTTP")
+                    await self._http_poll_loop()
+                    self.reconnect_attempts = 0
+                    continue
+                delay = min(
+                    self.reconnect_delay * (2 ** min(self.reconnect_attempts - 1, 3)),
+                    self.max_reconnect_delay,
+                )
+                if is_timeout:
+                    self.logger.warning(
+                        f"Timeout connexion WebSocket {self.ws_url}, retry dans {delay}s"
                     )
-                    self.logger.warning(f"WebSocket slider fermé: {e}")
-                    self.websocket = None
-                    self.connected = False
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(False, f"Connexion fermée: {e}")
-                        except Exception:
-                            pass
-                    await asyncio.sleep(delay)
+                    self._notify_status(False, "Timeout de connexion")
                 else:
-                    if not self.auto_reconnect_enabled:
-                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
-                        break
-            except Exception as e:
-                if self.running and self.auto_reconnect_enabled:
-                    self.reconnect_attempts += 1
-                    delay = min(
-                        self.reconnect_delay * (2 ** min(self.reconnect_attempts - 1, 4)),
-                        self.max_reconnect_delay,
-                    )
-                    self.logger.error(f"Erreur WebSocket slider: {e}")
-                    self.websocket = None
-                    self.connected = False
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(False, f"Erreur: {e}")
-                        except Exception:
-                            pass
-                    await asyncio.sleep(delay)
-                else:
-                    if not self.auto_reconnect_enabled:
-                        self.logger.info("Reconnexion automatique désactivée, arrêt des tentatives")
-                        break
+                    self.logger.warning(f"WebSocket slider erreur: {err_s}")
+                    self._notify_status(False, f"Erreur: {e}")
+                await self._interruptible_sleep(delay)
     
     async def _http_poll_loop(self):
         """Fallback positions via HTTP quand le WebSocket est indisponible."""
@@ -249,7 +264,7 @@ class SliderWebSocketClient:
         last_ws_try = 0.0
         announced = False
 
-        while self.running and self.auto_reconnect_enabled:
+        while self.running and self.auto_reconnect_enabled and not self._stopped:
             loop_time = asyncio.get_event_loop().time()
             # Retenter le WebSocket de temps en temps
             if loop_time - last_ws_try >= ws_retry_every:
@@ -277,6 +292,8 @@ class SliderWebSocketClient:
             ok = await asyncio.get_event_loop().run_in_executor(
                 None, self._poll_http_status_once
             )
+            if self._stopped or not self.running:
+                break
             if ok:
                 if not self.connected or not announced:
                     self.connected = True
@@ -285,29 +302,17 @@ class SliderWebSocketClient:
                         f"✓ Slider {self.slider_ip} joignable via HTTP "
                         f"(fallback, WS indisponible)"
                     )
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(
-                                True, "Slider connecté (HTTP fallback)"
-                            )
-                        except Exception:
-                            pass
+                    self._notify_status(True, "Slider connecté (HTTP fallback)")
             else:
                 if self.connected:
                     self.connected = False
                     announced = False
-                    if self.on_connection_status_callback:
-                        try:
-                            self.on_connection_status_callback(
-                                False, "Slider HTTP offline"
-                            )
-                        except Exception:
-                            pass
-            await asyncio.sleep(poll_interval)
+                    self._notify_status(False, "Slider HTTP offline")
+            await self._interruptible_sleep(poll_interval)
 
     def _poll_http_status_once(self) -> bool:
         """Lit /api/v1/status ou /api/status et pousse un update positions. Retourne True si OK."""
-        if not self.slider_ip:
+        if not self.slider_ip or self._stopped:
             return False
         for path in ("/api/v1/status", "/api/status"):
             try:
@@ -335,6 +340,8 @@ class SliderWebSocketClient:
                     "zoom": {"steps": motors.get("zoom", 0), "normalized": norm("zoom")},
                     "slide": {"steps": motors.get("slide", 0), "normalized": norm("slide")},
                 }
+                if self._stopped:
+                    return False
                 if self.on_position_update_callback:
                     try:
                         self.on_position_update_callback(data)
@@ -347,6 +354,8 @@ class SliderWebSocketClient:
 
     async def _handle_message(self, message: str):
         """Traite un message reçu du WebSocket."""
+        if self._stopped:
+            return
         try:
             data = json.loads(message)
             
@@ -368,11 +377,3 @@ class SliderWebSocketClient:
             self.logger.warning(f"Message JSON invalide reçu: {e}")
         except Exception as e:
             self.logger.error(f"Erreur lors du traitement du message WebSocket: {e}")
-
-
-
-
-
-
-
-

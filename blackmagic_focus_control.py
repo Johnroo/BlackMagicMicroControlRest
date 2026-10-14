@@ -668,6 +668,10 @@ class BlackmagicFocusController:
         self.session = requests.Session()
         self.session.auth = self.auth
         self.session.verify = False
+        # Session requests non thread-safe — sérialiser GET/PUT focus et autres
+        self._http_lock = threading.Lock()
+        # Lock dédié aux PUT focus ramp (ne pas bloquer derrière un GET long)
+        self._focus_write_lock = threading.Lock()
         
         # Désactiver les avertissements SSL
         import urllib3
@@ -696,18 +700,19 @@ class BlackmagicFocusController:
                 print(f"[DEBUG] GET {self.focus_endpoint}")
                 print(f"[DEBUG] Auth: {self.auth[0]}:{self.auth[1]}")
             
-            response = self.session.get(
-                self.focus_endpoint,
-                timeout=10,
-                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
-            )
-            
-            if self.debug:
-                print(f"[DEBUG] Status: {response.status_code}")
-                print(f"[DEBUG] Response: {response.text}")
-            
-            response.raise_for_status()
-            data = response.json()
+            with self._http_lock:
+                response = self.session.get(
+                    self.focus_endpoint,
+                    timeout=10,
+                    headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+                )
+                
+                if self.debug:
+                    print(f"[DEBUG] Status: {response.status_code}")
+                    print(f"[DEBUG] Response: {response.text}")
+                
+                response.raise_for_status()
+                data = response.json()
             self.current_value = data.get("normalised")
             
             # Retourner un dictionnaire avec normalised et focusDistance
@@ -823,13 +828,14 @@ class BlackmagicFocusController:
                 print(f"Response: {e.response.text}")
             return False
     
-    def set_focus(self, value: float, silent: bool = False) -> bool:
+    def set_focus(self, value: float, silent: bool = False, timeout: float = 10.0) -> bool:
         """
         Définit la valeur du focus.
         
         Args:
             value: Valeur normalisée du focus (0.0 à 1.0)
             silent: Si True, n'affiche pas de message de confirmation
+            timeout: Timeout HTTP en secondes (court recommandé pour les ramps)
             
         Returns:
             True si la mise à jour a réussi, False sinon
@@ -837,6 +843,10 @@ class BlackmagicFocusController:
         if not 0.0 <= value <= 1.0:
             print(f"Erreur: La valeur doit être entre 0.0 et 1.0, reçu: {value}")
             return False
+
+        # Ramp / streaming: PUT direct sans Retry de la session (sinon 1 PUT = plusieurs secondes)
+        if timeout <= 1.0:
+            return self._set_focus_fast(value, silent=silent, timeout=timeout)
             
         try:
             payload = {"normalised": value}
@@ -846,18 +856,19 @@ class BlackmagicFocusController:
                 print(f"[DEBUG] Payload: {payload}")
                 print(f"[DEBUG] Auth: {self.auth[0]}:{self.auth[1]}")
             
-            response = self.session.put(
-                self.focus_endpoint,
-                json=payload,
-                timeout=10,
-                headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
-            )
-            
-            if self.debug:
-                print(f"[DEBUG] Status: {response.status_code}")
-                print(f"[DEBUG] Response: {response.text}")
-            
-            response.raise_for_status()
+            with self._http_lock:
+                response = self.session.put(
+                    self.focus_endpoint,
+                    json=payload,
+                    timeout=timeout,
+                    headers={'Accept': 'application/json', 'Content-Type': 'application/json'}
+                )
+                
+                if self.debug:
+                    print(f"[DEBUG] Status: {response.status_code}")
+                    print(f"[DEBUG] Response: {response.text}")
+                
+                response.raise_for_status()
             self.target_value = value
             if not silent:
                 print(f"Focus mis à jour avec succès: {value}")
@@ -874,6 +885,27 @@ class BlackmagicFocusController:
             if hasattr(e, 'response') and e.response is not None:
                 print(f"Status code: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
+            return False
+
+    def _set_focus_fast(self, value: float, silent: bool = False, timeout: float = 0.25) -> bool:
+        """PUT focus rapide pour ramps: pas de retry session, lock dédié, timeout court."""
+        payload = {"normalised": value}
+        try:
+            with self._focus_write_lock:
+                response = requests.put(
+                    self.focus_endpoint,
+                    json=payload,
+                    auth=self.auth,
+                    timeout=timeout,
+                    verify=False,
+                    headers={'Accept': 'application/json', 'Content-Type': 'application/json'},
+                )
+                response.raise_for_status()
+            self.target_value = value
+            return True
+        except Exception:
+            if not silent and self.debug:
+                print(f"[DEBUG] set_focus_fast failed for {value}")
             return False
     
     def set_focus_distance(self, focus_distance_cm: int, silent: bool = False) -> bool:

@@ -372,12 +372,17 @@ class AtemController:
     def get_program_camera_id(self):
         """
         Lit le bus Program (ME1) de l'ATEM et retourne l'ID caméra (1-8), ou None.
+        Non-bloquant: si le lock est pris (reconnect), retourne None immédiatement.
         """
         if not self.connected or not self.atem:
             return None
         try:
-            with self.lock:
+            if not self.lock.acquire(blocking=False):
+                return None
+            try:
                 source = self.atem.programInput[0].videoSource
+            finally:
+                self.lock.release()
             return self._video_source_to_camera_id(source)
         except Exception as e:
             logger.debug(f"Impossible de lire le Program ATEM: {e}")
@@ -386,12 +391,17 @@ class AtemController:
     def get_preview_camera_id(self):
         """
         Lit le bus Preview (ME1) de l'ATEM et retourne l'ID caméra (1-8), ou None.
+        Non-bloquant: si le lock est pris (reconnect), retourne None immédiatement.
         """
         if not self.connected or not self.atem:
             return None
         try:
-            with self.lock:
+            if not self.lock.acquire(blocking=False):
+                return None
+            try:
                 source = self.atem.previewInput[0].videoSource
+            finally:
+                self.lock.release()
             return self._video_source_to_camera_id(source)
         except Exception as e:
             logger.debug(f"Impossible de lire le Preview ATEM: {e}")

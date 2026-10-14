@@ -11,6 +11,7 @@ import time
 import json
 import os
 import math
+import threading
 from functools import partial
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QSizePolicy, QDoubleSpinBox, QStackedWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QCheckBox,
     QComboBox, QScrollArea, QGroupBox, QSpinBox, QInputDialog, QFrame,
-    QButtonGroup
+    QButtonGroup, QProgressBar
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QEvent, QRect
 from PySide6.QtGui import QResizeEvent, QKeyEvent, QPainter, QPen, QBrush, QColor, QMouseEvent, QDoubleValidator
@@ -682,6 +683,22 @@ class CameraData:
     
     # Crossfade duration - durée du crossfade entre presets en secondes
     crossfade_duration: float = 2.0  # Durée du crossfade en secondes (défaut: 2.0)
+
+    # Ramp focus (recall fluide, non bloquant)
+    focus_ramp_active: bool = False
+    focus_ramp_start: float = 0.0
+    focus_ramp_end: float = 0.0
+    focus_ramp_start_ms: float = 0.0
+    focus_ramp_duration_s: float = 2.0
+    focus_ramp_pending: Optional[float] = None
+    focus_ramp_sending: bool = False
+    focus_ramp_last_sent: Optional[float] = None
+    focus_ramp_generation: int = 0  # invalide les anciens threads ramp
+    # Jauge temporelle WS5 (recall en cours)
+    recall_progress_active: bool = False
+    recall_progress_preset: Optional[int] = None
+    recall_progress_start_ms: float = 0.0
+    recall_progress_duration_s: float = 0.0
     
     # Throttling pour les autres paramètres
     last_iris_send_time: int = 0
@@ -721,6 +738,8 @@ class CameraSignals(QObject):
     whitebalance_changed = Signal(int)
     tint_changed = Signal(int)
     websocket_status = Signal(bool, str)
+    # Probe HTTP auto-connect terminé (depuis thread background)
+    auto_connect_probe_done = Signal(dict)
 
 
 class ConnectionDialog(QDialog):
@@ -1232,6 +1251,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.signals = CameraSignals()
+        self.signals.auto_connect_probe_done.connect(self._on_auto_connect_probe_done)
         
         # StateStore pour Companion
         self.state_store = StateStore()
@@ -1290,13 +1310,25 @@ class MainWindow(QMainWindow):
         self.keyboard_focus_queue = []
         self.keyboard_focus_processing = False
         
-        # Transition progressive entre presets
+        # Transition progressive entre presets (timer global multi-cams)
         self.smooth_preset_transition = True  # Activé par défaut
         self.preset_transition_timer = None
         self.preset_transition_start_time = None
         self.preset_transition_start_values = {}
         self.preset_transition_target_values = {}
+        self.focus_ramp_timer = QTimer()
+        self.focus_ramp_timer.timeout.connect(self._tick_all_focus_ramps)
+        self._focus_ramp_locks: Dict[int, threading.Lock] = {}
         
+        # Recall scope GLOBAL (True = exclu du recall) — partagé par toutes les cams / WS5
+        self.global_recall_scope: Dict[str, bool] = {
+            'focus': False,
+            'iris': False,
+            'gain': False,
+            'shutter': False,
+            'whitebalance': False,
+            'slider': False,
+        }
         # Recall scope checkboxes (initialisé dans create_presets_panel)
         self.recall_scope_checkboxes = {}
         
@@ -1545,6 +1577,23 @@ class MainWindow(QMainWindow):
             # Initialiser l'ATEM Controller si IP configurée
             if self.atem_config["ip"]:
                 self.init_atem_controller()
+
+            # Recall scope GLOBAL (préférence settings, sinon migration depuis camera_1)
+            default_recall_scope = {
+                'focus': False,
+                'iris': False,
+                'gain': False,
+                'shutter': False,
+                'whitebalance': False,
+                'slider': False,
+            }
+            global_scope = dict(global_config.get("recall_scope") or {})
+            if not global_scope and "camera_1" in config:
+                global_scope = dict(config["camera_1"].get("recall_scope") or {})
+            for param in default_recall_scope:
+                if param not in global_scope:
+                    global_scope[param] = default_recall_scope[param]
+            self.global_recall_scope = global_scope
             
             # Initialiser les 8 caméras
             for i in range(1, 9):
@@ -1559,20 +1608,8 @@ class MainWindow(QMainWindow):
                     if "sequences" not in cam_config:
                         cam_config["sequences"] = []
                     
-                    # Charger recall_scope avec valeurs par défaut si absent
-                    default_recall_scope = {
-                        'focus': False,
-                        'iris': False,
-                        'gain': False,
-                        'shutter': False,
-                        'whitebalance': False,
-                        'slider': False
-                    }
-                    recall_scope = cam_config.get("recall_scope", default_recall_scope)
-                    # S'assurer que tous les paramètres sont présents (migration automatique)
-                    for param in ['focus', 'iris', 'gain', 'shutter', 'whitebalance', 'slider']:
-                        if param not in recall_scope:
-                            recall_scope[param] = False
+                    # Scope global partagé (copie) pour compat / affichage
+                    recall_scope = dict(self.global_recall_scope)
                     
                     # Charger crossfade_duration avec valeur par défaut si absent
                     crossfade_duration = cam_config.get("crossfade_duration", 2.0)
@@ -1612,17 +1649,22 @@ class MainWindow(QMainWindow):
                     # sequences_column_widths est maintenant global, pas par caméra
                     self.cameras[i] = cam_data
                 else:
-                    # Créer une caméra vide
-                    self.cameras[i] = CameraData()
+                    # Créer une caméra vide avec le scope global
+                    self.cameras[i] = CameraData(recall_scope=dict(self.global_recall_scope))
             
             # Définir la caméra active
             self.active_camera_id = config.get("active_camera", 1)
+            logger.info(f"Recall scope GLOBAL chargé: {self.global_recall_scope}")
             
         except Exception as e:
             logger.error(f"Erreur lors du chargement de la configuration: {e}")
             # Initialiser avec des valeurs par défaut
+            self.global_recall_scope = {
+                'focus': False, 'iris': False, 'gain': False,
+                'shutter': False, 'whitebalance': False, 'slider': False,
+            }
             for i in range(1, 9):
-                self.cameras[i] = CameraData()
+                self.cameras[i] = CameraData(recall_scope=dict(self.global_recall_scope))
             self.active_camera_id = 1
     
     def save_cameras_config(self):
@@ -1657,6 +1699,11 @@ class MainWindow(QMainWindow):
                 "ip": self.atem_config.get("ip", ""),
                 "aux_output": self.atem_config.get("aux_output", 2)
                 }
+            # Recall scope global (True = exclu du recall)
+            global_config["recall_scope"] = dict(getattr(self, "global_recall_scope", {
+                'focus': False, 'iris': False, 'gain': False,
+                'shutter': False, 'whitebalance': False, 'slider': False,
+            }))
             
             config = {
                 "global": global_config,
@@ -1665,6 +1712,8 @@ class MainWindow(QMainWindow):
             
             for i in range(1, 9):
                 cam_data = self.cameras[i]
+                # Garder une copie synchronisée par caméra (rétrocompat)
+                cam_data.recall_scope = dict(global_config["recall_scope"])
                 config[f"camera_{i}"] = {
                     "url": cam_data.url,
                     "username": cam_data.username,
@@ -7907,51 +7956,15 @@ class MainWindow(QMainWindow):
                         pass
     
     def _start_focus_transition(self, start_value: float, end_value: float, cam_data: 'CameraData'):
-        """Démarre une transition progressive du focus sur 3 secondes."""
-        self.focus_transition_start = start_value
-        self.focus_transition_end = end_value
-        self.focus_transition_start_time = time.time()
-        
-        # Créer le timer s'il n'existe pas
-        if self.focus_transition_timer is None:
-            self.focus_transition_timer = QTimer()
-            self.focus_transition_timer.timeout.connect(self._update_focus_transition)
-        
-        # Mettre à jour toutes les 50ms pour une transition fluide
-        self.focus_transition_timer.start(50)
-    
-    def _update_focus_transition(self):
-        """Met à jour le focus pendant la transition."""
-        if (self.focus_transition_start is None or 
-            self.focus_transition_end is None or 
-            self.focus_transition_start_time is None):
-            if self.focus_transition_timer:
-                self.focus_transition_timer.stop()
-            return
-        
-        # Récupérer la caméra active
-        cam_data = self.get_active_camera_data()
-        if not cam_data or not cam_data.controller:
-            if self.focus_transition_timer:
-                self.focus_transition_timer.stop()
-            return
-        
-        elapsed = time.time() - self.focus_transition_start_time
-        progress = min(elapsed / self.focus_transition_duration, 1.0)
-        
-        # Interpolation linéaire
-        current_focus = self.focus_transition_start + (self.focus_transition_end - self.focus_transition_start) * progress
-        
-        # Appliquer le focus
-        cam_data.controller.set_focus(current_focus, silent=True)
-        cam_data.focus_sent_value = current_focus
-        self._update_focus_ui(current_focus)
-        
-        # Arrêter la transition si terminée
-        if progress >= 1.0:
-            if self.focus_transition_timer:
-                self.focus_transition_timer.stop()
-            logger.info(f"Transition de focus terminée : {self.focus_transition_end:.3f}")
+        """Démarre une transition progressive du focus (séquences) via ramp async."""
+        # Retrouver l'id caméra
+        camera_id = self.active_camera_id
+        for cid, data in self.cameras.items():
+            if data is cam_data:
+                camera_id = cid
+                break
+        duration = getattr(self, 'focus_transition_duration', 3.0)
+        self._start_camera_focus_ramp(camera_id, start_value, end_value, duration)
     
     def _update_focus_ui(self, focus_value: float):
         """Met à jour l'UI du focus."""
@@ -8226,10 +8239,14 @@ class MainWindow(QMainWindow):
         
         # Section Recall Scope
         layout.addSpacing(self._scale_value(20))
-        recall_scope_label = QLabel("Recall Scope")
+        recall_scope_label = QLabel("Exclude from Recall (global)")
         recall_scope_label.setAlignment(Qt.AlignCenter)
         recall_scope_label.setStyleSheet(f"font-size: {self._scale_font(14)}; font-weight: bold; color: #fff; margin-top: {self._scale_value(10)}px;")
         layout.addWidget(recall_scope_label)
+        recall_scope_hint = QLabel("☑ = ne pas rappeler ce paramètre")
+        recall_scope_hint.setAlignment(Qt.AlignCenter)
+        recall_scope_hint.setStyleSheet(f"font-size: {self._scale_font(10)}; color: #888;")
+        layout.addWidget(recall_scope_hint)
         
         # Conteneur pour les checkboxes
         recall_scope_container = QVBoxLayout()
@@ -8627,21 +8644,17 @@ class MainWindow(QMainWindow):
             username = cam_data.username if cam_data.username else default_username
             password = cam_data.password if cam_data.password else default_password
             
-            # Ne pas vérifier cam_data.connected ici car cela peut être False même si la connexion est en cours
-            # Échelonner les tentatives de connexion (2 secondes entre chaque caméra)
-            # pour éviter de surcharger le réseau et donner plus de temps à chaque caméra
-            delay_ms = 2000 * camera_count  # 0ms pour première caméra, 2000ms pour suivante, etc.
-            camera_count += 1
-            # Utiliser functools.partial ou une fonction wrapper pour capturer correctement camera_id
+            # Toutes les cams en parallèle (probe HTTP en threads background)
             def make_connect_func(cam_id, user, pwd):
                 return lambda: self._try_auto_connect(cam_id, attempt=0, max_attempts=5, username=user, password=pwd)
-            QTimer.singleShot(delay_ms, make_connect_func(camera_id, username, password))
-            logger.info(f"Connexion automatique programmée pour caméra {camera_id} dans {delay_ms/1000:.1f}s (user: {username})")
+            QTimer.singleShot(0, make_connect_func(camera_id, username, password))
+            camera_count += 1
+            logger.info(f"Connexion automatique parallèle programmée pour caméra {camera_id} (user: {username})")
+        logger.info(f"Connexion automatique: {camera_count} caméra(s) lancée(s) en parallèle")
     
     def _try_auto_connect(self, camera_id: int = None, attempt: int = 0, max_attempts: int = 5, username: str = None, password: str = None):
-        """Tente une connexion automatique sans bloquer l'UI avec plusieurs tentatives."""
+        """Lance un probe HTTP en thread (non bloquant) puis connecte si OK."""
         try:
-            # Utiliser la caméra active si camera_id n'est pas spécifié (rétrocompatibilité)
             if camera_id is None:
                 camera_id = self.active_camera_id
             
@@ -8650,106 +8663,155 @@ class MainWindow(QMainWindow):
                 logger.debug(f"Caméra {camera_id} - URL manquante, connexion automatique ignorée")
                 return
             
-            # Vérifier si la reconnexion automatique est activée
             if not getattr(cam_data, 'auto_reconnect_enabled', True):
                 logger.info(f"Caméra {camera_id} - Reconnexion automatique désactivée, connexion automatique ignorée")
                 return
             
-            # Utiliser les credentials fournis en paramètre, ou ceux de cam_data, ou les valeurs par défaut
             default_username = "roo"
             default_password = "koko"
             effective_username = username if username is not None else (cam_data.username if cam_data.username else default_username)
             effective_password = password if password is not None else (cam_data.password if cam_data.password else default_password)
             
-            # Si déjà connecté, ne pas réessayer
             if cam_data.connected:
                 logger.info(f"Caméra {camera_id} - Déjà connectée, connexion automatique ignorée")
                 return
             
-            # Si un contrôleur existe déjà (connexion en cours), ne pas réessayer immédiatement
             if cam_data.controller is not None:
                 logger.debug(f"Caméra {camera_id} - Contrôleur existe déjà, connexion peut être en cours")
-                # Attendre un peu et vérifier à nouveau
                 if attempt == 0:
-                    QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, 1, max_attempts))
+                    QTimer.singleShot(1500, partial(self._try_auto_connect, camera_id, 1, max_attempts, effective_username, effective_password))
                 return
             
-            import requests
-            from requests.auth import HTTPBasicAuth
-            import socket
-            from urllib.parse import urlparse
-            
-            # Résoudre le hostname .local en IP si nécessaire (pour améliorer la stabilité)
             test_url = normalize_camera_base_url(cam_data.url)
-            try:
-                parsed = urlparse(test_url)
-                hostname = parsed.hostname
-                if hostname and hostname.endswith('.local'):
-                    # Essayer de résoudre le .local en IP
-                    try:
-                        addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-                        if addr_info:
-                            ip_address = addr_info[0][4][0]
-                            logger.info(f"Résolution DNS pour connexion auto: {hostname} -> {ip_address}")
-                            test_url = test_url.replace(hostname, ip_address)
-                    except (socket.gaierror, OSError) as e:
-                        logger.debug(f"Résolution DNS échouée pour {hostname}, utilisation du nom original: {e}")
-            except Exception as e:
-                logger.debug(f"Erreur lors de la résolution DNS: {e}, utilisation de l'URL originale")
+            timeout = 3.0 if attempt == 0 else 5.0
+            logger.info(
+                f"Caméra {camera_id} - Tentative {attempt + 1}/{max_attempts} "
+                f"(probe parallèle, timeout {timeout}s, user: {effective_username})"
+            )
             
-            # Timeout progressif : 5s pour la première tentative, 8s pour les suivantes
-            timeout = 5.0 if attempt == 0 else 8.0
-            
-            try:
-                test_endpoint = f"{test_url}/control/api/v1/lens/focus"
-                logger.info(f"Caméra {camera_id} - Tentative {attempt + 1}/{max_attempts} de connexion automatique à {test_endpoint} (timeout: {timeout}s, user: {effective_username})")
+            def worker(cam_id=camera_id, url=test_url, user=effective_username, pwd=effective_password,
+                       att=attempt, max_att=max_attempts, to=timeout):
+                import requests
+                from requests.auth import HTTPBasicAuth
+                import socket
+                from urllib.parse import urlparse
                 
-                response = requests.get(
-                    test_endpoint,
-                    auth=HTTPBasicAuth(effective_username, effective_password),
-                    timeout=timeout,
-                    verify=False  # Désactiver la vérification SSL pour les certificats auto-signés
-                )
-                
-                # Si la caméra répond, on peut lancer la connexion complète
-                if response.status_code == 200:
-                    logger.info(f"✓ Caméra {camera_id} accessible, connexion en cours...")
-                    self.connect_to_camera(camera_id, cam_data.url, effective_username, effective_password)
-                else:
-                    logger.info(f"Caméra {camera_id} - Réponse HTTP {response.status_code}, réessai dans 2s...")
-                    if attempt < max_attempts - 1:
-                        QTimer.singleShot(2000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
-                        
-            except requests.exceptions.Timeout:
-                logger.info(f"Caméra {camera_id} - Timeout après {timeout}s (tentative {attempt + 1}/{max_attempts})")
-                if attempt < max_attempts - 1:
-                    # Attendre 3 secondes avant la prochaine tentative (augmenté de 2s à 3s)
-                    QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
-                else:
-                    logger.warning(f"Caméra {camera_id} - Connexion automatique abandonnée après {max_attempts} tentatives (timeout)")
+                status = "error"
+                detail = ""
+                try:
+                    parsed = urlparse(url)
+                    hostname = parsed.hostname
+                    probe_url = url
+                    if hostname and hostname.endswith('.local'):
+                        try:
+                            addr_info = socket.getaddrinfo(
+                                hostname, None, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP
+                            )
+                            if addr_info:
+                                ip_address = addr_info[0][4][0]
+                                logger.info(f"Résolution DNS pour connexion auto: {hostname} -> {ip_address}")
+                                probe_url = url.replace(hostname, ip_address)
+                        except (socket.gaierror, OSError) as e:
+                            logger.debug(f"Résolution DNS échouée pour {hostname}: {e}")
                     
-            except (requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-                error_str = str(e).lower()
-                # Si c'est une erreur de résolution DNS, réessayer avec plus de patience
-                if 'nodename' in error_str or 'servname' in error_str or 'name resolution' in error_str:
-                    logger.info(f"Caméra {camera_id} - Résolution DNS en cours... (tentative {attempt + 1}/{max_attempts})")
-                    if attempt < max_attempts - 1:
-                        # Attendre plus longtemps pour la résolution DNS (6 secondes, augmenté de 5s)
-                        QTimer.singleShot(6000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                    endpoint = f"{probe_url}/control/api/v1/lens/focus"
+                    response = requests.get(
+                        endpoint,
+                        auth=HTTPBasicAuth(user, pwd),
+                        timeout=to,
+                        verify=False,
+                    )
+                    if response.status_code == 200:
+                        status = "ok"
                     else:
-                        logger.warning(f"Caméra {camera_id} - Résolution DNS échouée après {max_attempts} tentatives")
-                else:
-                    logger.info(f"Caméra {camera_id} - Erreur de connexion (tentative {attempt + 1}/{max_attempts}): {e}")
-                    if attempt < max_attempts - 1:
-                        QTimer.singleShot(3000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                        status = "http_error"
+                        detail = str(response.status_code)
+                except requests.exceptions.Timeout:
+                    status = "timeout"
+                except (requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+                    error_str = str(e).lower()
+                    if 'nodename' in error_str or 'servname' in error_str or 'name resolution' in error_str:
+                        status = "dns"
                     else:
-                        logger.warning(f"Caméra {camera_id} - Connexion automatique abandonnée après {max_attempts} tentatives")
-                        
+                        status = "conn"
+                        detail = str(e)
+                except Exception as e:
+                    status = "error"
+                    detail = str(e)
+                
+                self.signals.auto_connect_probe_done.emit({
+                    "camera_id": cam_id,
+                    "attempt": att,
+                    "max_attempts": max_att,
+                    "username": user,
+                    "password": pwd,
+                    "status": status,
+                    "detail": detail,
+                })
+            
+            threading.Thread(
+                target=worker,
+                daemon=True,
+                name=f"auto-connect-cam{camera_id}",
+            ).start()
         except Exception as e:
             logger.warning(f"Connexion automatique échouée pour caméra {camera_id} (non bloquant): {e}")
-            # Réessayer une fois de plus si on n'a pas atteint le maximum
             if attempt < max_attempts - 1:
-                QTimer.singleShot(4000, partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts))
+                QTimer.singleShot(
+                    2000,
+                    partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts, username, password),
+                )
+    
+    def _on_auto_connect_probe_done(self, result: dict):
+        """Callback UI thread après probe HTTP parallèle."""
+        camera_id = result.get("camera_id")
+        attempt = result.get("attempt", 0)
+        max_attempts = result.get("max_attempts", 5)
+        username = result.get("username")
+        password = result.get("password")
+        status = result.get("status")
+        detail = result.get("detail") or ""
+        
+        if camera_id is None or camera_id not in self.cameras:
+            return
+        cam_data = self.cameras[camera_id]
+        
+        if cam_data.connected or not getattr(cam_data, 'auto_reconnect_enabled', True):
+            return
+        
+        if status == "ok":
+            logger.info(f"✓ Caméra {camera_id} accessible, connexion en cours...")
+            self.connect_to_camera(camera_id, cam_data.url, username, password)
+            return
+        
+        if attempt >= max_attempts - 1:
+            logger.warning(
+                f"Caméra {camera_id} - Connexion automatique abandonnée après "
+                f"{max_attempts} tentatives ({status} {detail})".strip()
+            )
+            return
+        
+        retry_ms = {
+            "http_error": 1500,
+            "timeout": 2000,
+            "dns": 3000,
+            "conn": 2000,
+            "error": 2000,
+        }.get(status, 2000)
+        
+        if status == "http_error":
+            logger.info(f"Caméra {camera_id} - Réponse HTTP {detail}, réessai dans {retry_ms/1000:.1f}s...")
+        elif status == "timeout":
+            logger.info(f"Caméra {camera_id} - Timeout (tentative {attempt + 1}/{max_attempts})")
+        elif status == "dns":
+            logger.info(f"Caméra {camera_id} - Résolution DNS en cours... (tentative {attempt + 1}/{max_attempts})")
+        else:
+            logger.info(f"Caméra {camera_id} - Erreur de connexion ({status}): {detail}")
+        
+        QTimer.singleShot(
+            retry_ms,
+            partial(self._try_auto_connect, camera_id, attempt + 1, max_attempts, username, password),
+        )
     
     def connect_to_camera(self, camera_id: int, camera_url: str, username: str, password: str):
         """Se connecte à la caméra avec les paramètres fournis."""
@@ -8849,28 +8911,16 @@ class MainWindow(QMainWindow):
             # Démarrer le WebSocket du slider si configuré
             if cam_data.slider_ip:
                 try:
-                    # Créer un callback qui passe le camera_id
-                    def position_update_callback(data):
-                        self.on_slider_position_update(data, camera_id=camera_id)
-                    
-                    def connection_status_callback(connected: bool, message: str):
-                        """Callback pour le statut de connexion du slider."""
-                        cam_data.slider_connecting = False
-                        if cam_data.slider_websocket_client:
-                            cam_data.slider_websocket_client.connected = connected
-                        # Mettre à jour l'affichage du Workspace 4 si nécessaire
-                        if camera_id == self.active_camera_id and hasattr(self, 'workspace_4_slider_status_label'):
-                            QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
-                    
-                    slider_ws_client = SliderWebSocketClient(
-                        slider_ip=cam_data.slider_ip,
-                        on_position_update_callback=position_update_callback,
-                        on_connection_status_callback=connection_status_callback,
-                        auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
+                    # Arrêter un éventuel client précédent pour éviter les races de callback
+                    if cam_data.slider_websocket_client:
+                        try:
+                            cam_data.slider_websocket_client.stop()
+                        except Exception:
+                            pass
+                        cam_data.slider_websocket_client = None
+                    self._start_slider_websocket_client(
+                        camera_id, cam_data.slider_ip, connecting=True
                     )
-                    cam_data.slider_connecting = True
-                    slider_ws_client.start()
-                    cam_data.slider_websocket_client = slider_ws_client
                     logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
                     
                     # Envoyer un snapshot mis à jour après un court délai pour inclure les valeurs du slider
@@ -9553,6 +9603,11 @@ class MainWindow(QMainWindow):
                 value = float(data['normalised'])
                 # TOUJOURS mettre à jour les données de la caméra
                 cam_data.focus_actual_value = value
+                # Pendant ramp: UI bleu (actual) OK, mais pas StateStore (évite feedback Companion)
+                if cam_data.focus_ramp_active:
+                    if camera_id == self.active_camera_id:
+                        self.signals.focus_changed.emit(value)
+                    return
                 update_kwargs['focus'] = value
                 # Mettre à jour l'UI seulement si c'est la caméra active
                 if camera_id == self.active_camera_id:
@@ -9975,6 +10030,11 @@ class MainWindow(QMainWindow):
         
         self.focus_value_actual.setText(f"{value_rounded:.3f}")
         
+        # Pendant un ramp recall: ne pas réinjecter le readback dans le slider / LFO
+        # (évite hunting lecture↔écriture et thrash de update_lfo_sequence).
+        if cam_data is not None and cam_data.focus_ramp_active:
+            return
+        
         # Mettre à jour le slider avec la valeur socket (sauf si l'utilisateur le tient)
         if not self.focus_slider_user_touching:
             slider_value = int(value_rounded * 1000)
@@ -10098,6 +10158,9 @@ class MainWindow(QMainWindow):
             if camera_id == self.active_camera_id:
                 self.focus_actual_value = value
                 self.focus_value_actual.setText(f"{value:.3f}")
+                # Ne pas réinjecter readback pendant un ramp (slider/LFO)
+                if cam_data.focus_ramp_active:
+                    return
                 if not self.focus_slider_user_touching:
                     self.focus_slider.blockSignals(True)
                     self.focus_slider.setValue(int(round(value, 3) * 1000))
@@ -10849,19 +10912,20 @@ class MainWindow(QMainWindow):
                 else:
                     camera_values[param] = value
             
-            # Filtrer les paramètres caméra selon le recall scope (exclure ceux où recall_scope[param] == True)
+            # Scope GLOBAL (True = exclu). Appliqué à toutes les cams / WS5.
+            scope = getattr(self, "global_recall_scope", None) or cam_data.recall_scope
             filtered_camera_data = {
                 param: value for param, value in camera_values.items()
-                if param not in cam_data.recall_scope or not cam_data.recall_scope[param]
+                if not scope.get(param, False)
             }
+            if scope.get("gain", False) and "gain" in camera_values:
+                logger.info(
+                    f"Cam{target_camera_id} Preset {preset_number} - Gain exclu du recall (scope global)"
+                )
             
             # Filtrer les valeurs slider selon le recall scope
-            # Si recall_scope['slider'] == True, on n'envoie pas les valeurs slider
-            should_send_slider = (
-                slider_values and 
-                'slider' in cam_data.recall_scope and 
-                not cam_data.recall_scope['slider']
-            )
+            # Si scope['slider'] == True, on n'envoie pas les valeurs slider
+            should_send_slider = bool(slider_values) and not scope.get('slider', False)
             
             # NOUVEAU: Si LFO actif et preset contient des valeurs slider, recalculer la séquence LFO
             # (uniquement pour la caméra active — le LFO est lié à celle-ci)
@@ -10967,57 +11031,75 @@ class MainWindow(QMainWindow):
                     # 9. Empêcher l'envoi normal de move_axes() car la séquence LFO gère déjà le mouvement
                     should_send_slider = False
             
-            # Arrêter toute transition en cours (uniquement si on cible la cam active)
-            if is_active_camera and self.preset_transition_timer:
-                self.preset_transition_timer.stop()
-                self.preset_transition_timer = None
-            
-            # Transition progressive uniquement pour la caméra active
-            if is_active_camera and self.smooth_preset_transition:
+            # 1) Focus ramp + 2) slider move d'abord (en parallèle), puis le reste.
+            # Important: ne pas bloquer le thread UI avec iris/gain/move avant le ramp
+            # sinon le QTimer focus ne tick qu'après le mouvement → focus "à la fin".
+            if self.smooth_preset_transition and 'focus' in filtered_camera_data:
                 try:
-                    self._start_smooth_preset_transition(filtered_camera_data, preset_number, camera_id=target_camera_id)
+                    self._start_smooth_preset_transition(
+                        filtered_camera_data, preset_number, camera_id=target_camera_id
+                    )
                 except Exception as e:
                     logger.error(f"Erreur dans _start_smooth_preset_transition: {e}")
                     raise
             else:
-                # Appliquer les valeurs instantanément (toujours pour les cams non actives)
-                self._apply_preset_values_instant(filtered_camera_data, preset_number, camera_id=target_camera_id)
+                self._apply_preset_values_instant(
+                    filtered_camera_data, preset_number, camera_id=target_camera_id
+                )
             
-            # Envoyer les valeurs slider si nécessaire (slider de la caméra cible)
+            # Envoyer les valeurs slider en thread (ne pas bloquer le ramp focus)
             if should_send_slider:
                 slider_controller = self.slider_controllers.get(target_camera_id)
-                # Vérifier si le slider est configuré (IP non vide) même si is_configured() retourne False
                 slider_configured = slider_controller is not None and (
                     slider_controller.is_configured() or 
                     (hasattr(slider_controller, 'slider_ip') and slider_controller.slider_ip)
                 )
                 
                 if slider_configured:
-                    # Les valeurs pan/tilt dans les presets sont déjà en 0.0-1.0
                     pan = slider_values.get('pan')
                     tilt = slider_values.get('tilt')
-                    zoom = slider_values.get('zoom_motor')  # zoom_motor dans preset -> zoom dans API
+                    zoom = slider_values.get('zoom_motor')
                     slide = slider_values.get('slide')
-                    
-                    # Envoyer avec la durée de crossfade pour synchronisation
-                    try:
-                        slider_controller.move_axes(
-                            pan=pan,
-                            tilt=tilt,
-                            zoom=zoom,
-                            slide=slide,
-                            duration=cam_data.crossfade_duration,
-                            silent=True
-                        )
-                        logger.info(f"Cam{target_camera_id} Preset {preset_number} - Valeurs slider envoyées: pan={pan}, tilt={tilt}, zoom={zoom}, slide={slide}")
-                    except Exception as e:
-                        logger.error(f"Erreur lors de l'envoi des valeurs slider du preset {preset_number}: {e}")
+                    duration = cam_data.crossfade_duration
+                    preset_n = preset_number
+                    cam_id = target_camera_id
+
+                    def _send_slider_move(
+                        ctrl=slider_controller,
+                        p=pan, t=tilt, z=zoom, s=slide,
+                        dur=duration, cid=cam_id, pn=preset_n,
+                    ):
+                        try:
+                            ctrl.move_axes(
+                                pan=p, tilt=t, zoom=z, slide=s,
+                                duration=dur, silent=True,
+                            )
+                            logger.info(
+                                f"Cam{cid} Preset {pn} - Valeurs slider envoyées: "
+                                f"pan={p}, tilt={t}, zoom={z}, slide={s}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Erreur envoi slider preset {pn} cam{cid}: {e}"
+                            )
+
+                    threading.Thread(
+                        target=_send_slider_move,
+                        daemon=True,
+                        name=f"slider-recall-{target_camera_id}",
+                    ).start()
                 else:
-                    logger.warning(f"Cam{target_camera_id} Preset {preset_number} - Slider non configuré, valeurs slider ignorées")
+                    logger.warning(
+                        f"Cam{target_camera_id} Preset {preset_number} - "
+                        f"Slider non configuré, valeurs slider ignorées"
+                    )
             
-            # Feedback visuel Workspace 5
+            # Feedback visuel Workspace 5 + jauge temporelle
             self._flash_workspace_5_recall_button(target_camera_id, preset_number)
             self.update_workspace_5_preset_highlight(target_camera_id)
+            self._start_workspace_5_recall_progress(
+                target_camera_id, preset_number, cam_data.crossfade_duration
+            )
             
         except Exception as e:
             logger.error(f"Erreur lors du rappel du preset {preset_number}: {e}")
@@ -11082,110 +11164,240 @@ class MainWindow(QMainWindow):
         
         logger.info(f"Caméra {target_camera_id} - Preset {preset_number} rappelé instantanément")
     
+    @staticmethod
+    def _ease_focus_recall(t: float) -> float:
+        """Interpolation focus recall: linéaire (sync avec le move slider)."""
+        return max(0.0, min(1.0, t))
+
+    # UI tick seulement (jauge + jaune) — l'envoi focus est dans un thread dédié / cam
+    _FOCUS_RAMP_TICK_MS = 50
+    # Cadence d'envoi HTTP focus pendant un ramp (~20 Hz)
+    _FOCUS_RAMP_SEND_INTERVAL_S = 0.05
+
+    def _start_camera_focus_ramp(self, camera_id: int, start_value: float, end_value: float, duration_s: float):
+        """Démarre un ramp focus auto-cadencé (thread dédié, indépendant du thread UI)."""
+        cam_data = self.cameras.get(camera_id)
+        if not cam_data or not cam_data.controller:
+            return
+
+        start_value = max(0.0, min(1.0, float(start_value)))
+        end_value = max(0.0, min(1.0, float(end_value)))
+        duration_s = max(0.0, float(duration_s))
+
+        # Invalider tout ramp précédent sur cette cam
+        cam_data.focus_ramp_generation = int(cam_data.focus_ramp_generation) + 1
+        gen = cam_data.focus_ramp_generation
+
+        if duration_s <= 0.05 or abs(end_value - start_value) < 1e-4:
+            cam_data.focus_ramp_active = False
+            try:
+                cam_data.controller.set_focus(end_value, silent=True, timeout=0.35)
+            except Exception:
+                pass
+            cam_data.focus_sent_value = end_value
+            cam_data.focus_ramp_last_sent = end_value
+            if camera_id == self.active_camera_id:
+                self._update_focus_ui(end_value)
+                self.sync_lfo_distance_from_focus(end_value)
+                self._update_focus_distance_label(cam_data)
+            return
+
+        cam_data.focus_ramp_start = start_value
+        cam_data.focus_ramp_end = end_value
+        cam_data.focus_ramp_start_ms = time.time() * 1000.0
+        cam_data.focus_ramp_duration_s = duration_s
+        cam_data.focus_ramp_active = True
+        cam_data.focus_ramp_pending = None
+        cam_data.focus_ramp_last_sent = None
+        cam_data.focus_sent_value = start_value
+        cam_data.focus_ramp_sending = True
+
+        def ramp_driver(cid=camera_id, generation=gen, s0=start_value, s1=end_value, dur=duration_s):
+            """Horloge propre : envoie le focus pendant tout le move, même si l'UI lag."""
+            cam = self.cameras.get(cid)
+            if not cam or not cam.controller:
+                return
+            sent_ok = 0
+            sent_fail = 0
+            t0 = time.time()
+            try:
+                # Premier PUT immédiat (~5% du trajet) pour démarrer la lentille tout de suite
+                first = s0 + (s1 - s0) * 0.05
+                try:
+                    if cam.controller.set_focus(first, silent=True, timeout=0.35):
+                        sent_ok += 1
+                        cam.focus_ramp_last_sent = first
+                        cam.focus_sent_value = first
+                    else:
+                        sent_fail += 1
+                except Exception:
+                    sent_fail += 1
+
+                while True:
+                    if cam.focus_ramp_generation != generation:
+                        return  # nouveau recall → abandonner ce thread
+                    elapsed = time.time() - t0
+                    progress = 1.0 if dur <= 0 else min(elapsed / dur, 1.0)
+                    value = s0 + (s1 - s0) * self._ease_focus_recall(progress)
+                    try:
+                        ok = cam.controller.set_focus(value, silent=True, timeout=0.35)
+                        if ok:
+                            sent_ok += 1
+                            cam.focus_ramp_last_sent = value
+                            cam.focus_sent_value = value
+                        else:
+                            sent_fail += 1
+                    except Exception:
+                        sent_fail += 1
+
+                    if progress >= 1.0:
+                        break
+                    time.sleep(self._FOCUS_RAMP_SEND_INTERVAL_S)
+
+                # Garantir la valeur finale
+                if cam.focus_ramp_generation == generation:
+                    try:
+                        cam.controller.set_focus(s1, silent=True, timeout=0.5)
+                        cam.focus_sent_value = s1
+                        cam.focus_ramp_last_sent = s1
+                    except Exception:
+                        pass
+                    cam.focus_ramp_active = False
+                    cam.focus_ramp_sending = False
+                    logger.info(
+                        f"Caméra {cid} - Transition focus terminée ({s1:.3f}) "
+                        f"[ok={sent_ok} fail={sent_fail}]"
+                    )
+            except Exception as e:
+                logger.error(f"Caméra {cid} - ramp focus driver: {e}")
+                if cam.focus_ramp_generation == generation:
+                    cam.focus_ramp_active = False
+                    cam.focus_ramp_sending = False
+
+        threading.Thread(
+            target=ramp_driver,
+            daemon=True,
+            name=f"focus-ramp-drv-{camera_id}",
+        ).start()
+
+        if not self.focus_ramp_timer.isActive():
+            self.focus_ramp_timer.start(self._FOCUS_RAMP_TICK_MS)
+
+    def _tick_all_focus_ramps(self):
+        """UI seulement: jaune / slider / jauges WS5 (l'envoi HTTP est dans ramp_driver)."""
+        any_active = False
+        now_ms = time.time() * 1000.0
+
+        for camera_id, cam_data in self.cameras.items():
+            if not cam_data.focus_ramp_active:
+                continue
+            any_active = True
+
+            duration_ms = max(1.0, cam_data.focus_ramp_duration_s * 1000.0)
+            progress = min((now_ms - cam_data.focus_ramp_start_ms) / duration_ms, 1.0)
+            focus_current = (
+                cam_data.focus_ramp_start
+                + (cam_data.focus_ramp_end - cam_data.focus_ramp_start)
+                * self._ease_focus_recall(progress)
+            )
+
+            if camera_id == self.active_camera_id:
+                if hasattr(self, 'focus_value_sent'):
+                    self.focus_value_sent.setText(f"{focus_current:.3f}")
+                if hasattr(self, 'focus_slider'):
+                    slider_value = int(focus_current * 1000)
+                    self.focus_slider.blockSignals(True)
+                    self.focus_slider.setValue(slider_value)
+                    self.focus_slider.blockSignals(False)
+
+            if progress >= 1.0 and not cam_data.focus_ramp_sending:
+                # Driver déjà fini — sync labels distance une fois
+                if camera_id == self.active_camera_id:
+                    self.sync_lfo_distance_from_focus(cam_data.focus_ramp_end)
+                    self._update_focus_distance_label(cam_data)
+
+        if self._update_workspace_5_recall_progress_bars(now_ms):
+            any_active = True
+
+        # Garder le timer si un driver tourne encore
+        if not any_active:
+            for cam_data in self.cameras.values():
+                if cam_data.focus_ramp_active or cam_data.focus_ramp_sending:
+                    any_active = True
+                    break
+
+        if not any_active and self.focus_ramp_timer.isActive():
+            self.focus_ramp_timer.stop()
+
     def _start_smooth_preset_transition(self, preset_data: dict, preset_number: int, camera_id: Optional[int] = None):
-        """Démarre une transition progressive vers les valeurs du preset (focus uniquement)."""
+        """Démarre une transition progressive vers les valeurs du preset (focus d'abord)."""
         target_camera_id = camera_id if isinstance(camera_id, int) else self.active_camera_id
         cam_data = self.cameras.get(target_camera_id)
         if not cam_data or not cam_data.controller:
             return
         
-        # Appliquer les autres paramètres instantanément (iris, gain, shutter, zoom)
-        if 'iris' in preset_data:
-            iris_value = float(preset_data['iris'])
-            self.update_iris_value(iris_value, camera_id=target_camera_id)
-        
-        if 'gain' in preset_data:
-            gain_value = int(preset_data['gain'])
-            self.update_gain_value(gain_value, camera_id=target_camera_id)
-        
-        if 'shutter' in preset_data:
-            shutter_value = int(preset_data['shutter'])
-            self.update_shutter_value(shutter_value, camera_id=target_camera_id)
-        
-        if 'zoom' in preset_data:
-            zoom_value = float(preset_data['zoom'])
-            try:
-                if hasattr(cam_data.controller, 'set_zoom'):
-                    cam_data.controller.set_zoom(zoom_value, silent=True)
-            except Exception:
-                pass
-        
-        # Stocker les valeurs de départ et cibles pour le focus uniquement
+        # Focus EN PREMIER — avant tout HTTP bloquant iris/gain/etc.
         if 'focus' in preset_data:
             start_focus = cam_data.focus_actual_value
+            if cam_data.focus_sent_value is not None:
+                start_focus = cam_data.focus_sent_value
             target_focus = float(preset_data['focus'])
-            
-            self.preset_transition_start_values = {
-                'focus': start_focus
-            }
-            
-            self.preset_transition_target_values = {
-                'focus': target_focus
-            }
-            
-            # Démarrer le timer pour la transition du focus
-            self.preset_transition_start_time = time.time() * 1000  # en millisecondes
-            self.preset_transition_timer = QTimer()
-            self.preset_transition_timer.timeout.connect(self._update_smooth_preset_transition)
-            self.preset_transition_timer.start(20)  # Mise à jour toutes les 20ms (50 FPS)
-        else:
-            # Pas de focus dans le preset, pas de transition nécessaire
-            self.preset_transition_timer = None
-        
-        # Marquer ce preset comme actif immédiatement
-        cam_data.active_preset = preset_number
-        
-        # Mettre à jour le label du preset dans le panneau LFO si présent
-        self.save_cameras_config()
-        self.update_preset_highlight()
-        
-        logger.info(f"Caméra {target_camera_id} - Début transition progressive du focus vers preset {preset_number}")
-    
-    def _update_smooth_preset_transition(self):
-        """Met à jour la transition progressive du focus uniquement (appelé par le timer)."""
-        if not self.preset_transition_timer:
-            return
-        
-        cam_data = self.get_active_camera_data()
-        crossfade_duration_ms = cam_data.crossfade_duration * 1000  # Convertir en millisecondes
-        
-        current_time = time.time() * 1000
-        elapsed = current_time - self.preset_transition_start_time
-        progress = min(elapsed / crossfade_duration_ms, 1.0)  # 0.0 à 1.0
-        
-        # Fonction d'interpolation linéaire
-        def lerp(start, end, t):
-            return start + (end - start) * t
-        
-        cam_data = self.get_active_camera_data()
-        
-        # Interpoler uniquement le focus
-        if 'focus' in self.preset_transition_target_values:
-            focus_current = lerp(
-                self.preset_transition_start_values['focus'],
-                self.preset_transition_target_values['focus'],
-                progress
+            self._start_camera_focus_ramp(
+                target_camera_id,
+                start_focus,
+                target_focus,
+                cam_data.crossfade_duration,
             )
-            
-            # Forcer l'envoi même si focus_sending est True (on ignore le verrou pendant la transition)
-            # On appelle directement set_focus sur le controller, sans passer par _send_focus_value_now
-            try:
-                success = cam_data.controller.set_focus(focus_current, silent=True)
-            except Exception as e:
-                pass
-            
-            cam_data.focus_sent_value = focus_current
-            self.focus_value_sent.setText(f"{focus_current:.3f}")
-            slider_value = int(focus_current * 1000)
-            self.focus_slider.blockSignals(True)
-            self.focus_slider.setValue(slider_value)
-            self.focus_slider.blockSignals(False)
         
-        # Si la transition est terminée
-        if progress >= 1.0:
-            self.preset_transition_timer.stop()
-            self.preset_transition_timer = None
-            logger.info(f"Transition progressive du focus terminée")
+        # Autres params après le kickoff focus (thread UI via singleShot, HTTP en worker)
+        other = {
+            k: preset_data[k]
+            for k in ('iris', 'gain', 'shutter', 'whitebalance', 'zoom')
+            if k in preset_data
+        }
+        if other:
+            def _apply_other_http(cid=target_camera_id, data=dict(other)):
+                cam = self.cameras.get(cid)
+                if not cam or not cam.controller:
+                    return
+                try:
+                    if 'iris' in data:
+                        cam.controller.set_iris(float(data['iris']), silent=True)
+                        cam.iris_sent_value = float(data['iris'])
+                    if 'gain' in data:
+                        cam.controller.set_gain(int(data['gain']), silent=True)
+                        cam.gain_sent_value = int(data['gain'])
+                    if 'shutter' in data:
+                        cam.controller.set_shutter(int(data['shutter']), silent=True)
+                        cam.shutter_sent_value = int(data['shutter'])
+                    if 'whitebalance' in data:
+                        if hasattr(cam.controller, 'set_whitebalance'):
+                            cam.controller.set_whitebalance(int(data['whitebalance']), silent=True)
+                        cam.whitebalance_sent_value = int(data['whitebalance'])
+                    if 'zoom' in data and hasattr(cam.controller, 'set_zoom'):
+                        cam.controller.set_zoom(float(data['zoom']), silent=True)
+                except Exception as e:
+                    logger.error(f"Erreur apply params preset cam{cid}: {e}")
+
+            # Iris/gain/etc. après le démarrage focus — évite de saturer la cam pendant le ramp
+            QTimer.singleShot(
+                120,
+                lambda: threading.Thread(
+                    target=_apply_other_http,
+                    daemon=True,
+                    name=f"preset-other-{target_camera_id}",
+                ).start(),
+            )
+        
+        cam_data.active_preset = preset_number
+        QTimer.singleShot(0, self.save_cameras_config)
+        if target_camera_id == self.active_camera_id:
+            self.update_preset_highlight()
+        
+        logger.info(
+            f"Caméra {target_camera_id} - Début transition focus fluide vers preset {preset_number} "
+            f"({cam_data.crossfade_duration:.1f}s)"
+        )
     
     def _get_param_display_name(self, param: str) -> str:
         """Retourne le nom d'affichage d'un paramètre pour les checkboxes."""
@@ -11200,9 +11412,13 @@ class MainWindow(QMainWindow):
         return display_names.get(param, param.capitalize())
     
     def on_recall_scope_changed(self, param: str, excluded: bool):
-        """Appelé quand une checkbox de recall scope change."""
-        cam_data = self.get_active_camera_data()
-        cam_data.recall_scope[param] = excluded
+        """Appelé quand une checkbox de recall scope change (scope GLOBAL)."""
+        if not hasattr(self, "global_recall_scope"):
+            self.global_recall_scope = {}
+        self.global_recall_scope[param] = excluded
+        # Synchroniser toutes les caméras
+        for cam_data in self.cameras.values():
+            cam_data.recall_scope[param] = excluded
         
         # Mettre à jour le texte de la checkbox
         checkbox = self.recall_scope_checkboxes.get(param)
@@ -11213,18 +11429,18 @@ class MainWindow(QMainWindow):
         # Sauvegarder la configuration
         self.save_cameras_config()
         
-        logger.info(f"Recall scope pour {param}: {'exclu' if excluded else 'inclus'}")
+        logger.info(f"Recall scope GLOBAL pour {param}: {'exclu' if excluded else 'inclus'}")
     
     def update_recall_scope_ui(self):
-        """Met à jour l'UI des checkboxes de recall scope selon les valeurs de la caméra active."""
+        """Met à jour l'UI des checkboxes selon le recall scope GLOBAL."""
         if not hasattr(self, 'recall_scope_checkboxes') or not self.recall_scope_checkboxes:
             return
         
-        cam_data = self.get_active_camera_data()
+        scope = getattr(self, "global_recall_scope", None) or self.get_active_camera_data().recall_scope
         
         for param, checkbox in self.recall_scope_checkboxes.items():
             if checkbox:
-                excluded = cam_data.recall_scope.get(param, False)
+                excluded = scope.get(param, False)
                 checkbox.blockSignals(True)
                 checkbox.setChecked(excluded)
                 display_name = self._get_param_display_name(param)
@@ -11670,6 +11886,7 @@ class MainWindow(QMainWindow):
         
         self.workspace_5_columns = {}
         self.workspace_5_recall_buttons = {}  # {camera_id: [btn1..btn10]}
+        self.workspace_5_recall_progress = {}  # {camera_id: [QProgressBar x10]}
         self.workspace_5_status_labels = {}
         self.workspace_5_slider_labels = {}
         self.workspace_5_on_air_labels = {}
@@ -11756,6 +11973,21 @@ class MainWindow(QMainWindow):
             self.workspace_5_on_air_labels[cam_id] = on_air
             
             buttons = []
+            progress_bars = []
+            gauge_style = self._scale_style("""
+                QProgressBar {
+                    border: none;
+                    border-radius: 2px;
+                    background-color: #222;
+                    text-align: center;
+                    max-height: 5px;
+                    min-height: 5px;
+                }
+                QProgressBar::chunk {
+                    border-radius: 2px;
+                    background-color: #fc0;
+                }
+            """)
             for preset_num in range(1, 11):
                 btn = QPushButton(str(preset_num))
                 btn.setStyleSheet(recall_btn_style)
@@ -11765,11 +11997,22 @@ class MainWindow(QMainWindow):
                     lambda checked=False, c=cam_id, p=preset_num: self._workspace_5_recall_clicked(c, p)
                 )
                 btn.setContextMenuPolicy(Qt.CustomContextMenu)
+                # Menu contextuel (évite QInputDialog direct depuis le signal — fragile sur macOS)
                 btn.customContextMenuRequested.connect(
-                    lambda pos, c=cam_id, p=preset_num, b=btn: self._workspace_5_rename_preset(c, p, b)
+                    partial(self._workspace_5_preset_context_menu, cam_id, preset_num, btn)
                 )
                 col_layout.addWidget(btn)
                 buttons.append(btn)
+
+                bar = QProgressBar()
+                bar.setRange(0, 1000)
+                bar.setValue(0)
+                bar.setTextVisible(False)
+                bar.setFixedHeight(self._scale_value(5))
+                bar.setStyleSheet(gauge_style)
+                bar.hide()
+                col_layout.addWidget(bar)
+                progress_bars.append(bar)
             
             col_layout.addStretch()
             
@@ -11816,6 +12059,7 @@ class MainWindow(QMainWindow):
             columns_layout.addWidget(col, stretch=1)
             self.workspace_5_columns[cam_id] = col
             self.workspace_5_recall_buttons[cam_id] = buttons
+            self.workspace_5_recall_progress[cam_id] = progress_bars
         
         scroll.setWidget(columns_widget)
         main_layout.addWidget(scroll, stretch=1)
@@ -12069,45 +12313,176 @@ class MainWindow(QMainWindow):
         """)
         btn.setStyleSheet(flash_style)
         QTimer.singleShot(180, lambda c=camera_id: self.update_workspace_5_preset_highlight(c))
-    
-    def _workspace_5_rename_preset(self, camera_id: int, preset_number: int, button: QPushButton):
-        """Ouvre un dialogue pour nommer un preset (persisté dans cameras_config)."""
+
+    def _start_workspace_5_recall_progress(self, camera_id: int, preset_number: int, duration_s: float):
+        """Démarre la jauge temporelle WS5 pour un recall (cam + preset)."""
         cam_data = self.cameras.get(camera_id)
         if not cam_data:
             return
-        
-        preset_key = f"preset_{preset_number}"
-        if preset_key not in cam_data.presets:
-            # Créer une entrée minimale pour stocker le nom avant le store des valeurs
-            cam_data.presets[preset_key] = {}
-        
-        current_name = (cam_data.presets[preset_key].get("name") or "").strip()
-        new_name, ok = QInputDialog.getText(
-            self,
-            f"Nommer Preset {preset_number}",
-            f"Cam {camera_id} — Preset {preset_number}:",
-            QLineEdit.Normal,
-            current_name
-        )
-        if not ok:
+        duration_s = max(0.0, float(duration_s))
+        # Reset autres jauges de cette cam
+        self._reset_workspace_5_recall_progress(camera_id, hide_all=True)
+
+        cam_data.recall_progress_preset = preset_number
+        cam_data.recall_progress_start_ms = time.time() * 1000.0
+        cam_data.recall_progress_duration_s = duration_s
+        cam_data.recall_progress_active = True
+
+        bars = getattr(self, 'workspace_5_recall_progress', {}).get(camera_id) or []
+        if 1 <= preset_number <= len(bars):
+            bar = bars[preset_number - 1]
+            bar.setStyleSheet(self._scale_style("""
+                QProgressBar {
+                    border: none; border-radius: 2px; background-color: #222;
+                    max-height: 5px; min-height: 5px;
+                }
+                QProgressBar::chunk {
+                    border-radius: 2px; background-color: #fc0;
+                }
+            """))
+            bar.setValue(0 if duration_s > 0.05 else 1000)
+            bar.show()
+            if duration_s <= 0.05:
+                # Instantané : plein puis hide
+                cam_data.recall_progress_active = False
+                QTimer.singleShot(250, lambda c=camera_id, p=preset_number: self._hide_workspace_5_recall_bar(c, p))
+
+        if duration_s > 0.05 and not self.focus_ramp_timer.isActive():
+            self.focus_ramp_timer.start(self._FOCUS_RAMP_TICK_MS)
+
+    def _hide_workspace_5_recall_bar(self, camera_id: int, preset_number: int):
+        bars = getattr(self, 'workspace_5_recall_progress', {}).get(camera_id) or []
+        if 1 <= preset_number <= len(bars):
+            bars[preset_number - 1].setValue(0)
+            bars[preset_number - 1].hide()
+
+    def _reset_workspace_5_recall_progress(self, camera_id: int, hide_all: bool = False):
+        cam_data = self.cameras.get(camera_id)
+        if cam_data:
+            cam_data.recall_progress_active = False
+            cam_data.recall_progress_preset = None
+        bars = getattr(self, 'workspace_5_recall_progress', {}).get(camera_id) or []
+        if hide_all:
+            for bar in bars:
+                bar.setValue(0)
+                bar.hide()
+
+    def _update_workspace_5_recall_progress_bars(self, now_ms: Optional[float] = None) -> bool:
+        """Met à jour les jauges WS5. Retourne True si au moins une est active."""
+        if not hasattr(self, 'workspace_5_recall_progress'):
+            return False
+        if now_ms is None:
+            now_ms = time.time() * 1000.0
+        any_active = False
+        for camera_id, cam_data in self.cameras.items():
+            if not cam_data.recall_progress_active:
+                continue
+            any_active = True
+            preset_number = cam_data.recall_progress_preset
+            duration_ms = max(1.0, cam_data.recall_progress_duration_s * 1000.0)
+            progress = min((now_ms - cam_data.recall_progress_start_ms) / duration_ms, 1.0)
+            bars = self.workspace_5_recall_progress.get(camera_id) or []
+            if preset_number and 1 <= preset_number <= len(bars):
+                bar = bars[preset_number - 1]
+                if not bar.isVisible():
+                    bar.show()
+                bar.setValue(int(progress * 1000))
+                # Chunk vert quand terminé
+                if progress >= 1.0:
+                    bar.setStyleSheet(self._scale_style("""
+                        QProgressBar {
+                            border: none; border-radius: 2px; background-color: #222;
+                            max-height: 5px; min-height: 5px;
+                        }
+                        QProgressBar::chunk {
+                            border-radius: 2px; background-color: #0c7;
+                        }
+                    """))
+                    cam_data.recall_progress_active = False
+                    QTimer.singleShot(
+                        400,
+                        lambda c=camera_id, p=preset_number: self._hide_workspace_5_recall_bar(c, p),
+                    )
+            else:
+                cam_data.recall_progress_active = False
+        return any_active
+    
+    def _workspace_5_preset_context_menu(self, camera_id: int, preset_number: int,
+                                         button: QPushButton, pos):
+        """Menu clic droit WS5 : Renommer (dialog différé après fermeture du menu)."""
+        menu = QMenu(button)
+        rename_action = menu.addAction("Renommer…")
+        chosen = menu.exec(button.mapToGlobal(pos))
+        if chosen != rename_action:
             return
-        
-        new_name = new_name.strip()
-        if new_name:
-            cam_data.presets[preset_key]["name"] = new_name
-        else:
-            cam_data.presets[preset_key].pop("name", None)
-            # Si le preset ne contient plus que rien d'utile, le retirer
-            remaining = {k: v for k, v in cam_data.presets[preset_key].items() if k != "name"}
-            if not remaining:
-                del cam_data.presets[preset_key]
-        
-        button.setText(self._workspace_5_preset_button_text(preset_number, new_name))
-        
-        self.state_store.set_preset(camera_id, preset_key, cam_data.presets.get(preset_key, {}))
-        self.save_cameras_config()
-        self._refresh_workspace_5_status()
-        logger.info(f"Cam{camera_id} Preset {preset_number} renommé: '{new_name}'")
+        # Différer après exec() du menu — obligatoire sur macOS pour enchaîner plusieurs renames
+        QTimer.singleShot(
+            50,
+            partial(self._workspace_5_rename_preset, camera_id, preset_number, button)
+        )
+
+    def _workspace_5_rename_preset(self, camera_id: int, preset_number: int, button: QPushButton):
+        """Ouvre un dialogue pour nommer un preset (persisté dans cameras_config)."""
+        if getattr(self, "_ws5_rename_busy", False):
+            logger.debug("WS5 rename ignoré: dialog déjà ouvert")
+            return
+        self._ws5_rename_busy = True
+        try:
+            cam_data = self.cameras.get(camera_id)
+            if not cam_data:
+                return
+            if button is None or not button.isVisible():
+                return
+            
+            preset_key = f"preset_{preset_number}"
+            if preset_key not in cam_data.presets or not isinstance(cam_data.presets[preset_key], dict):
+                # Entrée minimale pour stocker le nom avant le store des valeurs
+                cam_data.presets[preset_key] = {}
+            
+            current_name = (cam_data.presets[preset_key].get("name") or "").strip()
+            dialog = QInputDialog(self)
+            dialog.setWindowTitle(f"Nommer Preset {preset_number}")
+            dialog.setLabelText(f"Cam {camera_id} - Preset {preset_number}:")
+            dialog.setTextValue(current_name)
+            dialog.setInputMode(QInputDialog.TextInput)
+            dialog.setOkButtonText("OK")
+            dialog.setCancelButtonText("Annuler")
+            ok = dialog.exec() == QDialog.Accepted
+            new_name = dialog.textValue() if ok else ""
+            if not ok:
+                logger.debug(
+                    f"WS5 rename annulé Cam{camera_id} P{preset_number}"
+                )
+                return
+            
+            new_name = (new_name or "").strip()
+            if new_name:
+                cam_data.presets[preset_key]["name"] = new_name
+            else:
+                cam_data.presets[preset_key].pop("name", None)
+                # Si le preset ne contient plus rien d'utile, le retirer
+                remaining = {
+                    k: v for k, v in cam_data.presets[preset_key].items()
+                    if k not in ("name",)
+                }
+                if not remaining:
+                    del cam_data.presets[preset_key]
+                    try:
+                        self.state_store.remove_preset(camera_id, preset_key)
+                    except Exception:
+                        pass
+            
+            button.setText(self._workspace_5_preset_button_text(preset_number, new_name))
+            self._workspace_5_style_recall_button(camera_id, preset_number, button)
+            
+            if preset_key in cam_data.presets:
+                self.state_store.set_preset(camera_id, preset_key, dict(cam_data.presets[preset_key]))
+            self.save_cameras_config()
+            logger.info(f"Cam{camera_id} Preset {preset_number} renomme: '{new_name}'")
+        except Exception as e:
+            logger.error(f"Erreur rename preset WS5 Cam{camera_id} P{preset_number}: {e}", exc_info=True)
+        finally:
+            self._ws5_rename_busy = False
     
     def create_workspace_4_page(self):
         """Crée la page pour le Workspace 4 avec la configuration des caméras."""
@@ -12636,12 +13011,20 @@ class MainWindow(QMainWindow):
         slider_connecting = getattr(cam_data, 'slider_connecting', False)
         slider_auto_reconnect = getattr(cam_data, 'slider_auto_reconnect_enabled', True)
         
+        # Bouton Connect toujours dispo sauf pendant une tentative manuelle en cours
+        # (force reconnect même si déjà "connecté" via HTTP fallback)
+        connect_enabled = not slider_connecting
+        if slider_connected:
+            self.workspace_4_slider_connect_btn.setText("Reconnecter")
+        else:
+            self.workspace_4_slider_connect_btn.setText("Connecter")
+        self.workspace_4_slider_connect_btn.setEnabled(connect_enabled)
+
         if slider_connecting:
             # État "Connecting" (tâche de fond en cours)
             self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
             self.workspace_4_slider_status_label.setText("Connexion en cours...")
             self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
-            self.workspace_4_slider_connect_btn.setEnabled(False)
             self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
             self.workspace_4_slider_disconnect_btn.setEnabled(True)
             self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
@@ -12666,7 +13049,6 @@ class MainWindow(QMainWindow):
             self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #0f0;")  # Vert
             self.workspace_4_slider_status_label.setText("Connecté")
             self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #0f0; font-weight: bold;")
-            self.workspace_4_slider_connect_btn.setEnabled(False)
             self.workspace_4_slider_disconnect_btn.setText("Déconnecter")
             self.workspace_4_slider_disconnect_btn.setEnabled(True)
             self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
@@ -12693,7 +13075,6 @@ class MainWindow(QMainWindow):
                 self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #ffa500;")  # Orange
                 self.workspace_4_slider_status_label.setText("Déconnecté (reconnexion auto...)")
                 self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #ffa500; font-weight: bold;")
-                self.workspace_4_slider_connect_btn.setEnabled(True)
                 self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
                 self.workspace_4_slider_disconnect_btn.setEnabled(True)
                 self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
@@ -12718,7 +13099,6 @@ class MainWindow(QMainWindow):
                 self.workspace_4_slider_status_led.setStyleSheet("font-size: 24px; color: #f00;")  # Rouge
                 self.workspace_4_slider_status_label.setText("Déconnecté")
                 self.workspace_4_slider_status_label.setStyleSheet(f"font-size: {self._scale_font(14)}px; color: #f00; font-weight: bold;")
-                self.workspace_4_slider_connect_btn.setEnabled(True)
                 self.workspace_4_slider_disconnect_btn.setText("Arrêter les tentatives")
                 self.workspace_4_slider_disconnect_btn.setEnabled(False)  # Pas de tentative à arrêter
                 self.workspace_4_slider_disconnect_btn.setStyleSheet(self._scale_style("""
@@ -12790,20 +13170,10 @@ class MainWindow(QMainWindow):
         # Mettre à jour l'indicateur de statut du slider
         QTimer.singleShot(100, self.update_slider_status_indicator)
         
-        # Si la caméra était déjà connectée et qu'on a changé le slider_ip, démarrer le nouveau WebSocket slider
+        # Si la caméra était déjà connectée et qu'on a une IP slider, démarrer le WebSocket
         if cam_data.connected and new_slider_ip:
             try:
-                def position_update_callback(data):
-                    self.on_slider_position_update(data, camera_id=camera_id)
-                
-                slider_ws_client = SliderWebSocketClient(
-                    slider_ip=new_slider_ip,
-                    on_position_update_callback=position_update_callback,
-                    on_connection_status_callback=None,
-                    auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
-                )
-                slider_ws_client.start()
-                cam_data.slider_websocket_client = slider_ws_client
+                self._start_slider_websocket_client(camera_id, new_slider_ip, connecting=True)
                 logger.info(f"WebSocket slider démarré pour caméra {camera_id}")
             except Exception as e:
                 logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
@@ -12862,16 +13232,12 @@ class MainWindow(QMainWindow):
         self.update_workspace_4_camera_status(camera_id)
     
     def on_workspace_4_slider_connect(self):
-        """Lance la connexion du slider pour la caméra active."""
+        """Lance / force la reconnexion du slider pour la caméra active."""
         camera_id = self.active_camera_id
         cam_data = self.cameras[camera_id]
         
-        # Vérifier que le slider n'est pas déjà connecté ou en cours de connexion
-        slider_connected = False
-        if cam_data.slider_websocket_client:
-            slider_connected = getattr(cam_data.slider_websocket_client, 'connected', False)
-        
-        if slider_connected or getattr(cam_data, 'slider_connecting', False):
+        # Éviter les double-clics pendant une tentative manuelle
+        if getattr(cam_data, 'slider_connecting', False):
             return
         
         slider_ip = self.workspace_4_slider_ip_input.text().strip()
@@ -12879,10 +13245,14 @@ class MainWindow(QMainWindow):
             logger.warning(f"IP slider manquante pour caméra {camera_id}")
             return
         
+        # Sync IP + controller HTTP (les commandes moteurs passent par là)
+        cam_data.slider_ip = slider_ip
+        self.slider_controllers[camera_id] = SliderController(slider_ip)
+        
         # Réactiver la reconnexion automatique (car l'utilisateur demande explicitement la connexion)
         cam_data.slider_auto_reconnect_enabled = True
         
-        # Arrêter l'ancien WebSocket slider si existant
+        # Arrêter l'ancien WebSocket slider si existant (force reconnect)
         if cam_data.slider_websocket_client:
             try:
                 cam_data.slider_websocket_client.stop()
@@ -12896,30 +13266,57 @@ class MainWindow(QMainWindow):
         
         # Créer et démarrer le WebSocket slider
         try:
-            def position_update_callback(data):
-                self.on_slider_position_update(data, camera_id=camera_id)
-            
-            def connection_status_callback(connected: bool, message: str):
-                """Callback pour le statut de connexion du slider."""
+            slider_ws_client = self._start_slider_websocket_client(camera_id, slider_ip, connecting=True)
+            if not slider_ws_client or not slider_ws_client.running:
                 cam_data.slider_connecting = False
-                if cam_data.slider_websocket_client:
-                    cam_data.slider_websocket_client.connected = connected
-                # Mettre à jour l'affichage
-                QTimer.singleShot(100, lambda: self.update_workspace_4_slider_status(camera_id))
-            
-            slider_ws_client = SliderWebSocketClient(
-                slider_ip=slider_ip,
-                on_position_update_callback=position_update_callback,
-                on_connection_status_callback=connection_status_callback,
-                auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
-            )
-            slider_ws_client.start()
-            cam_data.slider_websocket_client = slider_ws_client
-            logger.info(f"Connexion slider WebSocket démarrée pour caméra {camera_id}")
+                self.update_workspace_4_slider_status(camera_id)
+                logger.error(f"Échec démarrage WebSocket slider caméra {camera_id}")
+                return
+            logger.info(f"Connexion slider WebSocket démarrée pour caméra {camera_id} ({slider_ip})")
+            # Timeout UI: quitter "connexion en cours" après 15s (garde auto-retry si actif)
+            def _clear_connecting_if_stale():
+                if cam_data.slider_websocket_client is slider_ws_client and cam_data.slider_connecting:
+                    cam_data.slider_connecting = False
+                    self.update_workspace_4_slider_status(camera_id)
+            QTimer.singleShot(15000, _clear_connecting_if_stale)
         except Exception as e:
             logger.error(f"Erreur lors du démarrage du WebSocket slider: {e}")
             cam_data.slider_connecting = False
             self.update_workspace_4_slider_status(camera_id)
+    
+    def _start_slider_websocket_client(self, camera_id: int, slider_ip: str, connecting: bool = False):
+        """Crée un SliderWebSocketClient isolé (callbacks ignorés si client remplacé)."""
+        cam_data = self.cameras[camera_id]
+        holder = {"client": None}
+
+        def position_update_callback(data):
+            if cam_data.slider_websocket_client is not holder["client"]:
+                return
+            self.on_slider_position_update(data, camera_id=camera_id)
+
+        def connection_status_callback(connected: bool, message: str):
+            client = holder["client"]
+            if cam_data.slider_websocket_client is not client:
+                return
+            if connected:
+                cam_data.slider_connecting = False
+            elif not (client and client.running and client.auto_reconnect_enabled):
+                cam_data.slider_connecting = False
+            if camera_id == self.active_camera_id and hasattr(self, 'workspace_4_slider_status_label'):
+                QTimer.singleShot(50, lambda: self.update_workspace_4_slider_status(camera_id))
+
+        slider_ws_client = SliderWebSocketClient(
+            slider_ip=slider_ip,
+            on_position_update_callback=position_update_callback,
+            on_connection_status_callback=connection_status_callback,
+            auto_reconnect_enabled=getattr(cam_data, 'slider_auto_reconnect_enabled', True)
+        )
+        holder["client"] = slider_ws_client
+        if connecting:
+            cam_data.slider_connecting = True
+        cam_data.slider_websocket_client = slider_ws_client
+        slider_ws_client.start()
+        return slider_ws_client
     
     def on_workspace_4_slider_disconnect(self):
         """Arrête la connexion du slider et interrompt les tentatives en cours."""
